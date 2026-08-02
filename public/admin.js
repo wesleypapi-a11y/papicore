@@ -57,6 +57,24 @@
     return `${d}/${m}/${y}`;
   }
 
+  const PRODUCTIVE_HOURS_PER_DAY = 480;
+
+  function fmtDur(mins) {
+    const m = Math.max(0, Number(mins) || 0);
+    const days = Math.floor(m / PRODUCTIVE_HOURS_PER_DAY);
+    const rem = m % PRODUCTIVE_HOURS_PER_DAY;
+    const hm = (r) => {
+      const h = Math.floor(r / 60);
+      const mm = r % 60;
+      if (h === 0) return mm + 'min';
+      if (mm === 0) return h + 'h';
+      return h + 'h' + String(mm).padStart(2, '0');
+    };
+    if (days === 0) return hm(rem);
+    if (rem === 0) return days + ' dia' + (days > 1 ? 's' : '');
+    return days + ' dia' + (days > 1 ? 's' : '') + ' + ' + hm(rem);
+  }
+
   function escapeHtml(v) {
     return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -265,10 +283,10 @@
       actions.push(`<button class="btn btn-sm btn-outline" data-action="detail" data-id="${a.id}">Detalhes</button>`);
       return `
         <tr>
-          <td><strong>${escapeHtml(a.start_time)}</strong></td>
+          <td><strong>${escapeHtml(a.start_time)}</strong><br /><span class="muted">${a.end_date && a.end_date !== date ? toDateBR(a.end_date) + ' ' : ''}${escapeHtml(a.end_time || '—')}</span></td>
           <td>${escapeHtml(a.customer_name)}</td>
           <td>${escapeHtml(a.vehicle_brand)} ${escapeHtml(a.vehicle_model)}</td>
-          <td>${escapeHtml(a.service_name || '—')}</td>
+          <td>${escapeHtml(a.service_name || '—')}${a.booked_duration_minutes ? `<br/><span class="muted">${fmtDur(a.booked_duration_minutes)}</span>` : ''}</td>
           <td>${escapeHtml(a.modality_name || '—')}</td>
           <td>${badge(a.status)}</td>
           <td><div class="row-actions">${actions.join('')}</div></td>
@@ -277,12 +295,12 @@
 
     el.innerHTML = `
       <div class="admin-header">
-        <div><h1>Agenda</h1><div class="sub">Horários do dia</div></div>
+        <div><h1>Agenda</h1><div class="sub">Horários do dia (início → término)</div></div>
         <input type="date" id="agendaDate" value="${date}" style="width:auto;" />
       </div>
       <div class="panel">
         ${data.appointments.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Horário</th><th>Cliente</th><th>Veículo</th><th>Serviço</th><th>Modalidade</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Início → Término</th><th>Cliente</th><th>Veículo</th><th>Serviço</th><th>Modalidade</th><th>Status</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>` : '<div class="empty-state">Nenhum agendamento nesta data.</div>'}
       </div>
@@ -330,7 +348,7 @@
         <tr>
           <td><strong>${escapeHtml(a.appointment_code)}</strong></td>
           <td>${escapeHtml(a.customer_name)}<br /><span class="muted">${escapeHtml(a.customer_phone)}</span></td>
-          <td>${toDateBR(a.appointment_date)}<br /><span class="muted">${escapeHtml(a.start_time)}</span></td>
+          <td>${toDateBR(a.appointment_date)}<br /><span class="muted">${escapeHtml(a.start_time)} → ${a.end_date && a.end_date !== a.appointment_date ? toDateBR(a.end_date) + ' ' : ''}${escapeHtml(a.end_time || '—')}</span></td>
           <td>${escapeHtml(a.service_name || '—')}<br /><span class="muted">${escapeHtml(a.modality_name || '')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</span></td>
           <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}</td>
           <td>${badge(a.status)}</td>
@@ -430,7 +448,10 @@
             <select id="apptCategory">${catOpts}</select></div>
           <div class="field">${fieldHtml('apptPlate', 'Placa', v('vehicle_plate'), 'text', 'ABC-1D23')}</div>
           <div class="field"><label for="apptDate">Data</label><input type="date" id="apptDate" value="${escapeHtml(v('appointment_date', todayStr()))}" /></div>
-          <div class="field">${fieldHtml('apptTime', 'Horário', v('start_time'), 'time')}</div>
+          <div class="field">${fieldHtml('apptTime', 'Início', v('start_time'), 'time')}</div>
+          <div class="field"><label class="switch-row"><input type="checkbox" id="apptManualEnd" ${v('end_time') ? 'checked' : ''} /><span>Definir término manualmente</span></label></div>
+          <div class="field" id="apptEndWrap"><label for="apptEndDate">Término (data)</label><input type="date" id="apptEndDate" value="${escapeHtml(v('end_date', v('appointment_date', todayStr())))}" /></div>
+          <div class="field" id="apptEndTimeWrap">${fieldHtml('apptEndTime', 'Término (hora)', v('end_time', ''), 'time')}</div>
           <div class="field"><label for="apptStatus">Status</label>
             <select id="apptStatus">${statusOpts}</select></div>
           <div class="field"><label for="apptPrice">Preço do serviço (R$)</label>
@@ -453,7 +474,15 @@
       $('apptCategory').value = appt.vehicle_category;
       $('apptStatus').value = appt.status;
     }
+    const toggleManualEnd = () => {
+      const on = $('apptManualEnd').checked;
+      $('apptEndWrap').hidden = !on;
+      $('apptEndTimeWrap').hidden = !on;
+    };
+    $('apptManualEnd').addEventListener('change', toggleManualEnd);
+    toggleManualEnd();
     $('apptSave').addEventListener('click', async () => {
+      const manualEnd = $('apptManualEnd').checked;
       const body = {
         modality_id: Number($('apptModality').value),
         unit_id: $('apptUnit').value ? Number($('apptUnit').value) : null,
@@ -471,6 +500,11 @@
         status: $('apptStatus').value,
         customer_notes: $('apptNotes').value || null
       };
+      if (manualEnd) {
+        body.manual_end = 1;
+        body.end_date = $('apptEndDate').value;
+        body.end_time = $('apptEndTime').value;
+      }
       try {
         showLoader();
         const saved = await api(id ? '/api/admin/appointments/' + id : '/api/admin/appointments', {
@@ -530,8 +564,9 @@
       ['Placa', a.vehicle_plate],
       ['Cor', a.vehicle_color],
       ['Categoria', CATEGORY_LABELS[a.vehicle_category] || a.vehicle_category],
-      ['Data', toDateBR(a.appointment_date)],
+      ['Data', toDateBR(a.appointment_date) + (a.end_date && a.end_date !== a.appointment_date ? ' → ' + toDateBR(a.end_date) : '')],
       ['Horário', `${a.start_time} às ${a.end_time}`],
+      ['Duração', a.booked_duration_minutes ? fmtDur(a.booked_duration_minutes) : ''],
       ['Serviço', a.service_name],
       ['Modalidade', a.modality_name],
       ['Unidade', a.unit_name],
@@ -585,7 +620,7 @@
       return `<tr>
         <td><strong>${escapeHtml(s.name)}</strong><br /><span class="muted">${escapeHtml(s.category_name)}</span></td>
         <td>${priceHtml}</td>
-        <td>${s.duration_minutes} min</td>
+        <td>${fmtDur(s.duration_minutes)}${s.pickup_extra_minutes ? `<br/><span class="muted">picape +${fmtDur(s.pickup_extra_minutes)}</span>` : ''}</td>
         <td><span class="muted">${flags.join(' · ') || '—'}</span></td>
         <td>${s.active ? badge('confirmed') : badge('cancelled')}</td>
         <td><div class="row-actions">
@@ -649,6 +684,7 @@
               <option value="starting">A partir de</option>
             </select></div>
           <div class="field">${fieldHtml('svcDuration', 'Duração (minutos)', v('duration_minutes', 60), 'number')}</div>
+          <div class="field">${fieldHtml('svcPickupExtra', 'Acréscimo para picape (min)', v('pickup_extra_minutes', 0), 'number')}</div>
         </div>
         <div id="svcPriceFields"></div>
         <div class="field"><label for="svcItems">Itens do pacote (um por linha)</label>
@@ -685,6 +721,7 @@
         price_pickup: priceType === 'category' ? Number($('pfPickup').value) : null,
         starting_price: priceType === 'starting' ? Number($('pfStarting').value) : null,
         duration_minutes: Number($('svcDuration').value),
+        pickup_extra_minutes: Number($('svcPickupExtra').value || 0),
         package_items: $('svcItems').value.split('\n').map((i) => i.trim()).filter(Boolean),
         available_at_unit: $('svcUnit').checked ? 1 : 0,
         available_pickup_delivery: $('svcPickup').checked ? 1 : 0,
@@ -809,6 +846,7 @@
         <td><div class="row-actions">
           <button class="btn btn-sm btn-outline" data-action="editUnit" data-id="${u.id}">Editar</button>
           ${u.active ? `<button class="btn btn-sm btn-outline" data-action="toggleUnit" data-id="${u.id}">Desativar</button>` : `<button class="btn btn-sm btn-success" data-action="toggleUnit" data-id="${u.id}">Ativar</button>`}
+          <button class="btn btn-sm btn-danger" data-action="deleteUnit" data-id="${u.id}">Excluir</button>
         </div></td>
       </tr>`).join('');
 
@@ -827,6 +865,7 @@
     $('btnNewUnit').addEventListener('click', () => openUnitModal());
     el.querySelectorAll('[data-action="editUnit"]').forEach((b) => b.addEventListener('click', () => openUnitModal(Number(b.dataset.id))));
     el.querySelectorAll('[data-action="toggleUnit"]').forEach((b) => b.addEventListener('click', () => toggleUnit(Number(b.dataset.id))));
+    el.querySelectorAll('[data-action="deleteUnit"]').forEach((b) => b.addEventListener('click', () => deleteUnit(Number(b.dataset.id))));
   }
 
   async function openUnitModal(id) {
@@ -852,6 +891,8 @@
           <div class="field">${fieldHtml('unitCapacity', 'Capacidade simultânea', v('capacity', 1), 'number')}</div>
           <div class="field"><label for="unitOpen">Abertura</label><input type="time" id="unitOpen" value="${escapeHtml(v('opening_time', '08:00'))}" /></div>
           <div class="field"><label for="unitClose">Fechamento</label><input type="time" id="unitClose" value="${escapeHtml(v('closing_time', '17:00'))}" /></div>
+          <div class="field"><label for="unitLunchStart">Almoço — início</label><input type="time" id="unitLunchStart" value="${escapeHtml(v('lunch_start', '12:00'))}" /></div>
+          <div class="field"><label for="unitLunchEnd">Almoço — fim</label><input type="time" id="unitLunchEnd" value="${escapeHtml(v('lunch_end', '13:00'))}" /></div>
           <div class="field">${fieldHtml('unitInterval', 'Intervalo (minutos)', v('appointment_interval', 60), 'number')}</div>
         </div>
         <div class="field"><label>Dias de funcionamento</label>
@@ -883,6 +924,8 @@
         capacity: Number($('unitCapacity').value),
         opening_time: $('unitOpen').value,
         closing_time: $('unitClose').value,
+        lunch_start: $('unitLunchStart').value,
+        lunch_end: $('unitLunchEnd').value,
         appointment_interval: Number($('unitInterval').value),
         working_days: days,
         active: $('unitActive').checked ? 1 : 0
@@ -914,6 +957,21 @@
     hideLoader();
   }
 
+  async function deleteUnit(id) {
+    const u = state.units.find((x) => x.id === id);
+    if (!u) return;
+    if (!confirm(`Excluir a unidade "${u.name}"?`)) return;
+    try {
+      showLoader();
+      await api('/api/admin/units/' + id, { method: 'DELETE' });
+      await renderUnits();
+      toast('Unidade excluída.', 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
+  }
+
   /* ---------- blocks ---------- */
 
   async function renderBlocks() {
@@ -922,7 +980,7 @@
     const rows = data.map((b) => `
       <tr>
         <td>${toDateBR(b.blocked_date)}</td>
-        <td>${b.block_full_day ? '<span class="badge badge-rejected">Dia inteiro</span>' : escapeHtml(b.blocked_time)}</td>
+        <td>${b.block_full_day ? '<span class="badge badge-rejected">Dia inteiro</span>' : escapeHtml(b.blocked_time_end ? `${b.blocked_time} às ${b.blocked_time_end}` : b.blocked_time)}</td>
         <td>${escapeHtml(b.unit_name || 'Todas as unidades (global)')}</td>
         <td>${escapeHtml(b.reason || '—')}</td>
         <td><button class="btn btn-sm btn-danger" data-action="deleteBlock" data-id="${b.id}">Remover</button></td>
@@ -962,7 +1020,13 @@
         <div class="field"><label for="blockDate">Data</label><input type="date" id="blockDate" value="${todayStr()}" /></div>
         <div class="field"><label for="blockUnit">Unidade</label>
           <select id="blockUnit"><option value="">Todas as unidades (global)</option>${unitOpts}</select></div>
-        <div class="field"><label for="blockTime">Horário (apenas se não for dia inteiro)</label><input type="time" id="blockTime" /></div>
+        <div class="field"><label>Horário (apenas se não for dia inteiro)</label>
+          <div class="field-row">
+            <div class="field"><label>De</label><input type="time" id="blockTime" /></div>
+            <div class="field"><label>Até (opcional)</label><input type="time" id="blockTimeEnd" /></div>
+          </div>
+          <p class="muted" style="margin-top:-6px;font-size:12px;">Preencha "De" e "Até" para bloquear um intervalo (ex.: 08:00 às 11:00).</p>
+        </div>
         <label class="switch-row" style="margin-bottom:12px;"><input type="checkbox" id="blockFullDay" /><span>Bloquear o dia inteiro</span></label>
         <div class="field">${fieldHtml('blockReason', 'Motivo', '', 'text', 'Ex.: feriado, manutenção')}</div>
       </form>
@@ -970,12 +1034,22 @@
       <button class="btn btn-ghost" data-close>Cancelar</button>
       <button class="btn btn-primary" id="blockSave">Criar bloqueio</button>
     `);
+    const blockTime = $('blockTime');
+    const blockTimeEnd = $('blockTimeEnd');
+    const blockFullDay = $('blockFullDay');
+    const syncTimeDisabled = () => {
+      blockTime.disabled = blockFullDay.checked;
+      blockTimeEnd.disabled = blockFullDay.checked;
+    };
+    blockFullDay.addEventListener('change', syncTimeDisabled);
+    syncTimeDisabled();
     $('blockSave').addEventListener('click', async () => {
       const body = {
         unit_id: $('blockUnit').value || null,
         blocked_date: $('blockDate').value,
-        blocked_time: $('blockTime').value || null,
-        block_full_day: $('blockFullDay').checked ? 1 : 0,
+        blocked_time: blockTime.value || null,
+        blocked_time_end: blockTimeEnd.value || null,
+        block_full_day: blockFullDay.checked ? 1 : 0,
         reason: $('blockReason').value || null
       };
       try {
@@ -1079,6 +1153,8 @@
         <div class="form-grid">
           <div class="field"><label for="setOpen">Abertura</label><input type="time" id="setOpen" value="${escapeHtml(s.default_opening_time)}" /></div>
           <div class="field"><label for="setClose">Fechamento</label><input type="time" id="setClose" value="${escapeHtml(s.default_closing_time)}" /></div>
+          <div class="field"><label for="setLunchStart">Almoço — início</label><input type="time" id="setLunchStart" value="${escapeHtml(s.lunch_start || '12:00')}" /></div>
+          <div class="field"><label for="setLunchEnd">Almoço — fim</label><input type="time" id="setLunchEnd" value="${escapeHtml(s.lunch_end || '13:00')}" /></div>
           <div class="field">${fieldHtml('setInterval', 'Intervalo padrão (minutos)', s.default_interval, 'number')}</div>
           <div class="field"><label>Dias de funcionamento</label>
             <div class="checkbox-row">
@@ -1099,6 +1175,8 @@
         whatsapp: $('setWhatsapp').value || null,
         default_opening_time: $('setOpen').value,
         default_closing_time: $('setClose').value,
+        lunch_start: $('setLunchStart').value,
+        lunch_end: $('setLunchEnd').value,
         default_interval: Number($('setInterval').value),
         working_days: days,
         capacity: Number($('setCapacity').value),

@@ -15,7 +15,7 @@ const STATUS_LABELS = {
   cancelled: 'Cancelado'
 };
 
-const ACTIVE_STATUSES = ['pending', 'confirmed'];
+const ACTIVE_STATUSES = ['pending', 'confirmed', 'completed'];
 
 const VEHICLE_CATEGORIES = ['hatch', 'sedan', 'suv', 'pickup'];
 
@@ -71,6 +71,24 @@ function formatMinutes(m) {
   const h = String(Math.floor(mm / 60)).padStart(2, '0');
   const min = String(mm % 60).padStart(2, '0');
   return `${h}:${min}`;
+}
+
+const PRODUCTIVE_MINUTES_PER_DAY = 480;
+
+function formatDuration(minutes, opts = {}) {
+  const m = Math.max(0, Number(minutes) || 0);
+  const days = Math.floor(m / PRODUCTIVE_MINUTES_PER_DAY);
+  const rem = m % PRODUCTIVE_MINUTES_PER_DAY;
+  const hm = (r) => {
+    const h = Math.floor(r / 60);
+    const mm = r % 60;
+    if (h === 0) return `${mm}min`;
+    if (mm === 0) return `${h}h`;
+    return `${h}h${String(mm).padStart(2, '0')}`;
+  };
+  if (days === 0) return hm(rem);
+  if (rem === 0) return `${days} dia${days > 1 ? 's' : ''}`;
+  return `${days} dia${days > 1 ? 's' : ''} + ${hm(rem)}`;
 }
 
 function addMinutes(time, mins) {
@@ -211,6 +229,7 @@ module.exports = {
   isValidTime,
   minutesOf,
   formatMinutes,
+  formatDuration,
   addMinutes,
   buildSlots,
   buildSlotsWithDuration,

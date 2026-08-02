@@ -1,5 +1,6 @@
 const db = require('../database/database');
 const { getAvailability } = require('../services/availabilityService');
+const { dateTimeStr } = require('../services/durationService');
 const {
   validateAppointmentInput,
   insertAppointment,
@@ -75,7 +76,11 @@ function createAppointment(req, res) {
   const settings = getSettings();
   const capacity = data.unit ? (data.unit.capacity || 1) : (settings.capacity || 1);
 
-  const c = countOverlaps(data.appointment_date, data.unit ? data.unit.id : null, data.start_time, data.end_time);
+  const c = countOverlaps(
+    dateTimeStr(data.appointment_date, data.start_time),
+    dateTimeStr(data.end_date, data.end_time),
+    data.unit ? data.unit.id : null
+  );
   if (c >= capacity) {
     throw new AppError(409, 'Este horário não está mais disponível. Escolha outro horário.');
   }
@@ -94,13 +99,19 @@ function updateAppointment(req, res) {
 
   const moved = (
     existing.appointment_date !== data.appointment_date ||
+    existing.end_date !== data.end_date ||
     existing.start_time !== data.start_time ||
     existing.end_time !== data.end_time ||
     existing.unit_id !== data.unit_id ||
     existing.modality_id !== data.modality_id
   );
   if (moved) {
-    const c = countOverlaps(data.appointment_date, data.unit ? data.unit.id : null, data.start_time, data.end_time, existing.id);
+    const c = countOverlaps(
+      dateTimeStr(data.appointment_date, data.start_time),
+      dateTimeStr(data.end_date, data.end_time),
+      data.unit ? data.unit.id : null,
+      existing.id
+    );
     if (c >= capacity) {
       throw new AppError(409, 'Este horário não está mais disponível. Escolha outro horário.');
     }
@@ -111,7 +122,7 @@ function updateAppointment(req, res) {
        modality_id = ?, unit_id = ?, service_id = ?,
        customer_name = ?, customer_phone = ?, customer_email = ?, customer_cpf = ?,
        vehicle_brand = ?, vehicle_model = ?, vehicle_year = ?, vehicle_plate = ?, vehicle_color = ?, vehicle_category = ?,
-       appointment_date = ?, start_time = ?, end_time = ?, service_name = ?,
+       appointment_date = ?, start_time = ?, end_date = ?, end_time = ?, booked_duration_minutes = ?, service_name = ?,
        service_price = ?, modality_fee = ?, total_price = ?, price_is_estimate = ?, status = ?,
        address_zipcode = ?, address_street = ?, address_number = ?, address_complement = ?, address_neighborhood = ?,
        address_city = ?, address_state = ?, address_reference = ?,
@@ -135,7 +146,9 @@ function updateAppointment(req, res) {
     data.vehicle_category,
     data.appointment_date,
     data.start_time,
+    data.end_date,
     data.end_time,
+    data.booked_duration_minutes,
     data.service_name,
     data.service_price,
     data.modality_fee,

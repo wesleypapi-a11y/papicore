@@ -36,6 +36,7 @@ function validateService(body, existingId) {
     price_pickup,
     starting_price,
     duration_minutes,
+    pickup_extra_minutes,
     package_items,
     available_at_unit,
     available_pickup_delivery,
@@ -92,6 +93,11 @@ function validateService(body, existingId) {
     throw new AppError(400, 'A duração deve estar entre 15 e 1440 minutos.');
   }
 
+  const pickupExtra = Number(pickup_extra_minutes);
+  if (!Number.isInteger(pickupExtra) || pickupExtra < 0 || pickupExtra > 1440) {
+    throw new AppError(400, 'O acréscimo para picape deve ser entre 0 e 1440 minutos.');
+  }
+
   const slug = slugify(name);
   const dup = db.prepare('SELECT id FROM services WHERE slug = ? AND id != ?').get(slug, existingId || 0);
   if (dup) throw new AppError(409, 'Já existe um serviço com este nome.');
@@ -111,6 +117,7 @@ function validateService(body, existingId) {
     price_pickup: pickup,
     starting_price: starting,
     duration_minutes: duration,
+    pickup_extra_minutes: pickupExtra,
     package_items: parsePackageItems(package_items),
     available_at_unit: available_at_unit ? 1 : 0,
     available_pickup_delivery: available_pickup_delivery ? 1 : 0,
@@ -151,9 +158,9 @@ function create(req, res) {
       `INSERT INTO services
         (category_id, name, slug, description, price_type, fixed_price,
          price_hatch, price_sedan, price_suv, price_pickup, starting_price,
-         duration_minutes, package_items, available_at_unit, available_pickup_delivery,
+         duration_minutes, pickup_extra_minutes, package_items, available_at_unit, available_pickup_delivery,
          available_mobile_delivery, active, display_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       data.category_id,
@@ -168,6 +175,7 @@ function create(req, res) {
       data.price_pickup,
       data.starting_price,
       data.duration_minutes,
+      data.pickup_extra_minutes,
       data.package_items.length ? JSON.stringify(data.package_items) : null,
       data.available_at_unit,
       data.available_pickup_delivery,
@@ -188,7 +196,7 @@ function update(req, res) {
     `UPDATE services SET
        category_id = ?, name = ?, slug = ?, description = ?, price_type = ?, fixed_price = ?,
        price_hatch = ?, price_sedan = ?, price_suv = ?, price_pickup = ?, starting_price = ?,
-       duration_minutes = ?, package_items = ?, available_at_unit = ?, available_pickup_delivery = ?,
+       duration_minutes = ?, pickup_extra_minutes = ?, package_items = ?, available_at_unit = ?, available_pickup_delivery = ?,
        available_mobile_delivery = ?, active = ?, display_order = ?, updated_at = datetime('now', 'localtime')
      WHERE id = ?`
   ).run(
@@ -204,6 +212,7 @@ function update(req, res) {
     data.price_pickup,
     data.starting_price,
     data.duration_minutes,
+    data.pickup_extra_minutes,
     data.package_items.length ? JSON.stringify(data.package_items) : null,
     data.available_at_unit,
     data.available_pickup_delivery,

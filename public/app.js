@@ -14,8 +14,11 @@
     customer: { name: '', phone: '', email: '', cpf: '' },
     vehicle: { brand: '', model: '', year: '', plate: '', color: '', category: '' },
     date: null,
-    service: null,
+    services: [],
     slot: null,
+    slotEndDate: null,
+    slotEndTime: null,
+    slotDuration: null,
     address: {},
     responsible_name: '',
     key_delivery_confirmed: false,
@@ -66,6 +69,24 @@
   function formatDateShort(dateStr) {
     const d = parseDate(dateStr);
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+
+  const PRODUCTIVE_HOURS_PER_DAY = 480;
+
+  function fmtDur(mins) {
+    const m = Math.max(0, Number(mins) || 0);
+    const days = Math.floor(m / PRODUCTIVE_HOURS_PER_DAY);
+    const rem = m % PRODUCTIVE_HOURS_PER_DAY;
+    const hm = (r) => {
+      const h = Math.floor(r / 60);
+      const mm = r % 60;
+      if (h === 0) return mm + 'min';
+      if (mm === 0) return h + 'h';
+      return h + 'h' + String(mm).padStart(2, '0');
+    };
+    if (days === 0) return hm(rem);
+    if (rem === 0) return days + ' dia' + (days > 1 ? 's' : '');
+    return days + ' dia' + (days > 1 ? 's' : '') + ' + ' + hm(rem);
   }
 
   const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -190,7 +211,7 @@
       if (!state.date) { alert('Selecione a data do agendamento.'); return false; }
     }
     if (n === 5) {
-      if (!state.service) { alert('Selecione um serviço.'); return false; }
+      if (!state.services.length) { alert('Selecione ao menos um serviço.'); return false; }
     }
     if (n === 6) {
       if (!state.slot) { alert('Selecione um horário.'); return false; }
@@ -225,8 +246,11 @@
         state.modality = { id: m.id, name: m.name, slug: m.slug, fee: m.fee };
         state.unit = null;
         state.date = null;
-        state.service = null;
+        state.services = [];
         state.slot = null;
+        state.slotEndDate = null;
+        state.slotEndTime = null;
+        state.slotDuration = null;
         state.address = {};
         state.responsible_name = '';
         state.key_delivery_confirmed = false;
@@ -261,6 +285,11 @@
       if (state.vehicle.category === key) btn.classList.add('selected');
       btn.addEventListener('click', () => {
         state.vehicle.category = key;
+        state.slot = null;
+        state.slotEndDate = null;
+        state.slotEndTime = null;
+        state.slotDuration = null;
+        slotCache = {};
         saveState();
         grid.querySelectorAll('.category-option').forEach((c) => c.classList.remove('selected'));
         btn.classList.add('selected');
@@ -293,12 +322,13 @@
       card.addEventListener('click', () => {
         state.unit = u;
         state.date = null;
-        state.service = null;
+        state.services = [];
         state.slot = null;
+        state.slotEndDate = null;
+        state.slotEndTime = null;
+        state.slotDuration = null;
         saveState();
         renderCalendar();
-        grid.querySelectorAll('.unit-card').forEach((c) => c.classList.remove('selected'));
-        card.classList.add('selected');
       });
       grid.appendChild(card);
     });
@@ -354,8 +384,11 @@
       if (enabled) {
         btn.addEventListener('click', () => {
           state.date = dateStr;
-          state.service = null;
+          state.services = [];
           state.slot = null;
+          state.slotEndDate = null;
+          state.slotEndTime = null;
+          state.slotDuration = null;
           saveState();
           gridEl.querySelectorAll('.cal-day').forEach((c) => c.classList.remove('selected'));
           btn.classList.add('selected');
@@ -386,9 +419,7 @@
     return { value: service['price_' + state.vehicle.category] || 0, estimate: false };
   }
 
-  function currentServicePrice() {
-    const s = state.service;
-    if (!s) return { value: 0, estimate: false };
+  function liveServicePrice(s) {
     if (s.price_type === 'category') {
       const cat = catalogCache[state.modality.id];
       const found = cat && cat.flat().find((x) => x.id === s.id);
@@ -396,6 +427,19 @@
       return { value: s.price || 0, estimate: false };
     }
     return { value: s.price || 0, estimate: !!s.estimate };
+  }
+
+  function servicesTotals() {
+    let value = 0;
+    let duration = 0;
+    let estimate = false;
+    state.services.forEach((s) => {
+      const p = liveServicePrice(s);
+      value += p.value;
+      duration += Number(s.duration_minutes || 0) + (state.vehicle.category === 'pickup' ? Number(s.pickup_extra_minutes || 0) : 0);
+      if (p.estimate) estimate = true;
+    });
+    return { value, duration, estimate };
   }
 
   async function renderCatalog() {
@@ -426,26 +470,35 @@
             ${s.description ? `<span class="service-desc">${s.description}</span>` : ''}
             ${s.package_items && s.package_items.length ? `<span class="service-items">${s.package_items.slice(0, 3).join(' · ')}${s.package_items.length > 3 ? ' · +' + (s.package_items.length - 3) + ' itens' : ''}</span>` : ''}
             <span class="service-foot">
-              <span class="service-duration">${s.duration_minutes} min</span>
+              <span class="service-duration">${fmtDur(s.duration_minutes)}${s.pickup_extra_minutes ? ' · picape +' + fmtDur(s.pickup_extra_minutes) : ''}</span>
               <span class="service-price">${p.estimate ? 'a partir de ' : ''}${money(p.value)}</span>
             </span>
           `;
-          if (state.service && state.service.id === s.id) card.classList.add('selected');
+          if (state.services.some((x) => x.id === s.id)) card.classList.add('selected');
           card.addEventListener('click', () => {
-            state.service = {
-              id: s.id,
-              name: s.name,
-              price_type: s.price_type,
-              price: p.value,
-              estimate: p.estimate,
-              duration_minutes: s.duration_minutes,
-              category_name: cat.name,
-              description: s.description
-            };
+            const idx = state.services.findIndex((x) => x.id === s.id);
+            if (idx >= 0) {
+              state.services.splice(idx, 1);
+              card.classList.remove('selected');
+            } else {
+              state.services.push({
+                id: s.id,
+                name: s.name,
+                price_type: s.price_type,
+                price: p.value,
+                estimate: p.estimate,
+                duration_minutes: s.duration_minutes,
+                pickup_extra_minutes: s.pickup_extra_minutes || 0,
+                category_name: cat.name,
+                description: s.description
+              });
+              card.classList.add('selected');
+            }
             state.slot = null;
+            state.slotEndDate = null;
+            state.slotEndTime = null;
+            state.slotDuration = null;
             saveState();
-            list.querySelectorAll('.service-card').forEach((c) => c.classList.remove('selected'));
-            card.classList.add('selected');
           });
           list.appendChild(card);
         });
@@ -459,22 +512,24 @@
 
   /* ---------- step 6: slots ---------- */
 
-  const slotCache = {};
+  let slotCache = {};
 
   async function renderSlots() {
     const grid = $('slotsGrid');
     const loading = $('slotLoading');
     const subtitle = $('slotSubtitle');
-    subtitle.textContent = `${state.service.name} · ${formatDateBR(state.date)}`;
+    const serviceIds = state.services.map((s) => s.id);
+    subtitle.textContent = `${state.services.map((s) => s.name).join(' + ')} · ${formatDateBR(state.date)}`;
     grid.innerHTML = '';
-    const key = `${state.modality.id}|${state.unit ? state.unit.id : ''}|${state.service.id}|${state.date}`;
+    const key = `${state.modality.id}|${state.unit ? state.unit.id : ''}|${serviceIds.slice().sort((a, b) => a - b).join(',')}|${state.date}|${state.vehicle.category}`;
     if (!slotCache[key]) {
       loading.hidden = false;
       try {
         const params = new URLSearchParams({
           modality_id: state.modality.id,
-          service_id: state.service.id,
-          date: state.date
+          service_ids: serviceIds.join(','),
+          date: state.date,
+          vehicle_category: state.vehicle.category
         });
         if (state.unit) params.set('unit_id', state.unit.id);
         const data = await api('/api/availability?' + params.toString());
@@ -491,6 +546,8 @@
       grid.innerHTML = `<div class="error-box">Não há horários disponíveis nesta data.</div>`;
       return;
     }
+    const durNote = data.duration_minutes ? `<p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${data.vehicle_category === 'pickup' ? ' (inclui acréscimo para picape)' : ''}</p>` : '';
+    grid.innerHTML = durNote;
     data.slots.forEach((s) => {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -498,12 +555,21 @@
       const available = s.status === 'available';
       if (!available) btn.classList.add('disabled');
       btn.dataset.time = s.time;
-      btn.textContent = s.time;
-      btn.title = s.reason || '';
+      let label = s.time;
+      if (s.end_time) {
+        label = s.end_date && s.end_date !== state.date
+          ? `${s.time} → ${formatDateShort(s.end_date)} ${s.end_time}`
+          : `${s.time} → ${s.end_time}`;
+      }
+      btn.textContent = label;
+      btn.title = s.reason || label;
       if (state.slot === s.time && available) btn.classList.add('selected');
       if (available) {
         btn.addEventListener('click', () => {
           state.slot = s.time;
+          state.slotEndDate = s.end_date || state.date;
+          state.slotEndTime = s.end_time || null;
+          state.slotDuration = data.duration_minutes || null;
           saveState();
           grid.querySelectorAll('.slot-btn').forEach((c) => c.classList.remove('selected'));
           btn.classList.add('selected');
@@ -608,9 +674,15 @@
   function renderReview() {
     renderAddress();
     const card = $('reviewCard');
-    const p = currentServicePrice();
+    const totals = servicesTotals();
     const fee = Number(state.modality.fee || 0);
-    const total = p.value + fee;
+    const total = totals.value + fee;
+    const duration = state.slotDuration || totals.duration;
+
+    const servicesLines = state.services.map((s) => {
+      const p = liveServicePrice(s);
+      return `<div class="review-line"><span>${escapeHtml(s.name)}</span><strong>${p.estimate ? 'a partir de ' : ''}${money(p.value)}</strong></div>`;
+    }).join('');
 
     let unitLine = '';
     if (state.modality.slug === 'in-store' && state.unit) {
@@ -630,15 +702,18 @@
       ${unitLine}
       <div class="review-line"><span>Veículo</span><strong>${state.vehicle.brand} ${state.vehicle.model}${state.vehicle.year ? ' · ' + state.vehicle.year : ''} · ${CATEGORY_META[state.vehicle.category].label}</strong></div>
       <div class="review-line"><span>Data</span><strong>${formatDateShort(state.date)}</strong></div>
-      <div class="review-line"><span>Serviço</span><strong>${state.service.name}</strong></div>
-      <div class="review-line"><span>Horário</span><strong>${state.slot} (${state.service.duration_minutes} min)</strong></div>
+      <h3 class="review-section-title">Serviços selecionados</h3>
+      ${servicesLines}
+      <div class="review-line"><span>Início</span><strong>${formatDateShort(state.date)} às ${state.slot}</strong></div>
+      <div class="review-line"><span>Previsão de término</span><strong>${state.slotEndTime ? (state.slotEndDate !== state.date ? formatDateShort(state.slotEndDate) + ' às ' + state.slotEndTime : state.slotEndTime) : '—'}</strong></div>
+      <div class="review-line"><span>Total de horas de trabalho</span><strong>${fmtDur(duration)}</strong></div>
       ${addressLine}
       <div class="review-total">
-        <div class="review-line"><span>Serviço</span><strong>${money(p.value)}</strong></div>
+        <div class="review-line"><span>Serviços (${state.services.length})</span><strong>${totals.estimate ? 'a partir de ' : ''}${money(totals.value)}</strong></div>
         <div class="review-line"><span>Taxa (${state.modality.name})</span><strong>${fee > 0 ? money(fee) : 'Grátis'}</strong></div>
         <div class="review-line total"><span>Total estimado</span><strong>${money(total)}</strong></div>
       </div>
-      ${p.estimate ? '<p class="review-note">Valor a partir de: o preço final será confirmado após avaliação do veículo.</p>' : ''}
+      ${totals.estimate ? '<p class="review-note">Valor a partir de: o preço final será confirmado após avaliação do veículo.</p>' : ''}
     `;
   }
 
@@ -679,7 +754,7 @@
     return {
       modality_id: state.modality.id,
       unit_id: state.unit ? state.unit.id : null,
-      service_id: state.service.id,
+      service_ids: state.services.map((s) => s.id),
       customer_name: state.customer.name.trim(),
       customer_phone: state.customer.phone,
       customer_email: state.customer.email.trim() || null,
@@ -833,6 +908,13 @@
     $('btnHome').addEventListener('click', () => {
       sessionStorage.removeItem(STORAGE_KEY);
       location.reload();
+    });
+
+    document.querySelectorAll('.site-header .brand').forEach((b) => {
+      b.addEventListener('click', () => {
+        goToStep(1, true);
+        stepRender(1);
+      });
     });
 
     const nameInput = $('customerName');

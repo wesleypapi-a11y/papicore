@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS services (
   price_pickup REAL,
   starting_price REAL,
   duration_minutes INTEGER NOT NULL DEFAULT 60,
+  pickup_extra_minutes INTEGER NOT NULL DEFAULT 60,
   package_items TEXT,
   available_at_unit INTEGER NOT NULL DEFAULT 1,
   available_pickup_delivery INTEGER NOT NULL DEFAULT 1,
@@ -136,8 +137,11 @@ CREATE TABLE ${table} (
   vehicle_category TEXT NOT NULL DEFAULT 'hatch',
   appointment_date TEXT NOT NULL,
   start_time TEXT NOT NULL,
+  end_date TEXT,
   end_time TEXT NOT NULL,
+  booked_duration_minutes INTEGER NOT NULL DEFAULT 60,
   service_name TEXT,
+  services_json TEXT,
   service_price REAL NOT NULL DEFAULT 0,
   modality_fee REAL NOT NULL DEFAULT 0,
   total_price REAL NOT NULL DEFAULT 0,
@@ -174,6 +178,7 @@ CREATE TABLE ${table} (
   unit_id INTEGER REFERENCES units(id) ON DELETE CASCADE,
   blocked_date TEXT NOT NULL,
   blocked_time TEXT,
+  blocked_time_end TEXT,
   block_full_day INTEGER NOT NULL DEFAULT 0,
   reason TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -193,8 +198,17 @@ ensureColumn('units', 'address_zipcode', 'TEXT');
 ensureColumn('units', 'address_reference', 'TEXT');
 ensureColumn('units', 'maps_link', 'TEXT');
 ensureColumn('units', 'capacity', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('units', 'lunch_start', "TEXT NOT NULL DEFAULT '12:00'");
+ensureColumn('units', 'lunch_end', "TEXT NOT NULL DEFAULT '13:00'");
 
 ensureColumn('company_settings', 'capacity', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('company_settings', 'lunch_start', "TEXT NOT NULL DEFAULT '12:00'");
+ensureColumn('company_settings', 'lunch_end', "TEXT NOT NULL DEFAULT '13:00'");
+
+ensureColumn('services', 'pickup_extra_minutes', 'INTEGER NOT NULL DEFAULT 60');
+ensureColumn('appointments', 'end_date', 'TEXT');
+ensureColumn('appointments', 'booked_duration_minutes', 'INTEGER NOT NULL DEFAULT 60');
+ensureColumn('appointments', 'services_json', 'TEXT');
 
 /* ---------- appointments: rebuild quando schema antigo ---------- */
 const STATUS_MAP = {
@@ -215,7 +229,7 @@ function migrateAppointments() {
       id, appointment_code, modality_id, unit_id, service_id,
       customer_name, customer_phone, customer_email, customer_cpf,
       vehicle_brand, vehicle_model, vehicle_year, vehicle_plate, vehicle_color, vehicle_category,
-      appointment_date, start_time, end_time, service_name,
+      appointment_date, start_time, end_date, end_time, booked_duration_minutes, service_name,
       service_price, modality_fee, total_price, price_is_estimate,
       status,
       address_zipcode, address_street, address_number, address_complement, address_neighborhood,
@@ -228,7 +242,7 @@ function migrateAppointments() {
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?,
       ?, ?, ?, ?, ?,
@@ -247,7 +261,7 @@ function migrateAppointments() {
         r.id, r.appointment_code, 1, r.unit_id, null,
         r.customer_name, r.customer_phone, r.customer_email, null,
         null, r.vehicle_model, null, r.vehicle_plate, null, 'hatch',
-        r.appointment_date, r.appointment_time, end, null,
+        r.appointment_date, r.appointment_time, r.appointment_date, end, 60, null,
         0, 0, 0, 0,
         STATUS_MAP[r.status] || 'pending',
         null, null, null, null, null, null, null, null,
@@ -281,22 +295,22 @@ const SEED_CATEGORIES = [
 
 const SEED_SERVICES = [
   // Torque Wash
-  { id: 1, category_id: 1, name: 'Lavagem Técnica Premium', slug: 'lavagem-tecnica-premium', description: 'Lavagem técnica completa: pré-lavagem, espuma ativa, enxágue com água desmineralizada e acabamento.', price_type: 'category', price_hatch: 120, price_sedan: 140, price_suv: 160, price_pickup: 180, duration_minutes: 60, display_order: 1 },
-  { id: 2, category_id: 1, name: 'Lavagem Detalhada', slug: 'lavagem-detalhada', description: 'Lavagem completa com atenção aos detalhes, incluindo soleiras, batentes e acabamentos.', price_type: 'category', price_hatch: 220, price_sedan: 250, price_suv: 290, price_pickup: 320, duration_minutes: 120, display_order: 2 },
-  { id: 3, category_id: 1, name: 'Cristalização dos Vidros', slug: 'cristalizacao-dos-vidros', description: 'Aplicação de cristalização hidrofóbica em todos os vidros, melhorando a visibilidade e repelindo água.', price_type: 'category', price_hatch: 220, price_sedan: 250, price_suv: 300, price_pickup: 320, duration_minutes: 60, display_order: 3 },
-  { id: 4, category_id: 1, name: 'Restauração de Faróis (par)', slug: 'restauracao-de-farois', description: 'Lixamento, polimento e aplicação de proteção UV para recuperar o brilho e a transparência dos faróis.', price_type: 'category', price_hatch: 250, price_sedan: 250, price_suv: 280, price_pickup: 280, duration_minutes: 90, display_order: 4 },
-  { id: 5, category_id: 1, name: 'Limpeza Técnica do Motor', slug: 'limpeza-tecnica-do-motor', description: 'Limpeza segura do compartimento do motor com produtos específicos e proteção dos componentes.', price_type: 'category', price_hatch: 180, price_sedan: 180, price_suv: 220, price_pickup: 220, duration_minutes: 90, display_order: 5 },
+  { id: 1, category_id: 1, name: 'Lavagem Técnica Premium', slug: 'lavagem-tecnica-premium', description: 'Lavagem técnica completa: pré-lavagem, espuma ativa, enxágue com água desmineralizada e acabamento.', price_type: 'category', price_hatch: 120, price_sedan: 140, price_suv: 160, price_pickup: 180, duration_minutes: 150, display_order: 1 },
+  { id: 2, category_id: 1, name: 'Lavagem Detalhada', slug: 'lavagem-detalhada', description: 'Lavagem completa com atenção aos detalhes, incluindo soleiras, batentes e acabamentos.', price_type: 'category', price_hatch: 220, price_sedan: 250, price_suv: 290, price_pickup: 320, duration_minutes: 300, display_order: 2 },
+  { id: 3, category_id: 1, name: 'Cristalização dos Vidros', slug: 'cristalizacao-dos-vidros', description: 'Aplicação de cristalização hidrofóbica em todos os vidros, melhorando a visibilidade e repelindo água.', price_type: 'category', price_hatch: 220, price_sedan: 250, price_suv: 300, price_pickup: 320, duration_minutes: 150, display_order: 3 },
+  { id: 4, category_id: 1, name: 'Restauração de Faróis (par)', slug: 'restauracao-de-farois', description: 'Lixamento, polimento e aplicação de proteção UV para recuperar o brilho e a transparência dos faróis.', price_type: 'category', price_hatch: 250, price_sedan: 250, price_suv: 280, price_pickup: 280, duration_minutes: 180, display_order: 4 },
+  { id: 5, category_id: 1, name: 'Limpeza Técnica do Motor', slug: 'limpeza-tecnica-do-motor', description: 'Limpeza segura do compartimento do motor com produtos específicos e proteção dos componentes.', price_type: 'category', price_hatch: 180, price_sedan: 180, price_suv: 220, price_pickup: 220, duration_minutes: 180, display_order: 5 },
   // Torque Detail Premium
-  { id: 6, category_id: 2, name: 'Higienização Interna Completa', slug: 'higienizacao-interna-completa', description: 'Higienização profunda de bancos, carpetes, teto e painel, com extração de manchas e odores.', price_type: 'category', price_hatch: 380, price_sedan: 450, price_suv: 550, price_pickup: 600, duration_minutes: 180, display_order: 1 },
+  { id: 6, category_id: 2, name: 'Higienização Interna Completa', slug: 'higienizacao-interna-completa', description: 'Higienização profunda de bancos, carpetes, teto e painel, com extração de manchas e odores.', price_type: 'category', price_hatch: 380, price_sedan: 450, price_suv: 550, price_pickup: 600, duration_minutes: 960, display_order: 1 },
   // Torque Paint Correction
-  { id: 7, category_id: 3, name: 'Polimento Comercial', slug: 'polimento-comercial', description: 'Polimento leve para renovar o brilho e remover marcas superficiais.', price_type: 'category', price_hatch: 450, price_sedan: 500, price_suv: 600, price_pickup: 650, duration_minutes: 240, display_order: 1 },
-  { id: 8, category_id: 3, name: 'Polimento Técnico 1 etapa', slug: 'polimento-tecnico-1-etapa', description: 'Correção de pintura em 1 etapa, removendo marcas leves e hologramas.', price_type: 'category', price_hatch: 750, price_sedan: 850, price_suv: 950, price_pickup: 1050, duration_minutes: 360, display_order: 2 },
+  { id: 7, category_id: 3, name: 'Polimento Comercial', slug: 'polimento-comercial', description: 'Polimento leve para renovar o brilho e remover marcas superficiais.', price_type: 'category', price_hatch: 450, price_sedan: 500, price_suv: 600, price_pickup: 650, duration_minutes: 360, display_order: 1 },
+  { id: 8, category_id: 3, name: 'Polimento Técnico 1 etapa', slug: 'polimento-tecnico-1-etapa', description: 'Correção de pintura em 1 etapa, removendo marcas leves e hologramas.', price_type: 'category', price_hatch: 750, price_sedan: 850, price_suv: 950, price_pickup: 1050, duration_minutes: 480, display_order: 2 },
   { id: 9, category_id: 3, name: 'Polimento Técnico 2 etapas', slug: 'polimento-tecnico-2-etapas', description: 'Correção de pintura em 2 etapas, com remoção de marcas médias e leves.', price_type: 'category', price_hatch: 1150, price_sedan: 1300, price_suv: 1500, price_pickup: 1700, duration_minutes: 480, display_order: 3 },
-  { id: 10, category_id: 3, name: 'Polimento Técnico 3 etapas', slug: 'polimento-tecnico-3-etapas', description: 'Correção de pintura em 3 etapas, o mais completo para pinturas muito danificadas.', price_type: 'category', price_hatch: 1600, price_sedan: 1850, price_suv: 2100, price_pickup: 2400, duration_minutes: 600, display_order: 4 },
+  { id: 10, category_id: 3, name: 'Polimento Técnico 3 etapas', slug: 'polimento-tecnico-3-etapas', description: 'Correção de pintura em 3 etapas, o mais completo para pinturas muito danificadas.', price_type: 'category', price_hatch: 1600, price_sedan: 1850, price_suv: 2100, price_pickup: 2400, duration_minutes: 480, display_order: 4 },
   // Torque Ceramic Shield
-  { id: 11, category_id: 4, name: 'Vitrificação 1 ano', slug: 'vitrificacao-1-ano', description: 'Aplicação de revestimento cerâmico com durabilidade de 1 ano.', price_type: 'category', price_hatch: 950, price_sedan: 1100, price_suv: 1250, price_pickup: 1350, duration_minutes: 480, display_order: 1 },
-  { id: 12, category_id: 4, name: 'Vitrificação 3 anos', slug: 'vitrificacao-3-anos', description: 'Revestimento cerâmico de alta durabilidade com garantia de 3 anos.', price_type: 'category', price_hatch: 1750, price_sedan: 1950, price_suv: 2250, price_pickup: 2450, duration_minutes: 600, display_order: 2 },
-  { id: 13, category_id: 4, name: 'Vitrificação 5 anos', slug: 'vitrificacao-5-anos', description: 'Revestimento cerâmico profissional com durabilidade de até 5 anos.', price_type: 'category', price_hatch: 2500, price_sedan: 2800, price_suv: 3100, price_pickup: 3500, duration_minutes: 720, display_order: 3 },
+  { id: 11, category_id: 4, name: 'Vitrificação 1 ano', slug: 'vitrificacao-1-ano', description: 'Aplicação de revestimento cerâmico com durabilidade de 1 ano.', price_type: 'category', price_hatch: 950, price_sedan: 1100, price_suv: 1250, price_pickup: 1350, duration_minutes: 960, display_order: 1 },
+  { id: 12, category_id: 4, name: 'Vitrificação 3 anos', slug: 'vitrificacao-3-anos', description: 'Revestimento cerâmico de alta durabilidade com garantia de 3 anos.', price_type: 'category', price_hatch: 1750, price_sedan: 1950, price_suv: 2250, price_pickup: 2450, duration_minutes: 960, display_order: 2 },
+  { id: 13, category_id: 4, name: 'Vitrificação 5 anos', slug: 'vitrificacao-5-anos', description: 'Revestimento cerâmico profissional com durabilidade de até 5 anos.', price_type: 'category', price_hatch: 2500, price_sedan: 2800, price_suv: 3100, price_pickup: 3500, duration_minutes: 960, display_order: 3 },
   // Torque Signature
   { id: 14, category_id: 5, name: 'Torque Signature Silver', slug: 'torque-signature-silver', description: 'Pacote premium de higienização e proteção.', price_type: 'fixed', fixed_price: 590, duration_minutes: 120, package_items: JSON.stringify(['Lavagem Técnica Premium', 'Limpeza interna completa', 'Higienização de rodas e pneus', 'Aplicação de cera de proteção', 'Aromatizador']), display_order: 1 },
   { id: 15, category_id: 5, name: 'Torque Signature Gold', slug: 'torque-signature-gold', description: 'Pacote completo com polimento e proteção de pintura.', price_type: 'fixed', fixed_price: 1490, duration_minutes: 240, package_items: JSON.stringify(['Tudo do pacote Silver', 'Polimento Comercial', 'Descontaminação de pintura', 'Proteção de pintura (selante)', 'Higienização interna com extração', 'Restauração de plásticos externos', 'Aromatizador premium']), display_order: 2 },
@@ -315,16 +329,39 @@ if (!tableExists('appointments')) {
   migrateAppointments();
 }
 
+/* backfill: agendamentos legados recebem end_date = appointment_date e duração reservada */
+db.prepare('UPDATE appointments SET end_date = appointment_date WHERE end_date IS NULL').run();
+db.prepare(
+  `UPDATE appointments SET booked_duration_minutes = COALESCE(
+     (SELECT duration_minutes FROM services WHERE services.id = appointments.service_id), 60
+   ) WHERE booked_duration_minutes IS NULL OR booked_duration_minutes = 0`
+).run();
+
+/* ---------- migrações versionadas ---------- */
+function migrationApplied(name) {
+  return !!db.prepare('SELECT name FROM schema_migrations WHERE name = ?').get(name);
+}
+function markMigration(name) {
+  db.prepare('INSERT INTO schema_migrations (name) VALUES (?)').run(name);
+}
+db.exec(
+  'CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime(\'now\', \'localtime\')))'
+);
+
+if (!migrationApplied('seed_durations_v1')) {
+  migrateSeedDurations();
+}
+
 /* ---------- blocked_schedules: unit_id passa a ser opcional ---------- */
 function migrateBlockedSchedules() {
   const rows = db.prepare('SELECT * FROM blocked_schedules').all();
   db.exec('DROP TABLE IF EXISTS blocked_schedules_new');
   db.exec(blockedDDL('blocked_schedules_new'));
   const insert = db.prepare(
-    'INSERT INTO blocked_schedules_new (id, unit_id, blocked_date, blocked_time, block_full_day, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO blocked_schedules_new (id, unit_id, blocked_date, blocked_time, blocked_time_end, block_full_day, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   );
   const migrate = db.transaction(() => {
-    for (const r of rows) insert.run(r.id, r.unit_id, r.blocked_date, r.blocked_time, r.block_full_day, r.reason, r.created_at);
+    for (const r of rows) insert.run(r.id, r.unit_id, r.blocked_date, r.blocked_time, r.blocked_time_end, r.block_full_day, r.reason, r.created_at);
     db.exec('DROP TABLE blocked_schedules');
     db.exec('ALTER TABLE blocked_schedules_new RENAME TO blocked_schedules');
   });
@@ -338,6 +375,8 @@ if (!tableExists('blocked_schedules')) {
   const unitCol = meta.find((c) => c.name === 'unit_id');
   if (unitCol && unitCol.notnull === 1) migrateBlockedSchedules();
 }
+
+ensureColumn('blocked_schedules', 'blocked_time_end', 'TEXT');
 
 /* ---------- índices ---------- */
 db.exec(`
@@ -369,18 +408,32 @@ function seedCatalog() {
     INSERT OR IGNORE INTO services
       (id, category_id, name, slug, description, price_type, fixed_price,
        price_hatch, price_sedan, price_suv, price_pickup, starting_price,
-       duration_minutes, package_items, available_at_unit, available_pickup_delivery,
+       duration_minutes, pickup_extra_minutes, package_items, available_at_unit, available_pickup_delivery,
        available_mobile_delivery, active, display_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?)
   `);
   for (const s of SEED_SERVICES) {
     insertService.run(
       s.id, s.category_id, s.name, s.slug, s.description, s.price_type,
       s.fixed_price ?? null, s.price_hatch ?? null, s.price_sedan ?? null,
       s.price_suv ?? null, s.price_pickup ?? null, s.starting_price ?? null,
-      s.duration_minutes, s.package_items ?? null, s.display_order
+      s.duration_minutes, s.pickup_extra_minutes ?? 60, s.package_items ?? null, s.display_order
     );
   }
+}
+
+/* migração: aplica as durações padrão de catálogo em serviços já existentes */
+function migrateSeedDurations() {
+  const applyDurations = db.transaction(() => {
+    const update = db.prepare(
+      "UPDATE services SET duration_minutes = ?, pickup_extra_minutes = ?, updated_at = datetime('now', 'localtime') WHERE slug = ?"
+    );
+    for (const s of SEED_SERVICES) {
+      update.run(s.duration_minutes, s.pickup_extra_minutes ?? 60, s.slug);
+    }
+    markMigration('seed_durations_v1');
+  });
+  applyDurations();
 }
 
 function seed() {
@@ -388,20 +441,23 @@ function seed() {
     INSERT INTO company_settings
       (id, company_name, phone, whatsapp, logo_url,
        default_opening_time, default_closing_time, default_interval,
+       lunch_start, lunch_end,
        working_days, confirmation_message)
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const settings = db.prepare('SELECT id, company_name FROM company_settings WHERE id = 1').get();
   if (!settings) {
     insertSettings.run(
       'Torque Detail',
-      '(34) 99999-0000',
-      '(34) 99999-0000',
+      '(12) 99185-7345',
+      '(12) 99185-7345',
       '',
       '08:00',
       '17:00',
       60,
+      '12:00',
+      '13:00',
       JSON.stringify([1, 2, 3, 4, 5, 6]),
       'Solicitação enviada com sucesso! Nossa equipe analisará a disponibilidade e entrará em contato pelo WhatsApp para confirmar.'
     );
@@ -413,11 +469,11 @@ function seed() {
   if (unitCount === 0) {
     const insertUnit = db.prepare(`
       INSERT INTO units
-        (name, address, phone, opening_time, closing_time, appointment_interval, working_days, active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        (name, address, phone, opening_time, closing_time, appointment_interval, lunch_start, lunch_end, working_days, active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `);
     const working = JSON.stringify([1, 2, 3, 4, 5, 6]);
-    insertUnit.run('Torque Detail — Centro', 'Rua das Flores, 123 — Centro', '(34) 99999-0001', '08:00', '17:00', 60, working);
+    insertUnit.run('Torque Detail — Centro', 'Rua das Flores, 123 — Centro', '(12) 99185-7345', '08:00', '17:00', 60, '12:00', '13:00', working);
   }
 
   const adminUser = db.prepare('SELECT id FROM users WHERE email = ?').get(process.env.ADMIN_EMAIL || 'admin@sistema.com');

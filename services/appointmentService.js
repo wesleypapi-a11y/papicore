@@ -1,5 +1,15 @@
 const db = require('../database/database');
-const { getUnit, getModality, getService, getConflicts } = require('./availabilityService');
+const { getUnit, getModality, getService, getConflicts, getFullDayBlockedDates } = require('./availabilityService');
+const {
+  lunchConfig,
+  dailyProductiveMinutes,
+  serviceDuration,
+  addDaysStr,
+  computeEndDateTime,
+  productiveMinutesBetween,
+  dateTimeStr,
+  datetimeOverlap
+} = require('./durationService');
 const {
   AppError,
   ACTIVE_STATUSES,
@@ -15,9 +25,6 @@ const {
   normalizePhone,
   parseWorkingDays,
   isWorkingDay,
-  buildSlotsWithDuration,
-  addMinutes,
-  overlaps,
   nowDateTime,
   generateCode
 } = require('../utils/helpers');
@@ -36,12 +43,13 @@ function priceIsEstimate(service) {
   return service.price_type === 'starting';
 }
 
-function countOverlaps(date, unitIdForScope, start, end, excludeId = null) {
+function countOverlaps(startDT, endDT, unitIdForScope, excludeId = null) {
   const placeholders = ACTIVE_STATUSES.map(() => '?').join(', ');
   let sql = `SELECT COUNT(*) AS c FROM appointments
-             WHERE appointment_date = ? AND status IN (${placeholders})
-               AND start_time < ? AND end_time > ?`;
-  const params = [date, ...ACTIVE_STATUSES, end, start];
+             WHERE status IN (${placeholders})
+               AND ? < (COALESCE(end_date, appointment_date) || 'T' || end_time)
+               AND ? > (appointment_date || 'T' || start_time)`;
+  const params = [...ACTIVE_STATUSES, startDT, endDT];
   if (unitIdForScope) {
     sql += ' AND unit_id = ?';
     params.push(unitIdForScope);
@@ -67,6 +75,7 @@ function validateAppointmentInput(body, opts = {}) {
     modality_id,
     unit_id,
     service_id,
+    service_ids,
     customer_name,
     customer_phone,
     customer_email,
@@ -104,22 +113,28 @@ function validateAppointmentInput(body, opts = {}) {
     throw new AppError(400, 'Forma de atendimento indisponível.');
   }
 
-  if (!Number.isInteger(service_id) || service_id <= 0) {
-    throw new AppError(400, 'Selecione um serviço.');
+  const serviceIds = Array.isArray(service_ids) && service_ids.length
+    ? service_ids.map(Number)
+    : (Number.isInteger(service_id) && service_id > 0 ? [service_id] : []);
+
+  if (!serviceIds.length || serviceIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+    throw new AppError(400, 'Selecione ao menos um serviço.');
   }
-  const service = getService(service_id);
-  if (!service || !service.active) {
+  const services = serviceIds.map((id) => getService(id));
+  if (services.some((s) => !s || !s.active)) {
     throw new AppError(404, 'Serviço não encontrado ou desativado.');
   }
 
-  if (modality.slug === 'in-store' && !service.available_at_unit) {
-    throw new AppError(400, 'Este serviço não está disponível na modalidade Lavagem na unidade.');
-  }
-  if (modality.slug === 'pickup' && !service.available_pickup_delivery) {
-    throw new AppError(400, 'Este serviço não está disponível na modalidade Leva e traz.');
-  }
-  if (modality.slug === 'delivery' && !service.available_mobile_delivery) {
-    throw new AppError(400, 'Este serviço não está disponível na modalidade Delivery.');
+  for (const s of services) {
+    if (modality.slug === 'in-store' && !s.available_at_unit) {
+      throw new AppError(400, `O serviço "${s.name}" não está disponível na modalidade Lavagem na unidade.`);
+    }
+    if (modality.slug === 'pickup' && !s.available_pickup_delivery) {
+      throw new AppError(400, `O serviço "${s.name}" não está disponível na modalidade Leva e traz.`);
+    }
+    if (modality.slug === 'delivery' && !s.available_mobile_delivery) {
+      throw new AppError(400, `O serviço "${s.name}" não está disponível na modalidade Delivery.`);
+    }
   }
 
   let unit = null;
@@ -174,21 +189,55 @@ function validateAppointmentInput(body, opts = {}) {
   }
 
   const settings = getSettings();
-  const duration = Number(service.duration_minutes);
+  const duration = services.reduce((sum, s) => sum + serviceDuration(s, category), 0);
   const opening = unit ? unit.opening_time : settings.default_opening_time;
   const closing = unit ? unit.closing_time : settings.default_closing_time;
   const interval = unit ? unit.appointment_interval : settings.default_interval;
   const workingDays = unit ? parseWorkingDays(unit.working_days) : parseWorkingDays(settings.working_days);
+  const lunch = lunchConfig(unit, settings);
+  const daily = dailyProductiveMinutes(opening, closing, lunch.start, lunch.end);
 
   if (!isWorkingDay(workingDays, appointment_date)) {
     throw new AppError(400, 'Não atendemos nesta data.');
   }
-  const slots = buildSlotsWithDuration(opening, closing, interval, duration);
-  if (!slots.includes(start_time)) {
-    throw new AppError(400, 'Horário fora do expediente para este serviço.');
-  }
 
-  const endTime = addMinutes(start_time, duration);
+  const fullDayBlockedDates = new Set(getFullDayBlockedDates(appointment_date, addDaysStr(appointment_date, 16), unit ? unit.id : null));
+  const engineOpts = {
+    opening,
+    closing,
+    lunchStart: lunch.start,
+    lunchEnd: lunch.end,
+    isDayAvailable: (d) => isWorkingDay(workingDays, d) && !fullDayBlockedDates.has(d)
+  };
+
+  const validSlots = [];
+  const startMin = (t) => {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const fmt = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  for (let m = startMin(opening); m < startMin(closing); m += interval) {
+    const time = fmt(m);
+    const end = computeEndDateTime(appointment_date, time, duration, engineOpts);
+    const fits = duration <= daily ? end.date === appointment_date : time === opening;
+    if (fits) validSlots.push(time);
+  }
+  const manualEnd = opts.allowStatus && body.end_date && body.end_time && body.manual_end
+    && isValidDateStr(body.end_date) && isValidTime(body.end_time);
+  let end;
+  let bookedDuration = duration;
+  if (manualEnd) {
+    end = { date: body.end_date, time: body.end_time };
+    if (dateTimeStr(end.date, end.time) <= dateTimeStr(appointment_date, start_time)) {
+      throw new AppError(400, 'O término deve ser após o início.');
+    }
+    bookedDuration = productiveMinutesBetween(appointment_date, start_time, end.date, end.time, engineOpts);
+  } else {
+    if (!validSlots.includes(start_time)) {
+      throw new AppError(400, 'Horário fora do expediente para este serviço.');
+    }
+    end = computeEndDateTime(appointment_date, start_time, duration, engineOpts);
+  }
   const now = nowDateTime();
   if (appointment_date === now.date && start_time <= now.time) {
     throw new AppError(400, 'Não é possível agendar para um horário que já passou.');
@@ -219,24 +268,34 @@ function validateAppointmentInput(body, opts = {}) {
     if (!STATUSES.includes(finalStatus)) throw new AppError(400, 'Status inválido.');
   }
 
-  const servicePrice = calcServicePrice(service, category);
+  const servicePrice = services.reduce((sum, s) => sum + calcServicePrice(s, category), 0);
   const modalityFee = Number(modality.fee || 0);
   const totalPrice = servicePrice + modalityFee;
+  const serviceName = services.map((s) => s.name).join(' + ');
+  const servicesJson = JSON.stringify(services.map((s) => ({
+    id: s.id,
+    name: s.name,
+    price: calcServicePrice(s, category),
+    duration_minutes: serviceDuration(s, category)
+  })));
 
   return {
     modality,
-    service,
+    services,
     unit,
     modality_id: modality.id,
     unit_id: unit ? unit.id : null,
-    service_id: service.id,
-    service_name: service.name,
+    service_id: services[0].id,
+    service_name: serviceName,
+    services_json: servicesJson,
     duration,
-    end_time: endTime,
+    booked_duration_minutes: bookedDuration,
+    end_date: end.date,
+    end_time: end.time,
     service_price: servicePrice,
     modality_fee: modalityFee,
     total_price: totalPrice,
-    price_is_estimate: priceIsEstimate(service) ? 1 : 0,
+    price_is_estimate: services.some((s) => priceIsEstimate(s)) ? 1 : 0,
     status: finalStatus,
     customer_name: String(customer_name).trim(),
     customer_phone: normalizePhone(customer_phone),
@@ -276,14 +335,14 @@ function insertAppointment(data) {
         (appointment_code, modality_id, unit_id, service_id,
          customer_name, customer_phone, customer_email, customer_cpf,
          vehicle_brand, vehicle_model, vehicle_year, vehicle_plate, vehicle_color, vehicle_category,
-         appointment_date, start_time, end_time, service_name,
+         appointment_date, start_time, end_date, end_time, booked_duration_minutes, service_name, services_json,
          service_price, modality_fee, total_price, price_is_estimate, status,
          address_zipcode, address_street, address_number, address_complement, address_neighborhood,
          address_city, address_state, address_reference,
          responsible_name, responsible_phone,
          has_water_access, has_power_access, key_delivery_confirmed,
          customer_notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       code,
@@ -302,8 +361,11 @@ function insertAppointment(data) {
       data.vehicle_category,
       data.appointment_date,
       data.start_time,
+      data.end_date,
       data.end_time,
+      data.booked_duration_minutes,
       data.service_name,
+      data.services_json,
       data.service_price,
       data.modality_fee,
       data.total_price,
@@ -337,9 +399,14 @@ function insertAppointment(data) {
     .get(info.lastInsertRowid);
 }
 
-function assertSlotAvailable({ appointment_date, start_time, end_time, unit, capacity }) {
-  const conflicts = getConflicts(appointment_date, unit ? unit.id : null)
-    .filter((c) => overlaps(start_time, end_time, c.start_time, c.end_time));
+function assertSlotAvailable({ appointment_date, end_date, start_time, end_time, unit, capacity }) {
+  const conflicts = getConflicts(appointment_date, end_date || appointment_date, unit ? unit.id : null)
+    .filter((c) => datetimeOverlap(
+      dateTimeStr(appointment_date, start_time),
+      dateTimeStr(end_date || appointment_date, end_time),
+      dateTimeStr(c.appointment_date, c.start_time),
+      dateTimeStr(c.end_date || c.appointment_date, c.end_time)
+    ));
   if (conflicts.length >= capacity) {
     throw new AppError(409, 'Este horário não está mais disponível. Escolha outro horário.');
   }
@@ -352,7 +419,9 @@ function createAppointment(body) {
   const capacity = data.unit ? (data.unit.capacity || 1) : (settings.capacity || 1);
 
   const tx = db.transaction(() => {
-    const c = countOverlaps(data.appointment_date, data.unit ? data.unit.id : null, data.start_time, data.end_time);
+    const startDT = dateTimeStr(data.appointment_date, data.start_time);
+    const endDT = dateTimeStr(data.end_date, data.end_time);
+    const c = countOverlaps(startDT, endDT, data.unit ? data.unit.id : null);
     if (c >= capacity) {
       throw new AppError(409, 'Este horário não está mais disponível. Escolha outro horário.');
     }

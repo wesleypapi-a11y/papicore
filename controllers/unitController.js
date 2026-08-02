@@ -49,13 +49,18 @@ function buildAddress(data) {
 }
 
 function validateUnit(data) {
-  const { name, address, phone, opening_time, closing_time, appointment_interval, working_days, active, capacity, maps_link, address_reference } = data;
+  const { name, address, phone, opening_time, closing_time, lunch_start, lunch_end, appointment_interval, working_days, active, capacity, maps_link, address_reference } = data;
 
   if (!name || String(name).trim().length < 2) throw new AppError(400, 'Informe o nome da unidade.');
   if (!isValidPhone(phone)) throw new AppError(400, 'Informe um telefone válido.');
   if (!isValidTime(opening_time)) throw new AppError(400, 'Horário de abertura inválido.');
   if (!isValidTime(closing_time)) throw new AppError(400, 'Horário de fechamento inválido.');
   if (closing_time <= opening_time) throw new AppError(400, 'O horário de fechamento deve ser após a abertura.');
+  if (lunch_start && !isValidTime(lunch_start)) throw new AppError(400, 'Início do almoço inválido.');
+  if (lunch_end && !isValidTime(lunch_end)) throw new AppError(400, 'Fim do almoço inválido.');
+  if (lunch_start && lunch_end && lunch_end <= lunch_start) {
+    throw new AppError(400, 'O fim do almoço deve ser após o início.');
+  }
 
   const interval = Number(appointment_interval);
   if (!Number.isInteger(interval) || interval < 15 || interval > 240) {
@@ -82,6 +87,8 @@ function validateUnit(data) {
     phone: String(phone).trim(),
     opening_time,
     closing_time,
+    lunch_start: lunch_start ? String(lunch_start).trim() : '12:00',
+    lunch_end: lunch_end ? String(lunch_end).trim() : '13:00',
     appointment_interval: interval,
     capacity: cap,
     working_days: JSON.stringify(days),
@@ -96,14 +103,14 @@ function create(req, res) {
       `INSERT INTO units
         (name, address, address_street, address_number, address_complement, address_neighborhood,
          address_city, address_state, address_zipcode, address_reference, maps_link,
-         phone, opening_time, closing_time, appointment_interval, capacity, working_days, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         phone, opening_time, closing_time, lunch_start, lunch_end, appointment_interval, capacity, working_days, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       data.name, data.address, data.address_street, data.address_number, data.address_complement,
       data.address_neighborhood, data.address_city, data.address_state, data.address_zipcode,
       data.address_reference, data.maps_link, data.phone, data.opening_time, data.closing_time,
-      data.appointment_interval, data.capacity, data.working_days, data.active
+      data.lunch_start, data.lunch_end, data.appointment_interval, data.capacity, data.working_days, data.active
     );
 
   const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(info.lastInsertRowid);
@@ -121,13 +128,13 @@ function update(req, res) {
        name = ?, address = ?, address_street = ?, address_number = ?, address_complement = ?,
        address_neighborhood = ?, address_city = ?, address_state = ?, address_zipcode = ?,
        address_reference = ?, maps_link = ?, phone = ?, opening_time = ?, closing_time = ?,
-       appointment_interval = ?, capacity = ?, working_days = ?, active = ?, updated_at = datetime('now', 'localtime')
+       lunch_start = ?, lunch_end = ?, appointment_interval = ?, capacity = ?, working_days = ?, active = ?, updated_at = datetime('now', 'localtime')
      WHERE id = ?`
   ).run(
     data.name, data.address, data.address_street, data.address_number, data.address_complement,
     data.address_neighborhood, data.address_city, data.address_state, data.address_zipcode,
     data.address_reference, data.maps_link, data.phone, data.opening_time, data.closing_time,
-    data.appointment_interval, data.capacity, data.working_days, data.active, req.params.id
+    data.lunch_start, data.lunch_end, data.appointment_interval, data.capacity, data.working_days, data.active, req.params.id
   );
 
   const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(req.params.id);

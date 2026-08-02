@@ -27,6 +27,8 @@ function getPublicSettings(req, res) {
     default_closing_time: s.default_closing_time,
     default_interval: s.default_interval,
     capacity: s.capacity || 1,
+    lunch_start: s.lunch_start,
+    lunch_end: s.lunch_end,
     working_days: parseWorkingDays(s.working_days),
     confirmation_message: s.confirmation_message
   });
@@ -38,7 +40,7 @@ function listActiveUnits(req, res) {
       `SELECT id, name, address, address_street, address_number, address_complement,
               address_neighborhood, address_city, address_state, address_zipcode,
               address_reference, maps_link, phone, opening_time, closing_time,
-              appointment_interval, capacity, working_days
+              lunch_start, lunch_end, appointment_interval, capacity, working_days
        FROM units WHERE active = 1 ORDER BY name ASC`
     )
     .all();
@@ -102,6 +104,7 @@ function getCatalog(req, res) {
         price_pickup: s.price_pickup,
         starting_price: s.starting_price,
         duration_minutes: s.duration_minutes,
+        pickup_extra_minutes: s.pickup_extra_minutes,
         package_items: s.package_items ? JSON.parse(s.package_items) : [],
         display_order: s.display_order
       }))
@@ -112,20 +115,27 @@ function getCatalog(req, res) {
 
 function checkAvailability(req, res) {
   const modalityId = Number(req.query.modality_id);
-  const serviceId = Number(req.query.service_id);
+  const serviceIdsRaw = String(req.query.service_ids || req.query.service_id || '').trim();
   const date = req.query.date;
   const unitId = req.query.unit_id ? Number(req.query.unit_id) : null;
+  const category = req.query.vehicle_category ? String(req.query.vehicle_category).toLowerCase() : 'hatch';
 
   if (!modalityId) throw new AppError(400, 'Informe o campo modality_id.');
-  if (!serviceId) throw new AppError(400, 'Informe o campo service_id.');
+  if (!serviceIdsRaw) throw new AppError(400, 'Informe ao menos um serviço.');
   if (!isValidDateStr(date)) throw new AppError(400, 'Data inválida. Use o formato AAAA-MM-DD.');
   if (date < todayStr()) throw new AppError(400, 'Não é possível consultar uma data no passado.');
+  if (!VEHICLE_CATEGORIES.includes(category)) {
+    throw new AppError(400, 'Categoria de veículo inválida (use hatch, sedan, suv ou pickup).');
+  }
 
   const modality = getModality(modalityId);
   if (!modality || !modality.active) throw new AppError(404, 'Forma de atendimento não encontrada.');
 
-  const service = getService(serviceId);
-  if (!service || !service.active) throw new AppError(404, 'Serviço não encontrado.');
+  const serviceIds = serviceIdsRaw.split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const services = serviceIds.map((id) => getService(id));
+  if (!services.length || services.some((s) => !s || !s.active)) {
+    throw new AppError(404, 'Serviço não encontrado.');
+  }
 
   const settings = db.prepare('SELECT * FROM company_settings WHERE id = 1').get() || {};
 
@@ -138,7 +148,7 @@ function checkAvailability(req, res) {
     unit = getUnit(unitId);
   }
 
-  const availability = getAvailability({ date, service, modality, unit, settings });
+  const availability = getAvailability({ date, services, modality, unit, settings, category });
   return res.json(availability);
 }
 

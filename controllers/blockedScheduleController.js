@@ -26,7 +26,7 @@ function list(req, res) {
 }
 
 function create(req, res) {
-  const { unit_id, blocked_date, blocked_time, block_full_day, reason } = req.body || {};
+  const { unit_id, blocked_date, blocked_time, blocked_time_end, block_full_day, reason } = req.body || {};
 
   if (unit_id !== undefined && unit_id !== null && unit_id !== '' && unit_id !== 'null') {
     if (!Number.isInteger(Number(unit_id)) || Number(unit_id) <= 0) throw new AppError(400, 'Informe a unidade.');
@@ -40,6 +40,11 @@ function create(req, res) {
   if (!fullDay && !isValidTime(blocked_time)) {
     throw new AppError(400, 'Informe o horário a ser bloqueado ou marque a opção "dia inteiro".');
   }
+  if (blocked_time_end) {
+    if (!isValidTime(blocked_time_end)) throw new AppError(400, 'Horário final inválido.');
+    if (fullDay) throw new AppError(400, 'O horário final não se aplica ao bloquear o dia inteiro.');
+    if (blocked_time_end <= blocked_time) throw new AppError(400, 'O horário final deve ser maior que o horário inicial.');
+  }
   if (blocked_date < todayStr()) {
     throw new AppError(400, 'Não é possível bloquear uma data no passado.');
   }
@@ -50,10 +55,10 @@ function create(req, res) {
 
   const info = db
     .prepare(
-      `INSERT INTO blocked_schedules (unit_id, blocked_date, blocked_time, block_full_day, reason)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO blocked_schedules (unit_id, blocked_date, blocked_time, blocked_time_end, block_full_day, reason)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(finalUnitId, blocked_date, fullDay ? null : blocked_time, fullDay, reason ? String(reason).trim() : null);
+    .run(finalUnitId, blocked_date, fullDay ? null : blocked_time, fullDay ? null : (blocked_time_end || null), fullDay, reason ? String(reason).trim() : null);
 
   const row = db
     .prepare(

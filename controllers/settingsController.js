@@ -23,6 +23,8 @@ function update(req, res) {
     default_opening_time,
     default_closing_time,
     default_interval,
+    lunch_start,
+    lunch_end,
     working_days,
     confirmation_message,
     capacity
@@ -35,6 +37,11 @@ function update(req, res) {
   if (!isValidTime(default_closing_time)) throw new AppError(400, 'Horário de fechamento inválido.');
   if (default_closing_time <= default_opening_time) {
     throw new AppError(400, 'O horário de fechamento deve ser após a abertura.');
+  }
+  if (lunch_start && !isValidTime(lunch_start)) throw new AppError(400, 'Início do almoço inválido.');
+  if (lunch_end && !isValidTime(lunch_end)) throw new AppError(400, 'Fim do almoço inválido.');
+  if (lunch_start && lunch_end && lunch_end <= lunch_start) {
+    throw new AppError(400, 'O fim do almoço deve ser após o início.');
   }
   if (phone && !isValidPhone(phone)) throw new AppError(400, 'Telefone inválido.');
   if (whatsapp && !isValidPhone(whatsapp)) throw new AppError(400, 'WhatsApp inválido.');
@@ -57,8 +64,8 @@ function update(req, res) {
   db.prepare(
     `INSERT INTO company_settings
        (id, company_name, phone, whatsapp, logo_url, default_opening_time, default_closing_time,
-        default_interval, working_days, confirmation_message, capacity)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        default_interval, lunch_start, lunch_end, working_days, confirmation_message, capacity)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        company_name = excluded.company_name,
        phone = excluded.phone,
@@ -67,6 +74,8 @@ function update(req, res) {
        default_opening_time = excluded.default_opening_time,
        default_closing_time = excluded.default_closing_time,
        default_interval = excluded.default_interval,
+       lunch_start = excluded.lunch_start,
+       lunch_end = excluded.lunch_end,
        working_days = excluded.working_days,
        confirmation_message = excluded.confirmation_message,
        capacity = excluded.capacity,
@@ -79,6 +88,8 @@ function update(req, res) {
     default_opening_time,
     default_closing_time,
     interval,
+    lunch_start ? String(lunch_start).trim() : null,
+    lunch_end ? String(lunch_end).trim() : null,
     JSON.stringify(days),
     confirmation_message ? String(confirmation_message).trim() : '',
     cap
