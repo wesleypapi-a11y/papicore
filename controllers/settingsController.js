@@ -46,6 +46,15 @@ function update(req, res) {
   if (phone && !isValidPhone(phone)) throw new AppError(400, 'Telefone inválido.');
   if (whatsapp && !isValidPhone(whatsapp)) throw new AppError(400, 'WhatsApp inválido.');
 
+  const current = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
+  const existingLunchStart = (current && current.lunch_start) || '12:00';
+  const existingLunchEnd = (current && current.lunch_end) || '13:00';
+  const finalLunchStart = lunch_start ? String(lunch_start).trim() : existingLunchStart;
+  const finalLunchEnd = lunch_end ? String(lunch_end).trim() : existingLunchEnd;
+  if (!isValidTime(finalLunchStart)) throw new AppError(400, 'Início do almoço inválido.');
+  if (!isValidTime(finalLunchEnd)) throw new AppError(400, 'Fim do almoço inválido.');
+  if (finalLunchEnd <= finalLunchStart) throw new AppError(400, 'O fim do almoço deve ser após o início.');
+
   const interval = Number(default_interval);
   if (!Number.isInteger(interval) || interval < 15 || interval > 240) {
     throw new AppError(400, 'A duração padrão deve estar entre 15 e 240 minutos.');
@@ -88,8 +97,8 @@ function update(req, res) {
     default_opening_time,
     default_closing_time,
     interval,
-    lunch_start ? String(lunch_start).trim() : null,
-    lunch_end ? String(lunch_end).trim() : null,
+    finalLunchStart,
+    finalLunchEnd,
     JSON.stringify(days),
     confirmation_message ? String(confirmation_message).trim() : '',
     cap
