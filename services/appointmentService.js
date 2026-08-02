@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const { getUnit, getModality, getService, getConflicts, getFullDayBlockedDates } = require('./availabilityService');
 const {
   lunchConfig,
@@ -31,6 +31,7 @@ const {
 } = require('../utils/helpers');
 
 function getSettings() {
+  const db = getDb();
   return db.prepare('SELECT * FROM company_settings WHERE id = 1').get() || {};
 }
 
@@ -45,6 +46,7 @@ function priceIsEstimate(service) {
 }
 
 function countOverlaps(startDT, endDT, unitIdForScope, excludeId = null) {
+  const db = getDb();
   const placeholders = ACTIVE_STATUSES.map(() => '?').join(', ');
   let sql = `SELECT COUNT(*) AS c FROM appointments
              WHERE status IN (${placeholders})
@@ -177,11 +179,14 @@ function validateAppointmentInput(body, opts = {}) {
   if (!vehicle_model || String(vehicle_model).trim().length < 2) {
     throw new AppError(400, 'Informe o modelo do veículo.');
   }
-  if (vehicle_year && !/^\d{4}$/.test(String(vehicle_year).trim())) {
-    throw new AppError(400, 'Ano do veículo inválido.');
+  if (!vehicle_year || !/^\d{4}$/.test(String(vehicle_year).trim())) {
+    throw new AppError(400, 'Informe o ano do veículo.');
   }
-  if (vehicle_plate && !isValidPlate(vehicle_plate)) {
-    throw new AppError(400, 'Placa inválida. Use o formato ABC-1234 ou Mercosul.');
+  if (!vehicle_plate || !isValidPlate(vehicle_plate)) {
+    throw new AppError(400, 'Informe uma placa válida. Use o formato ABC-1234 ou Mercosul.');
+  }
+  if (!vehicle_color || String(vehicle_color).trim().length < 2) {
+    throw new AppError(400, 'Informe a cor do veículo.');
   }
   const category = String(vehicle_category || '').toLowerCase();
   if (!VEHICLE_CATEGORIES.includes(category)) {
@@ -338,6 +343,7 @@ function validateAppointmentInput(body, opts = {}) {
 }
 
 function insertAppointment(data) {
+  const db = getDb();
   const code = generateCode(data.appointment_date);
 
   const info = db
@@ -425,6 +431,7 @@ function assertSlotAvailable({ appointment_date, end_date, start_time, end_time,
 }
 
 function createAppointment(body) {
+  const db = getDb();
   const data = validateAppointmentInput(body, { allowStatus: false });
 
   const settings = getSettings();

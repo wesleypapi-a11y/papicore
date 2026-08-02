@@ -1,3 +1,11 @@
+/*
+ * adminRoutes.js
+ *
+ * Rotas da área administrativa da empresa (painel).
+ * Protegidas por requireAuth + tenantMiddleware: o banco aberto é sempre o da
+ * empresa do usuário autenticado.
+ */
+
 const express = require('express');
 const authController = require('../controllers/authController');
 const adminController = require('../controllers/adminController');
@@ -6,6 +14,7 @@ const blockedScheduleController = require('../controllers/blockedScheduleControl
 const settingsController = require('../controllers/settingsController');
 const serviceController = require('../controllers/serviceController');
 const modalityController = require('../controllers/modalityController');
+const financialController = require('../controllers/financialController');
 
 const router = express.Router();
 
@@ -48,5 +57,11 @@ router.delete('/blocked-schedules/:id', blockedScheduleController.remove);
 
 router.get('/settings', settingsController.get);
 router.put('/settings', settingsController.update);
+
+router.get('/financials/summary', financialController.summary);
+router.get('/financials/entries', financialController.list);
+router.post('/financials/entries', financialController.create);
+router.put('/financials/entries/:id', financialController.update);
+router.delete('/financials/entries/:id', financialController.remove);
 
 module.exports = router;

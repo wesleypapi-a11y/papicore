@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const { AppError } = require('../utils/helpers');
 
 const PRICE_TYPES = ['category', 'fixed', 'starting'];
@@ -24,6 +24,7 @@ function parsePackageItems(raw) {
 }
 
 function validateService(body, existingId) {
+  const db = getDb();
   const {
     category_id,
     name,
@@ -128,6 +129,7 @@ function validateService(body, existingId) {
 }
 
 function list(req, res) {
+  const db = getDb();
   const rows = db
     .prepare(
       `SELECT s.*, c.name AS category_name, c.slug AS category_slug
@@ -141,6 +143,7 @@ function list(req, res) {
 }
 
 function getOne(req, res) {
+  const db = getDb();
   const service = db
     .prepare(
       `SELECT s.*, c.name AS category_name FROM services s JOIN service_categories c ON c.id = s.category_id WHERE s.id = ?`
@@ -152,6 +155,7 @@ function getOne(req, res) {
 }
 
 function create(req, res) {
+  const db = getDb();
   const data = validateService(req.body);
   const info = db
     .prepare(
@@ -188,6 +192,7 @@ function create(req, res) {
 }
 
 function update(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT id FROM services WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Serviço não encontrado.');
 
@@ -226,6 +231,7 @@ function update(req, res) {
 }
 
 function remove(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT id FROM services WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Serviço não encontrado.');
 
@@ -243,6 +249,7 @@ function remove(req, res) {
 
 /* ---------- Categorias ---------- */
 function listCategories(req, res) {
+  const db = getDb();
   const rows = db
     .prepare('SELECT * FROM service_categories ORDER BY display_order ASC, id ASC')
     .all();
@@ -250,6 +257,7 @@ function listCategories(req, res) {
 }
 
 function createCategory(req, res) {
+  const db = getDb();
   const { name, display_order } = req.body || {};
   if (!name || String(name).trim().length < 2) {
     throw new AppError(400, 'Informe o nome da categoria.');
@@ -267,6 +275,7 @@ function createCategory(req, res) {
 }
 
 function updateCategory(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT id FROM service_categories WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Categoria não encontrada.');
 

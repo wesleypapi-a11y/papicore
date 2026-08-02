@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const { getAvailability } = require('../services/availabilityService');
 const { dateTimeStr } = require('../services/durationService');
 const {
@@ -26,6 +26,7 @@ const APPOINTMENT_SELECT = `
 `;
 
 function listAppointments(req, res) {
+  const db = getDb();
   const { unit_id, modality_id, date, status, search } = req.query;
   const where = [];
   const params = [];
@@ -63,6 +64,7 @@ function listAppointments(req, res) {
 }
 
 function getAppointment(req, res) {
+  const db = getDb();
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(req.params.id);
@@ -90,6 +92,7 @@ function createAppointment(req, res) {
 }
 
 function updateAppointment(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
 
@@ -180,6 +183,7 @@ function updateAppointment(req, res) {
 }
 
 function updateStatus(req, res) {
+  const db = getDb();
   const { status } = req.body || {};
   if (!STATUSES.includes(status)) throw new AppError(400, 'Status inválido.');
 
@@ -196,6 +200,7 @@ function updateStatus(req, res) {
 }
 
 function acceptAppointment(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
   if (existing.status !== 'pending') {
@@ -221,6 +226,7 @@ function acceptAppointment(req, res) {
 }
 
 function rejectAppointment(req, res) {
+  const db = getDb();
   const { rejection_reason, rejection_message } = req.body || {};
   if (!REJECTION_REASONS.includes(rejection_reason)) {
     throw new AppError(400, 'Informe um motivo de recusa válido.');
@@ -250,6 +256,7 @@ function rejectAppointment(req, res) {
 }
 
 function deleteAppointment(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT id FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
   db.prepare('DELETE FROM appointments WHERE id = ?').run(req.params.id);
@@ -257,6 +264,7 @@ function deleteAppointment(req, res) {
 }
 
 function dashboard(req, res) {
+  const db = getDb();
   const today = todayStr();
   const active = "status != 'cancelled' AND status != 'rejected'";
 
@@ -317,6 +325,7 @@ function dashboard(req, res) {
 }
 
 function agenda(req, res) {
+  const db = getDb();
   const date = req.query.date && isValidDateStr(req.query.date) ? req.query.date : todayStr();
   const appointments = db
     .prepare(

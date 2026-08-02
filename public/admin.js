@@ -38,7 +38,16 @@
     units: [],
     modalities: [],
     services: [],
-    categories: []
+    categories: [],
+    financeFilters: {
+      period: 'month',
+      from: '',
+      to: '',
+      service_id: 'all',
+      customer: '',
+      min: '',
+      max: ''
+    }
   };
 
   /* ---------- utils ---------- */
@@ -216,6 +225,7 @@
       dashboard: 'Dashboard',
       agenda: 'Agenda',
       appointments: 'Agendamentos',
+      finances: 'Financeiro',
       services: 'Serviços e valores',
       units: 'Unidades',
       blocks: 'Bloqueios',
@@ -228,6 +238,7 @@
       dashboard: renderDashboard,
       agenda: renderAgenda,
       appointments: renderAppointments,
+      finances: renderFinances,
       services: renderServices,
       units: renderUnits,
       blocks: renderBlocks,
@@ -431,6 +442,249 @@
   function renderAgendaOrAppointments() {
     if (state.view === 'agenda') return renderAgenda();
     return renderAppointments();
+  }
+
+  /* ---------- finances ---------- */
+
+  function financeParams() {
+    const f = state.financeFilters;
+    const params = new URLSearchParams();
+    if (f.from) params.set('from', f.from);
+    if (f.to) params.set('to', f.to);
+    if (f.service_id && f.service_id !== 'all') params.set('service_id', f.service_id);
+    if (f.customer.trim()) params.set('customer', f.customer.trim());
+    if (f.min !== '' && f.min != null) params.set('min', f.min);
+    if (f.max !== '' && f.max != null) params.set('max', f.max);
+    return params;
+  }
+
+  function mondayOfWeek(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const diff = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - diff);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function financeRangeForPeriod(period) {
+    const t = todayStr();
+    if (period === 'today') return { from: t, to: t };
+    if (period === 'week') {
+      const monday = mondayOfWeek(t);
+      const sunday = new Date(monday + 'T00:00:00');
+      sunday.setDate(sunday.getDate() + 6);
+      return { from: monday, to: `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, '0')}-${String(sunday.getDate()).padStart(2, '0')}` };
+    }
+    if (period === 'month') {
+      const last = new Date(Number(t.slice(0, 4)), Number(t.slice(5, 7)), 0).getDate();
+      return { from: t.slice(0, 7) + '-01', to: t.slice(0, 7) + '-' + String(last).padStart(2, '0') };
+    }
+    return { from: state.financeFilters.from, to: state.financeFilters.to };
+  }
+
+  async function renderFinances() {
+    await loadBase();
+    const el = $('view-finances');
+    const f = state.financeFilters;
+    const range = financeRangeForPeriod(f.period);
+    if (f.period !== 'custom') {
+      f.from = range.from;
+      f.to = range.to;
+    }
+    const params = financeParams();
+
+    const [summary, entries] = await Promise.all([
+      api('/api/admin/financials/summary?' + params.toString()),
+      api('/api/admin/financials/entries?' + params.toString())
+    ]);
+    state.financeEntries = entries;
+
+    const serviceOpts = state.services
+      .map((s) => `<option value="${s.id}" ${String(s.id) === String(f.service_id) ? 'selected' : ''}>${escapeHtml(s.name)}</option>`)
+      .join('');
+
+    const rows = entries.map((e) => `
+      <tr>
+        <td>${toDateBR(e.entry_date)}<br /><span class="muted">${escapeHtml(e.entry_time)}</span></td>
+        <td><strong>${escapeHtml(e.customer_name)}</strong></td>
+        <td>${escapeHtml(e.service_name || e.current_service_name || '—')}${e.payment_method ? `<br/><span class="muted">${escapeHtml(PAYMENT_LABELS[e.payment_method] || e.payment_method)}</span>` : ''}</td>
+        <td><strong>${money(e.amount)}</strong></td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm btn-outline" data-action="editEntry" data-id="${e.id}">Editar</button>
+          <button class="btn btn-sm btn-danger" data-action="deleteEntry" data-id="${e.id}">Excluir</button>
+        </div></td>
+      </tr>`).join('');
+
+    const dayRows = summary.by_day.map((d) => `
+      <tr><td>${toDateBR(d.date)}</td><td>${d.count}</td><td><strong>${money(d.total)}</strong></td></tr>`).join('');
+
+    const serviceRows = summary.by_service.map((s) => `
+      <tr><td>${escapeHtml(s.service_name)}</td><td>${s.count}</td><td><strong>${money(s.total)}</strong></td></tr>`).join('');
+
+    const clientRows = summary.by_client.slice(0, 10).map((c) => `
+      <tr><td>${escapeHtml(c.customer_name)}</td><td>${c.count}</td><td><strong>${money(c.total)}</strong></td></tr>`).join('');
+
+    el.innerHTML = `
+      <div class="admin-header">
+        <div><h1>Financeiro</h1><div class="sub">Entradas de caixa — dia, semana e mês</div></div>
+        <button class="btn btn-primary" id="btnNewEntry">+ Nova entrada</button>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${money(summary.totals.day)}</div><div class="stat-label">Faturado hoje</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${money(summary.totals.week)}</div><div class="stat-label">Faturado esta semana</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${money(summary.totals.month)}</div><div class="stat-label">Faturado este mês</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--accent)">${money(summary.filtered.total)}</div><div class="stat-label">Total filtrado (${summary.filtered.count} entrada${summary.filtered.count === 1 ? '' : 's'})</div></div>
+      </div>
+      <div class="panel" style="margin-top:18px;">
+        <h3 class="review-section-title">Filtros</h3>
+        <div class="toolbar">
+          <select id="finPeriod">
+            <option value="today">Hoje</option>
+            <option value="week">Esta semana</option>
+            <option value="month">Este mês</option>
+            <option value="custom">Personalizado</option>
+          </select>
+          <input type="date" id="finFrom" value="${escapeHtml(f.from || '')}" title="De" />
+          <input type="date" id="finTo" value="${escapeHtml(f.to || '')}" title="Até" />
+          <select id="finService"><option value="all">Todos os serviços</option>${serviceOpts}</select>
+          <input type="text" id="finCustomer" value="${escapeHtml(f.customer)}" placeholder="Cliente..." />
+          <input type="number" id="finMin" value="${escapeHtml(f.min)}" placeholder="Valor mín. (R$)" min="0" step="0.01" style="min-width:130px;" />
+          <input type="number" id="finMax" value="${escapeHtml(f.max)}" placeholder="Valor máx. (R$)" min="0" step="0.01" style="min-width:130px;" />
+          <button class="btn btn-primary btn-sm" id="finApply">Aplicar</button>
+          <button class="btn btn-ghost btn-sm" id="finClear">Limpar</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3 class="review-section-title">Entradas</h3>
+        ${entries.length ? `<div class="table-wrap"><table>
+          <thead><tr><th>Data</th><th>Cliente</th><th>Serviço</th><th>Valor</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>` : '<div class="empty-state">Nenhuma entrada neste filtro.</div>'}
+      </div>
+      <div class="grid-3">
+        <div class="panel">
+          <h3 class="review-section-title">Faturamento por dia</h3>
+          ${summary.by_day.length ? `<div class="table-wrap"><table>
+            <thead><tr><th>Dia</th><th>Nº</th><th>Total</th></tr></thead>
+            <tbody>${dayRows}</tbody>
+          </table></div>` : '<div class="empty-state">Sem dados.</div>'}
+        </div>
+        <div class="panel">
+          <h3 class="review-section-title">Por serviço</h3>
+          ${summary.by_service.length ? `<div class="table-wrap"><table>
+            <thead><tr><th>Serviço</th><th>Nº</th><th>Total</th></tr></thead>
+            <tbody>${serviceRows}</tbody>
+          </table></div>` : '<div class="empty-state">Sem dados.</div>'}
+        </div>
+        <div class="panel">
+          <h3 class="review-section-title">Por cliente (top 10)</h3>
+          ${summary.by_client.length ? `<div class="table-wrap"><table>
+            <thead><tr><th>Cliente</th><th>Nº</th><th>Total</th></tr></thead>
+            <tbody>${clientRows}</tbody>
+          </table></div>` : '<div class="empty-state">Sem dados.</div>'}
+        </div>
+      </div>
+    `;
+
+    $('finPeriod').value = f.period;
+    $('finPeriod').addEventListener('change', (e) => {
+      const p = e.target.value;
+      f.period = p;
+      if (p !== 'custom') {
+        const r = financeRangeForPeriod(p);
+        f.from = r.from;
+        f.to = r.to;
+      }
+      renderFinances();
+    });
+    $('finFrom').addEventListener('change', (e) => { f.from = e.target.value; f.period = 'custom'; $('finPeriod').value = 'custom'; });
+    $('finTo').addEventListener('change', (e) => { f.to = e.target.value; f.period = 'custom'; $('finPeriod').value = 'custom'; });
+    $('finApply').addEventListener('click', () => {
+      f.service_id = $('finService').value;
+      f.customer = $('finCustomer').value;
+      f.min = $('finMin').value;
+      f.max = $('finMax').value;
+      renderFinances();
+    });
+    $('finClear').addEventListener('click', () => {
+      Object.assign(f, { period: 'month', from: '', to: '', service_id: 'all', customer: '', min: '', max: '' });
+      renderFinances();
+    });
+    $('btnNewEntry').addEventListener('click', () => openEntryModal());
+    el.querySelectorAll('[data-action="editEntry"]').forEach((b) => b.addEventListener('click', () => openEntryModal(Number(b.dataset.id))));
+    el.querySelectorAll('[data-action="deleteEntry"]').forEach((b) => b.addEventListener('click', () => deleteEntry(Number(b.dataset.id))));
+  }
+
+  async function openEntryModal(id) {
+    await loadBase();
+    const entry = id ? ((state.financeEntries || []).find((r) => r.id === id) || null) : null;
+    const v = (field, def) => (entry && entry[field] != null ? entry[field] : def);
+    const now = new Date();
+    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const serviceOpts = '<option value="">Sem serviço</option>' + state.services
+      .map((s) => `<option value="${s.id}" ${entry && entry.service_id == s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`)
+      .join('');
+    const payOpts = ['', 'local', 'card', 'pix', 'qrcode'].map((p) =>
+      `<option value="${p}" ${entry && entry.payment_method === p ? 'selected' : ''}>${p ? PAYMENT_LABELS[p] : 'Sem forma de pagamento'}</option>`
+    ).join('');
+
+    openModal(id ? 'Editar entrada' : 'Nova entrada', `
+      <form id="entryForm" novalidate>
+        <div class="form-grid">
+          <div class="field span-2">${fieldHtml('entryName', 'Nome do cliente', v('customer_name'), 'text', 'Cliente')}</div>
+          <div class="field"><label for="entryDate">Data</label><input type="date" id="entryDate" value="${escapeHtml(v('entry_date', todayStr()))}" /></div>
+          <div class="field"><label for="entryTime">Horário</label><input type="time" id="entryTime" value="${escapeHtml(v('entry_time', nowTime))}" /></div>
+          <div class="field span-2"><label for="entryService">Serviço</label>
+            <select id="entryService">${serviceOpts}</select></div>
+          <div class="field"><label for="entryAmount">Valor pago (R$)</label>
+            <input type="number" id="entryAmount" value="${escapeHtml(v('amount', ''))}" step="0.01" min="0" /></div>
+          <div class="field"><label for="entryPayment">Forma de pagamento</label>
+            <select id="entryPayment">${payOpts}</select></div>
+          <div class="field span-2"><label for="entryNotes">Observações</label>
+            <textarea id="entryNotes" rows="2">${escapeHtml(v('notes', ''))}</textarea></div>
+        </div>
+      </form>
+    `, `
+      <button class="btn btn-ghost" data-close>Cancelar</button>
+      <button class="btn btn-primary" id="entrySave">${id ? 'Salvar' : 'Registrar entrada'}</button>
+    `);
+
+    $('entrySave').addEventListener('click', async () => {
+      const body = {
+        customer_name: $('entryName').value,
+        entry_date: $('entryDate').value,
+        entry_time: $('entryTime').value || null,
+        service_id: $('entryService').value ? Number($('entryService').value) : null,
+        amount: $('entryAmount').value,
+        payment_method: $('entryPayment').value || null,
+        notes: $('entryNotes').value || null
+      };
+      try {
+        showLoader();
+        await api(id ? '/api/admin/financials/entries/' + id : '/api/admin/financials/entries', {
+          method: id ? 'PUT' : 'POST',
+          body: JSON.stringify(body)
+        });
+        closeModal();
+        await renderFinances();
+        toast(id ? 'Entrada atualizada.' : 'Entrada registrada.', 'success');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+      hideLoader();
+    });
+  }
+
+  async function deleteEntry(id) {
+    if (!confirm('Excluir esta entrada?')) return;
+    try {
+      showLoader();
+      await api('/api/admin/financials/entries/' + id, { method: 'DELETE' });
+      await renderFinances();
+      toast('Entrada excluída.', 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
   }
 
   /* ---------- appointment modal (create/edit) ---------- */

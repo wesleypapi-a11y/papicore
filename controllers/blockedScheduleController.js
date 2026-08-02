@@ -1,7 +1,8 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const { AppError, isValidDateStr, isValidTime, todayStr } = require('../utils/helpers');
 
 function list(req, res) {
+  const db = getDb();
   const { unit_id, date } = req.query;
   let sql = `
     SELECT b.*, u.name AS unit_name
@@ -26,6 +27,7 @@ function list(req, res) {
 }
 
 function create(req, res) {
+  const db = getDb();
   const { unit_id, blocked_date, blocked_time, blocked_time_end, block_full_day, reason } = req.body || {};
 
   if (unit_id !== undefined && unit_id !== null && unit_id !== '' && unit_id !== 'null') {
@@ -70,6 +72,7 @@ function create(req, res) {
 }
 
 function remove(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT id FROM blocked_schedules WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Bloqueio não encontrado.');
   db.prepare('DELETE FROM blocked_schedules WHERE id = ?').run(req.params.id);

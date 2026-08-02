@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const {
   PAYMENT_LABELS,
   VEHICLE_CATEGORY_LABELS,
@@ -33,6 +33,7 @@ function fmtDuration(minutes) {
 }
 
 function getCompanyName() {
+  const db = getDb();
   const s = db.prepare('SELECT company_name FROM company_settings WHERE id = 1').get();
   return (s && s.company_name) || 'Torque Detail';
 }
@@ -136,6 +137,7 @@ async function notifyAppointmentConfirmed(appointment) {
 }
 
 async function notifyStoreNewAppointment(appointment) {
+  const db = getDb();
   const settings = db.prepare('SELECT whatsapp, phone FROM company_settings WHERE id = 1').get() || {};
   const storePhone = settings.whatsapp || settings.phone;
   if (!storePhone) {

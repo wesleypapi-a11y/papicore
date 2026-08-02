@@ -1,6 +1,15 @@
+/*
+ * auth.js
+ *
+ * Autenticação JWT. O usuário é recarregado do banco central (papi_core.db)
+ * a cada requisição para garantir que dados frescos (status, role, tenant_id)
+ * sejam usados — nunca confiamos em informações do token em si.
+ */
+
 const jwt = require('jsonwebtoken');
 
 const { AppError } = require('../utils/helpers');
+const { getUserById } = require('../database/coreDatabase');
 
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
@@ -12,11 +21,28 @@ function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload;
+    const user = getUserById(payload.id);
+    if (!user || !user.active) {
+      return next(new AppError(401, 'Usuário não encontrado ou inativo.'));
+    }
+    req.user = user;
+    req.token = payload;
     return next();
   } catch {
     return next(new AppError(401, 'Sessão expirada ou inválida. Faça login novamente.'));
   }
 }
 
-module.exports = { requireAuth };
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return next(new AppError(403, 'Acesso restrito a usuários autorizados.'));
+    }
+    return next();
+  };
+}
+
+/* Apenas usuários com role = developer acessam o painel do desenvolvedor. */
+const requireDeveloper = [requireAuth, requireRole('developer')];
+
+module.exports = { requireAuth, requireRole, requireDeveloper };

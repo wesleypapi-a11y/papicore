@@ -39,6 +39,12 @@
     { key: 'qrcode', name: 'Pix (QR Code)', desc: 'Escaneie o QR Code com o aplicativo do seu banco.' }
   ];
 
+  const MODALITY_ICONS = {
+    'in-store': '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>',
+    'pickup': '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4h14v12H1z"/><path d="M15 9h4l3 3v4h-7V9z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/></svg>',
+    'delivery': '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-7 9 7"/><path d="M5 11v10h14V11"/><path d="M9 21v-6h6v6"/></svg>'
+  };
+
   function digits(v) {
     return String(v || '').replace(/\D/g, '');
   }
@@ -142,6 +148,9 @@
     $('brandName').textContent = state.settings.company_name || 'Torque Detail';
     $('footerName').textContent = state.settings.company_name || 'Torque Detail';
     $('footerPhone').textContent = state.settings.phone || '';
+    const wa = digits(state.settings.whatsapp || state.settings.phone || '');
+    const waLink = $('footerWa');
+    if (waLink && wa) waLink.href = 'https://wa.me/' + wa;
 
     if (state.modality && !state.modalities.some((m) => m.id === state.modality.id)) state.modality = null;
     if (state.unit && !state.units.some((u) => u.id === state.unit.id)) state.unit = null;
@@ -161,7 +170,7 @@
     for (let i = 1; i <= TOTAL_STEPS; i += 1) {
       const li = document.createElement('li');
       li.dataset.step = i;
-      li.innerHTML = `<span class="dot">${i}</span><span class="lbl">${STEP_LABELS[i - 1]}</span>`;
+      li.innerHTML = `<span class="lbl">${STEP_LABELS[i - 1]}</span><span class="dot-wrap"><span class="dot">${i}</span></span>`;
       list.appendChild(li);
     }
     wrap.hidden = false;
@@ -175,6 +184,8 @@
       li.classList.toggle('done', n < state.currentStep);
       li.classList.toggle('active', n === state.currentStep);
     });
+    const fill = $('pageProgressFill');
+    if (fill) fill.style.width = ((state.currentStep - 1) / (TOTAL_STEPS - 1) * 100) + '%';
   }
 
   /* ---------- steps ---------- */
@@ -205,14 +216,13 @@
       if (state.customer.name.trim().length < 3) { alert('Informe seu nome completo.'); return false; }
       const ph = digits(state.customer.phone);
       if (ph.length < 10) { alert('Informe um telefone válido com DDD.'); return false; }
-      if (state.customer.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.customer.email)) { alert('E-mail informado é inválido.'); return false; }
-      if (state.customer.cpf && !validCPF(state.customer.cpf)) { alert('CPF informado é inválido.'); return false; }
     }
     if (n === 3) {
       if (state.vehicle.brand.trim().length < 2) { alert('Informe a marca do veículo.'); return false; }
       if (state.vehicle.model.trim().length < 2) { alert('Informe o modelo do veículo.'); return false; }
-      if (state.vehicle.year && !/^\d{4}$/.test(state.vehicle.year.trim())) { alert('Ano do veículo inválido.'); return false; }
-      if (state.vehicle.plate && !validPlate(state.vehicle.plate)) { alert('Placa inválida. Use ABC-1234 ou o padrão Mercosul.'); return false; }
+      if (!/^\d{4}$/.test(state.vehicle.year.trim())) { alert('Informe o ano do veículo.'); return false; }
+      if (!validPlate(state.vehicle.plate)) { alert('Informe uma placa válida. Use ABC-1234 ou o padrão Mercosul.'); return false; }
+      if (state.vehicle.color.trim().length < 2) { alert('Informe a cor do veículo.'); return false; }
       if (!state.vehicle.category) { alert('Selecione a categoria do veículo.'); return false; }
     }
     if (n === 4) {
@@ -251,15 +261,21 @@
   function renderModalities() {
     const grid = $('modalityGrid');
     grid.innerHTML = '';
+    const firstId = state.modalities.length ? state.modalities[0].id : null;
     state.modalities.forEach((m) => {
+      const isFeatured = m.id === firstId;
+      const icon = MODALITY_ICONS[m.slug] || '';
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = 'modality-card';
+      card.className = 'modality-card' + (isFeatured ? ' featured' : '');
       card.dataset.slug = m.slug;
       card.innerHTML = `
-        <span class="modality-name">${m.name}</span>
-        <span class="modality-desc">${m.description || ''}</span>
-        <span class="modality-fee">${m.fee > 0 ? '+' + money(m.fee) : 'Sem taxa adicional'}</span>
+        ${isFeatured ? '<span class="modality-badge">Mais escolhido</span>' : ''}
+        <span class="modality-media"><span class="modality-icon">${icon}</span></span>
+        <span class="modality-body">
+          <span class="modality-name">${m.name}</span>
+          <span class="modality-desc">${m.description || ''}</span>
+        </span>
       `;
       if (state.modality && state.modality.id === m.id) card.classList.add('selected');
       card.addEventListener('click', () => {
@@ -578,13 +594,19 @@
       if (!available) btn.classList.add('disabled');
       btn.dataset.time = s.time;
       let label = s.time;
+      let fullLabel = s.time;
       if (s.end_time) {
-        label = s.end_date && s.end_date !== state.date
-          ? `${s.time} → ${formatDateShort(s.end_date)} ${s.end_time}`
-          : `${s.time} → ${s.end_time}`;
+        if (s.end_date && s.end_date !== state.date) {
+          const endShort = parseDate(s.end_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+          label = `${s.time} até ${endShort} às ${s.end_time}`;
+          fullLabel = `${s.time} até ${formatDateShort(s.end_date)} às ${s.end_time}`;
+        } else {
+          label = `${s.time} às ${s.end_time}`;
+          fullLabel = label;
+        }
       }
       btn.textContent = label;
-      btn.title = s.reason || label;
+      btn.title = s.reason || fullLabel;
       if (state.slot === s.time && available) btn.classList.add('selected');
       if (available) {
         btn.addEventListener('click', () => {
@@ -1029,6 +1051,7 @@
     $('bookingForm').hidden = true;
     $('navRow').hidden = true;
     $('progressWrap').hidden = true;
+    $('pageProgress').hidden = true;
     $('successScreen').hidden = false;
     $('successCode').textContent = appointment.appointment_code || '';
     const msg = state.settings.confirmation_message || 'Nossa equipe analisará a disponibilidade e entrará em contato para confirmar.';
@@ -1057,15 +1080,6 @@
     input.value = v;
   }
 
-  function maskCpf(input) {
-    let v = digits(input.value);
-    if (v.length > 11) v = v.slice(0, 11);
-    if (v.length > 9) v = `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6, 9)}-${v.slice(9)}`;
-    else if (v.length > 6) v = `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6)}`;
-    else if (v.length > 3) v = `${v.slice(0, 3)}.${v.slice(3)}`;
-    input.value = v;
-  }
-
   function maskCep(input) {
     let v = digits(input.value);
     if (v.length > 8) v = v.slice(0, 8);
@@ -1077,19 +1091,6 @@
     let v = String(input.value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
     if (v.length > 3) v = v.slice(0, 3) + '-' + v.slice(3);
     input.value = v;
-  }
-
-  function validCPF(v) {
-    const d = digits(v);
-    if (!/^\d{11}$/.test(d)) return false;
-    if (/^(\d)\1{10}$/.test(d)) return false;
-    const calc = (len) => {
-      let sum = 0;
-      for (let i = 0; i < len; i += 1) sum += Number(d[i]) * (len + 1 - i);
-      const rest = (sum * 10) % 11;
-      return rest === 10 ? 0 : rest;
-    };
-    return calc(9) === Number(d[9]) && calc(10) === Number(d[10]);
   }
 
   function validPlate(v) {
@@ -1145,14 +1146,8 @@
     const phoneInput = $('customerPhone');
     phoneInput.addEventListener('input', () => { maskPhone(phoneInput); state.customer.phone = phoneInput.value; saveState(); });
 
-    const emailInput = $('customerEmail');
-    emailInput.addEventListener('input', () => { state.customer.email = emailInput.value; saveState(); });
-
-    const cpfInput = $('customerCpf');
-    cpfInput.addEventListener('input', () => { maskCpf(cpfInput); state.customer.cpf = cpfInput.value; saveState(); });
-
     const brandInput = $('vehicleBrand');
-    brandInput.addEventListener('input', () => { state.vehicle.brand = brandInput.value; saveState(); });
+    brandInput.addEventListener('change', () => { state.vehicle.brand = brandInput.value; saveState(); });
 
     const modelInput = $('vehicleModel');
     modelInput.addEventListener('input', () => { state.vehicle.model = modelInput.value; saveState(); });
@@ -1177,8 +1172,6 @@
   function restoreFields() {
     const nameInput = $('customerName');
     const phoneInput = $('customerPhone');
-    const emailInput = $('customerEmail');
-    const cpfInput = $('customerCpf');
     const brandInput = $('vehicleBrand');
     const modelInput = $('vehicleModel');
     const yearInput = $('vehicleYear');
@@ -1187,8 +1180,6 @@
     const notesInput = $('customerNotes');
     nameInput.value = state.customer.name;
     phoneInput.value = state.customer.phone;
-    emailInput.value = state.customer.email;
-    cpfInput.value = state.customer.cpf;
     brandInput.value = state.vehicle.brand;
     modelInput.value = state.vehicle.model;
     yearInput.value = state.vehicle.year;

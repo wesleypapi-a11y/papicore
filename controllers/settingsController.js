@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const {
   AppError,
   isValidTime,
@@ -7,6 +7,7 @@ const {
 } = require('../utils/helpers');
 
 function get(req, res) {
+  const db = getDb();
   const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
   if (!s) throw new AppError(404, 'Configurações não encontradas.');
   s.working_days = parseWorkingDays(s.working_days);
@@ -14,6 +15,7 @@ function get(req, res) {
 }
 
 function update(req, res) {
+  const db = getDb();
   const data = req.body || {};
   const {
     company_name,

@@ -47,6 +47,16 @@ function todayStr() {
   return toDateStr(new Date());
 }
 
+function slugify(str) {
+  return String(str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
 function toDateStr(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -234,6 +244,7 @@ module.exports = {
   VEHICLE_CATEGORY_LABELS,
   REJECTION_REASONS,
   todayStr,
+  slugify,
   toDateStr,
   addDays,
   isValidDateStr,

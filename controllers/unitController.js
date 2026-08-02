@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const {
   AppError,
   isValidTime,
@@ -7,12 +7,14 @@ const {
 } = require('../utils/helpers');
 
 function listAll(req, res) {
+  const db = getDb();
   const units = db.prepare('SELECT * FROM units ORDER BY name ASC').all();
   const result = units.map((u) => ({ ...u, working_days: parseWorkingDays(u.working_days) }));
   return res.json(result);
 }
 
 function getOne(req, res) {
+  const db = getDb();
   const unit = db.prepare('SELECT * FROM units WHERE id = ?').get(req.params.id);
   if (!unit) throw new AppError(404, 'Unidade não encontrada.');
   unit.working_days = parseWorkingDays(unit.working_days);
@@ -97,6 +99,7 @@ function validateUnit(data) {
 }
 
 function create(req, res) {
+  const db = getDb();
   const data = validateUnit(req.body || {});
   const info = db
     .prepare(
@@ -119,6 +122,7 @@ function create(req, res) {
 }
 
 function update(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT * FROM units WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Unidade não encontrada.');
 
@@ -143,6 +147,7 @@ function update(req, res) {
 }
 
 function remove(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT id FROM units WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Unidade não encontrada.');
 

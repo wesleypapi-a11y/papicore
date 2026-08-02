@@ -1,7 +1,8 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const { AppError } = require('../utils/helpers');
 
 function list(req, res) {
+  const db = getDb();
   const rows = db
     .prepare('SELECT * FROM service_modalities ORDER BY id ASC')
     .all();
@@ -9,6 +10,7 @@ function list(req, res) {
 }
 
 function update(req, res) {
+  const db = getDb();
   const existing = db.prepare('SELECT id FROM service_modalities WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Forma de atendimento não encontrada.');
 

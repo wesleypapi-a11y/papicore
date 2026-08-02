@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const {
   AppError,
   ACTIVE_STATUSES,
@@ -18,18 +18,19 @@ const {
 } = require('./durationService');
 
 function getUnit(id) {
-  return db.prepare('SELECT * FROM units WHERE id = ?').get(id);
+  return getDb().prepare('SELECT * FROM units WHERE id = ?').get(id);
 }
 
 function getModality(id) {
-  return db.prepare('SELECT * FROM service_modalities WHERE id = ?').get(id);
+  return getDb().prepare('SELECT * FROM service_modalities WHERE id = ?').get(id);
 }
 
 function getService(id) {
-  return db.prepare('SELECT * FROM services WHERE id = ?').get(id);
+  return getDb().prepare('SELECT * FROM services WHERE id = ?').get(id);
 }
 
 function getBlocked(dateStr, unitIdForScope) {
+  const db = getDb();
   const where = unitIdForScope
     ? 'blocked_date = ? AND (unit_id IS NULL OR unit_id = ?)'
     : 'blocked_date = ? AND unit_id IS NULL';
@@ -38,6 +39,7 @@ function getBlocked(dateStr, unitIdForScope) {
 }
 
 function getFullDayBlockedDates(fromDate, toDate, unitIdForScope) {
+  const db = getDb();
   if (unitIdForScope) {
     return db
       .prepare(
@@ -58,6 +60,7 @@ function getFullDayBlockedDates(fromDate, toDate, unitIdForScope) {
 
 /* Agendamentos ativos cujo intervalo toca a janela [fromDate, toDate]. */
 function getConflicts(fromDate, toDate, unitIdForScope) {
+  const db = getDb();
   const placeholders = ACTIVE_STATUSES.map(() => '?').join(', ');
   const where = unitIdForScope
     ? `status IN (${placeholders}) AND unit_id = ? AND appointment_date <= ? AND COALESCE(end_date, appointment_date) >= ?`
@@ -76,6 +79,7 @@ function getConflicts(fromDate, toDate, unitIdForScope) {
 }
 
 function getAvailability({ date, service = null, services = null, category = 'hatch', modality, unit = null, settings, includeAppointments = false }) {
+  const db = getDb();
   const svcList = services && services.length ? services : (service ? [service] : []);
 
   const opening = unit ? unit.opening_time : (settings && settings.default_opening_time) || '08:00';

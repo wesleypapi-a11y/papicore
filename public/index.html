@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0e1015" />
+  <meta name="theme-color" content="#0b0d12" />
   <title>Torque Detail — Agendamento Online</title>
-  <link rel="icon" href="/assets/favicon.png" />
+  <link rel="icon" href="/Logo/favicon.jpg" />
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,13 +13,21 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body class="booking-app">
+  <div class="ambient" aria-hidden="true">
+    <div class="ambient-watermark">TORQUE</div>
+    <div class="ambient-lines"></div>
+    <div class="ambient-glow glow-left"></div>
+    <div class="ambient-glow glow-right"></div>
+    <div class="ambient-vignette"></div>
+  </div>
+
   <header class="site-header">
     <div class="brand">
-      <img src="/assets/logo-icon.png" alt="Torque Detail" class="brand-logo" />
+      <img src="/Logo/Logo branco sem fundo.jpg" alt="Torque Detail" class="brand-logo" />
       <span class="brand-name" id="brandName">Torque Detail</span>
     </div>
     <div class="header-right">
-      <span class="header-tagline">Agendamento online</span>
+      <span class="header-tagline">Agendamento Online</span>
       <div class="view-switch" id="viewSwitch" role="group" aria-label="Alternar visualização">
         <button type="button" data-view="auto" class="active" title="Visualização automática (responsiva)">Auto</button>
         <button type="button" data-view="mobile" title="Forçar visualização mobile">📱</button>
@@ -28,6 +36,8 @@
     </div>
   </header>
 
+  <div class="page-progress" id="pageProgress"><span id="pageProgressFill"></span></div>
+
   <main class="container">
     <div class="progress-wrap" id="progressWrap" hidden>
       <ol class="progress" id="progress"></ol>
@@ -35,14 +45,19 @@
 
     <form id="bookingForm" novalidate>
       <section class="step" data-step="1" hidden>
-        <h2 class="step-title">Como você quer ser atendido?</h2>
-        <p class="step-subtitle">Escolha a forma de atendimento para continuar.</p>
+        <header class="step-head">
+          <h2 class="step-title">Como você quer<br /><span class="title-highlight">ser atendido?</span></h2>
+          <p class="step-subtitle">Escolha a forma de atendimento para continuar.</p>
+          <span class="title-rule"></span>
+        </header>
         <div class="modality-grid" id="modalityGrid"></div>
       </section>
 
       <section class="step" data-step="2" hidden>
-        <h2 class="step-title">Dados pessoais</h2>
-        <p class="step-subtitle">Informe seus dados para contato.</p>
+        <header class="step-head">
+          <h2 class="step-title">Dados pessoais</h2>
+          <p class="step-subtitle">Informe seus dados para contato.</p>
+        </header>
         <div class="field">
           <label for="customerName">Nome completo</label>
           <input type="text" id="customerName" autocomplete="name" placeholder="Seu nome completo" />
@@ -51,25 +66,60 @@
           <label for="customerPhone">WhatsApp / Telefone</label>
           <input type="tel" id="customerPhone" inputmode="numeric" autocomplete="tel" placeholder="(00) 00000-0000" />
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label for="customerEmail">E-mail <span class="opt">(opcional)</span></label>
-            <input type="email" id="customerEmail" autocomplete="email" placeholder="voce@email.com" />
-          </div>
-          <div class="field">
-            <label for="customerCpf">CPF <span class="opt">(opcional)</span></label>
-            <input type="text" id="customerCpf" inputmode="numeric" autocomplete="off" placeholder="000.000.000-00" />
-          </div>
-        </div>
       </section>
 
       <section class="step" data-step="3" hidden>
-        <h2 class="step-title">Dados do veículo</h2>
-        <p class="step-subtitle">Conte pra gente qual é o seu veículo.</p>
+        <header class="step-head">
+          <h2 class="step-title">Dados do veículo</h2>
+          <p class="step-subtitle">Conte pra gente qual é o seu veículo.</p>
+        </header>
         <div class="field-row">
           <div class="field">
             <label for="vehicleBrand">Marca</label>
-            <input type="text" id="vehicleBrand" placeholder="Ex.: Volkswagen" />
+            <select id="vehicleBrand">
+              <option value="" disabled selected>Selecione a marca</option>
+              <optgroup label="Marcas mais comuns">
+                <option value="Volkswagen">Volkswagen</option>
+                <option value="Chevrolet">Chevrolet</option>
+                <option value="Fiat">Fiat</option>
+                <option value="Hyundai">Hyundai</option>
+                <option value="Toyota">Toyota</option>
+                <option value="Jeep">Jeep</option>
+                <option value="Renault">Renault</option>
+                <option value="Honda">Honda</option>
+                <option value="Nissan">Nissan</option>
+                <option value="Ford">Ford</option>
+                <option value="Peugeot">Peugeot</option>
+                <option value="Citroën">Citroën</option>
+              </optgroup>
+              <optgroup label="Outras marcas">
+                <option value="Audi">Audi</option>
+                <option value="BMW">BMW</option>
+                <option value="BYD">BYD</option>
+                <option value="Caoa Chery">Caoa Chery</option>
+                <option value="Chrysler">Chrysler</option>
+                <option value="Dodge">Dodge</option>
+                <option value="Ferrari">Ferrari</option>
+                <option value="GWM">GWM</option>
+                <option value="Jaguar">Jaguar</option>
+                <option value="Kia">Kia</option>
+                <option value="Lamborghini">Lamborghini</option>
+                <option value="Land Rover">Land Rover</option>
+                <option value="Lexus">Lexus</option>
+                <option value="Maserati">Maserati</option>
+                <option value="Mercedes-Benz">Mercedes-Benz</option>
+                <option value="Mini">Mini</option>
+                <option value="Mitsubishi">Mitsubishi</option>
+                <option value="Porsche">Porsche</option>
+                <option value="RAM">RAM</option>
+                <option value="Rolls-Royce">Rolls-Royce</option>
+                <option value="Subaru">Subaru</option>
+                <option value="Suzuki">Suzuki</option>
+                <option value="Troller">Troller</option>
+                <option value="Volvo">Volvo</option>
+              </optgroup>
+              <option value="Outra">Outra</option>
+            </select>
           </div>
           <div class="field">
             <label for="vehicleModel">Modelo</label>
@@ -78,15 +128,15 @@
         </div>
         <div class="field-row">
           <div class="field">
-            <label for="vehicleYear">Ano <span class="opt">(opcional)</span></label>
+            <label for="vehicleYear">Ano</label>
             <input type="text" id="vehicleYear" inputmode="numeric" maxlength="4" placeholder="2023" />
           </div>
           <div class="field">
-            <label for="vehiclePlate">Placa <span class="opt">(opcional)</span></label>
+            <label for="vehiclePlate">Placa</label>
             <input type="text" id="vehiclePlate" maxlength="8" placeholder="ABC-1D23" />
           </div>
           <div class="field">
-            <label for="vehicleColor">Cor <span class="opt">(opcional)</span></label>
+            <label for="vehicleColor">Cor</label>
             <input type="text" id="vehicleColor" placeholder="Branco" />
           </div>
         </div>
@@ -97,7 +147,9 @@
       </section>
 
       <section class="step" data-step="4" hidden>
-        <h2 class="step-title">Escolha a data</h2>
+        <header class="step-head">
+          <h2 class="step-title">Escolha a data</h2>
+        </header>
         <div id="unitBlock" hidden>
           <p class="step-subtitle">Selecione a unidade de atendimento.</p>
           <div class="unit-grid" id="unitGrid"></div>
@@ -107,20 +159,26 @@
       </section>
 
       <section class="step" data-step="5" hidden>
-        <h2 class="step-title">Escolha o serviço</h2>
-        <p class="step-subtitle" id="catalogSubtitle"></p>
+        <header class="step-head">
+          <h2 class="step-title">Escolha o serviço</h2>
+          <p class="step-subtitle" id="catalogSubtitle"></p>
+        </header>
         <div id="catalog"></div>
       </section>
 
       <section class="step" data-step="6" hidden>
-        <h2 class="step-title">Escolha o horário</h2>
-        <p class="step-subtitle" id="slotSubtitle"></p>
+        <header class="step-head">
+          <h2 class="step-title">Escolha o horário</h2>
+          <p class="step-subtitle" id="slotSubtitle"></p>
+        </header>
         <div id="slotLoading" class="loading" hidden>Consultando horários...</div>
         <div class="slots-grid" id="slotsGrid"></div>
       </section>
 
       <section class="step" data-step="7" hidden>
-        <h2 class="step-title">Revisão e envio</h2>
+        <header class="step-head">
+          <h2 class="step-title">Revisão e envio</h2>
+        </header>
         <div id="addressBlock" hidden></div>
         <div class="field">
           <label for="customerNotes">Observações <span class="opt">(opcional)</span></label>
@@ -130,19 +188,21 @@
       </section>
 
       <section class="step" data-step="8" hidden>
-        <h2 class="step-title">Forma de pagamento</h2>
-        <p class="step-subtitle">Escolha como deseja pagar pelo serviço.</p>
+        <header class="step-head">
+          <h2 class="step-title">Forma de pagamento</h2>
+          <p class="step-subtitle">Escolha como deseja pagar pelo serviço.</p>
+        </header>
         <div class="payment-grid" id="paymentGrid"></div>
         <div class="payment-detail" id="paymentDetail" hidden></div>
         <div class="nav-row">
-          <button type="button" class="btn btn-ghost" data-action="back">Voltar</button>
+          <button type="button" class="btn btn-ghost" data-action="back">← Voltar</button>
           <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">Enviar solicitação de agendamento</button>
         </div>
       </section>
 
       <div class="nav-row step-nav" id="navRow" hidden>
-        <button type="button" class="btn btn-ghost" data-action="back" id="btnBack">Voltar</button>
-        <button type="button" class="btn btn-primary" data-action="next" id="btnNext">Continuar</button>
+        <button type="button" class="btn btn-ghost" data-action="back" id="btnBack">← Voltar</button>
+        <button type="button" class="btn btn-primary" data-action="next" id="btnNext">Continuar →</button>
       </div>
     </form>
 
@@ -165,7 +225,19 @@
   </main>
 
   <footer class="site-footer">
-    <span id="footerName">Torque Detail</span> — <span id="footerPhone"></span>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="/Logo/Logo branco sem fundo.jpg" alt="Torque Detail" class="footer-logo" />
+        <p>Excelência em cuidados para seu veículo.</p>
+      </div>
+      <div class="footer-social">
+        <span class="footer-label">Contato</span>
+        <span class="footer-phone" id="footerPhone"></span>
+        <a class="footer-link" id="footerWa" href="#" target="_blank" rel="noopener">WhatsApp</a>
+        <a class="footer-link" href="#" rel="noopener">Instagram</a>
+      </div>
+      <div class="footer-copy">© <span id="footerName">Torque Detail</span> — Todos os direitos reservados.</div>
+    </div>
   </footer>
 
   <script>

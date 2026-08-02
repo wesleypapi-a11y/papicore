@@ -1,4 +1,4 @@
-const db = require('../database/database');
+const { getDb } = require('../database/tenantDatabase');
 const {
   getAvailability,
   getUnit,
@@ -15,6 +15,7 @@ const {
 } = require('../utils/helpers');
 
 function getPublicSettings(req, res) {
+  const db = getDb();
   const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
   if (!s) return res.json({});
 
@@ -35,6 +36,7 @@ function getPublicSettings(req, res) {
 }
 
 function listActiveUnits(req, res) {
+  const db = getDb();
   const units = db
     .prepare(
       `SELECT id, name, address, address_street, address_number, address_complement,
@@ -54,6 +56,7 @@ function listActiveUnits(req, res) {
 }
 
 function listModalities(req, res) {
+  const db = getDb();
   const rows = db
     .prepare('SELECT id, name, slug, description, fee FROM service_modalities WHERE active = 1 ORDER BY id ASC')
     .all();
@@ -61,6 +64,7 @@ function listModalities(req, res) {
 }
 
 function getCatalog(req, res) {
+  const db = getDb();
   const modalitySlug = req.query.modality_id ? (getModality(Number(req.query.modality_id)) || {}).slug : null;
 
   const categories = db
@@ -137,7 +141,7 @@ function checkAvailability(req, res) {
     throw new AppError(404, 'Serviço não encontrado.');
   }
 
-  const settings = db.prepare('SELECT * FROM company_settings WHERE id = 1').get() || {};
+  const settings = getDb().prepare('SELECT * FROM company_settings WHERE id = 1').get() || {};
 
   let unit = null;
   if (modality.slug === 'in-store') {
@@ -162,6 +166,7 @@ function createAppointmentPublic(req, res) {
 }
 
 function getByCode(req, res) {
+  const db = getDb();
   const code = String(req.params.code || '').trim().toUpperCase();
   const appointment = db
     .prepare(
