@@ -64,19 +64,36 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+/* /api/auth, /api/admin e /api/developer precisam ser registradas antes de
+   publicRoutes: publicRoutes aplica domainTenantMiddleware a toda requisição
+   que passa por ela (router.use, sem path específico), incluindo 403 se a
+   empresa do domínio atual estiver suspensa. Como todas essas rotas também
+   começam com /api, se publicRoutes fosse montada primeiro, suspender a
+   empresa associada ao domínio/host atual derrubaria login do desenvolvedor
+   e de outras empresas nesse mesmo host — sem nenhuma relação com a rota
+   pública de agendamento. */
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', requireAuth, tenantMiddleware, adminRoutes);
+/* O login do desenvolvedor precisa ficar acessível sem token; a proteção
+   requireDeveloper é aplicada rota a rota dentro de developerRoutes.js. */
+app.use('/api/developer', developerRoutes);
 
 /* Identifica a empresa pelo domínio da requisição em toda a API
    (usado no login para validar que o usuário pertence à empresa do domínio). */
 app.use('/api', resolveTenantByHost);
 
 app.use('/api', publicRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/admin', requireAuth, tenantMiddleware, adminRoutes);
-/* O login do desenvolvedor precisa ficar acessível sem token; a proteção
-   requireDeveloper é aplicada rota a rota dentro de developerRoutes.js. */
-app.use('/api/developer', developerRoutes);
 
 /* Páginas */
 app.get('/admin', (req, res) => {

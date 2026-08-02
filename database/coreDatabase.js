@@ -82,6 +82,23 @@ CREATE TABLE IF NOT EXISTS tenant_domains (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS financial_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  type TEXT NOT NULL DEFAULT 'MONTHLY',
+  description TEXT,
+  amount REAL NOT NULL DEFAULT 0,
+  percentage REAL,
+  installment_number INTEGER,
+  installment_total INTEGER,
+  due_date TEXT NOT NULL,
+  paid_at TEXT,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS activity_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER,
@@ -124,9 +141,15 @@ function seedCore() {
   }
 
   /* Usuário desenvolvedor (role = developer, tenant_id = NULL) */
-  const devEmail = String(process.env.DEVELOPER_EMAIL || 'developer@papi.app').toLowerCase();
-  const devPassword = process.env.DEVELOPER_PASSWORD || 'developer123';
-  if (!db.prepare('SELECT id FROM users WHERE email = ?').get(devEmail)) {
+  const devEmail = String(process.env.DEVELOPER_EMAIL || '').trim().toLowerCase();
+  const devPassword = String(process.env.DEVELOPER_PASSWORD || '');
+  if (!devEmail || !devPassword) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('DEVELOPER_EMAIL e DEVELOPER_PASSWORD são obrigatórios em produção.');
+    }
+    console.warn('[papi-core] Desenvolvedor não criado: configure DEVELOPER_EMAIL e DEVELOPER_PASSWORD.');
+  }
+  if (devEmail && devPassword && !db.prepare('SELECT id FROM users WHERE email = ?').get(devEmail)) {
     db.prepare('INSERT INTO users (tenant_id, name, email, password_hash, role, active) VALUES (NULL, ?, ?, ?, ?, 1)').run(
       process.env.DEVELOPER_NAME || 'Desenvolvedor',
       devEmail,
@@ -317,6 +340,10 @@ function deleteTenant(id) {
   deleteTenantDatabase(tenant.database_name);
   db.prepare('DELETE FROM tenants WHERE id = ?').run(id);
   return true;
+}
+
+function deleteTenantRecord(id) {
+  db.prepare('DELETE FROM tenants WHERE id = ?').run(id);
 }
 
 function nextTenantId() {
@@ -532,6 +559,64 @@ function deletePlan(id) {
   return true;
 }
 
+/* ---------- Financeiro ---------- */
+
+function listFinancialEntries(filters = {}) {
+  const clauses = [];
+  const params = [];
+  if (filters.tenant_id) { clauses.push('tenant_id = ?'); params.push(filters.tenant_id); }
+  if (filters.status) { clauses.push('status = ?'); params.push(filters.status); }
+  if (filters.type) { clauses.push('type = ?'); params.push(filters.type); }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return db.prepare(`SELECT * FROM financial_entries ${where} ORDER BY due_date DESC, id DESC`).all(...params);
+}
+
+function getFinancialEntry(id) {
+  return db.prepare('SELECT * FROM financial_entries WHERE id = ?').get(id);
+}
+
+function insertFinancialEntry(data) {
+  const info = db.prepare(
+    `INSERT INTO financial_entries (tenant_id, type, description, amount, percentage, installment_number, installment_total, due_date, paid_at, status, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    data.tenant_id,
+    data.type,
+    data.description || null,
+    data.amount ?? 0,
+    data.percentage ?? null,
+    data.installment_number ?? null,
+    data.installment_total ?? null,
+    data.due_date,
+    data.paid_at || null,
+    data.status || 'PENDING',
+    data.notes || null
+  );
+  return getFinancialEntry(info.lastInsertRowid);
+}
+
+function updateFinancialEntry(id, fields) {
+  const allowed = ['type', 'description', 'amount', 'percentage', 'installment_number', 'installment_total', 'due_date', 'paid_at', 'status', 'notes'];
+  const sets = [];
+  const params = [];
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  if (!sets.length) return getFinancialEntry(id);
+  sets.push("updated_at = datetime('now', 'localtime')");
+  params.push(id);
+  db.prepare(`UPDATE financial_entries SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getFinancialEntry(id);
+}
+
+function deleteFinancialEntry(id) {
+  db.prepare('DELETE FROM financial_entries WHERE id = ?').run(id);
+  return true;
+}
+
 /* ---------- Logs ---------- */
 
 function logActivity(userId, tenantId, action, details) {
@@ -584,6 +669,7 @@ module.exports = {
   updateTenant,
   setTenantStatus,
   deleteTenant,
+  deleteTenantRecord,
   nextTenantId,
   countTenantAppointments,
   isTenantExpired,
@@ -615,6 +701,12 @@ module.exports = {
   insertPlan,
   updatePlan,
   deletePlan,
+  /* financeiro */
+  listFinancialEntries,
+  getFinancialEntry,
+  insertFinancialEntry,
+  updateFinancialEntry,
+  deleteFinancialEntry,
   /* logs */
   logActivity,
   listLogs

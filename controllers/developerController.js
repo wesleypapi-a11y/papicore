@@ -46,6 +46,11 @@ const {
   insertPlan,
   updatePlan,
   deletePlan,
+  listFinancialEntries,
+  getFinancialEntry,
+  insertFinancialEntry,
+  updateFinancialEntry,
+  deleteFinancialEntry,
   listLogs,
   logActivity
 } = require('../database/coreDatabase');
@@ -55,7 +60,12 @@ const { deleteTenantDatabase } = require('../database/tenantDatabase');
 const { AppError, isValidEmail, isValidPhone, todayStr, slugify } = require('../utils/helpers');
 const { signToken } = require('./authController');
 
-const VALID_STATUSES = ['ACTIVE', 'SUSPENDED', 'TRIAL'];
+const VALID_STATUSES = ['ACTIVE', 'SUSPENDED', 'TRIAL', 'ARCHIVED'];
+const BACKUPS_DIR = path.join(__dirname, '..', 'data', 'backups');
+
+function auditDetails(req, message) {
+  return JSON.stringify({ message, ip: req.ip || null, user_agent: String(req.headers['user-agent'] || '').slice(0, 300) });
+}
 
 function parseFeatures(value) {
   if (Array.isArray(value)) return value.map((i) => String(i).trim()).filter(Boolean);
@@ -84,6 +94,7 @@ function login(req, res) {
 
   const user = getUserByEmail(String(email).trim().toLowerCase());
   if (!user || user.role !== 'developer') {
+    logActivity(null, null, 'DEVELOPER_LOGIN_FAILED', auditDetails(req, 'Credenciais invalidas'));
     throw new AppError(401, 'Acesso restrito ao desenvolvedor da plataforma.');
   }
   if (!user.active) {
@@ -91,10 +102,12 @@ function login(req, res) {
   }
   const ok = bcrypt.compareSync(String(password), user.password_hash);
   if (!ok) {
+    logActivity(user.id, null, 'DEVELOPER_LOGIN_FAILED', auditDetails(req, 'Credenciais invalidas'));
     throw new AppError(401, 'E-mail ou senha inválidos.');
   }
 
   const token = signToken(user);
+  logActivity(user.id, null, 'DEVELOPER_LOGIN', auditDetails(req, 'Login realizado'));
   return res.json({
     token,
     user: { id: user.id, name: user.name, email: user.email, role: user.role, tenant_id: user.tenant_id }
@@ -138,6 +151,7 @@ function dashboard(req, res) {
   const users = listUsers();
   const active = tenants.filter((t) => t.status === 'ACTIVE').length;
   const suspended = tenants.filter((t) => t.status === 'SUSPENDED').length;
+  const expired = tenants.filter((t) => require('../database/coreDatabase').isTenantExpired(t)).length;
   const developers = users.filter((u) => u.role === 'developer').length;
   const companyUsers = users.filter((u) => u.role !== 'developer').length;
 
@@ -153,11 +167,14 @@ function dashboard(req, res) {
     tenants: tenants.length,
     active,
     suspended,
+    expired,
     developers,
     company_users: companyUsers,
     domains,
     appointments,
     plans: listPlans().length,
+    tenant_databases: tenants.filter((t) => tenantDatabaseExists(t.database_name)).length,
+    recent_tenants: tenants.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 5),
     recent_logs: recentLogs
   });
 }
@@ -197,7 +214,8 @@ function validateTenantInput(body, { existing } = {}) {
     expires_at,
     adminName,
     adminEmail,
-    adminPassword
+    adminPassword,
+    domain
   } = body || {};
 
   if (name !== undefined && String(name).trim().length < 2) {
@@ -214,7 +232,7 @@ function validateTenantInput(body, { existing } = {}) {
     }
   }
 
-  if (email !== undefined && !isValidEmail(email)) {
+  if (email !== undefined && email && !isValidEmail(email)) {
     throw new AppError(400, 'E-mail inválido.');
   }
   if (phone !== undefined && phone && !isValidPhone(phone)) {
@@ -244,7 +262,8 @@ function validateTenantInput(body, { existing } = {}) {
     expires_at: expires_at !== undefined ? (expires_at || null) : undefined,
     adminName: adminName !== undefined ? String(adminName).trim() : undefined,
     adminEmail: adminEmail !== undefined ? String(adminEmail).trim().toLowerCase() : undefined,
-    adminPassword
+    adminPassword,
+    domain: domain !== undefined ? String(domain || '').trim().toLowerCase() : undefined
   };
 }
 
@@ -262,6 +281,9 @@ function createTenant(req, res) {
   }
   if (getUserByEmail(body.adminEmail)) {
     throw new AppError(409, 'Já existe um usuário com este e-mail.');
+  }
+  if (body.domain && (!body.domain.includes('.') || /\s/.test(body.domain))) {
+    throw new AppError(400, 'Informe um domínio válido (ex: esteticaalpha.com.br).');
   }
 
   const id = nextTenantId();
@@ -300,6 +322,11 @@ function createTenant(req, res) {
     role: 'owner',
     active: 1
   });
+
+  if (body.domain) {
+    insertDomain(tenant.id, body.domain, true);
+    logActivity(req.user.id, tenant.id, 'DOMAIN_ADDED', `Domínio ${body.domain} adicionado`);
+  }
 
   logActivity(req.user.id, tenant.id, 'TENANT_CREATED', `Empresa "${body.name}" criada (banco ${databaseName})`);
   return res.status(201).json(tenantWithStats(getTenantById(tenant.id)));
@@ -345,6 +372,16 @@ function setTenantStatusHandler(req, res) {
   return res.json(tenantWithStats(updated));
 }
 
+function suspendTenant(req, res) {
+  req.body = { ...req.body, status: 'SUSPENDED' };
+  return setTenantStatusHandler(req, res);
+}
+
+function reactivateTenant(req, res) {
+  req.body = { ...req.body, status: 'ACTIVE' };
+  return setTenantStatusHandler(req, res);
+}
+
 function resetTenantPassword(req, res) {
   const tenant = getTenantById(req.params.id);
   if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
@@ -352,14 +389,14 @@ function resetTenantPassword(req, res) {
   const owner = getTenantOwner(tenant.id);
   if (!owner) throw new AppError(400, 'Esta empresa não possui administrador vinculado.');
 
-  const newPassword = (req.body && req.body.new_password) || 'mudar123';
+  const newPassword = req.body && req.body.new_password;
+  if (!newPassword || String(newPassword).length < 8) throw new AppError(400, 'Informe uma nova senha com pelo menos 8 caracteres.');
   setUserPassword(owner.id, bcrypt.hashSync(newPassword, 10));
 
   logActivity(req.user.id, tenant.id, 'PASSWORD_RESET', `Senha do administrador "${owner.email}" redefinida`);
   return res.json({
     success: true,
-    admin_email: owner.email,
-    new_password: newPassword
+    admin_email: owner.email
   });
 }
 
@@ -373,10 +410,16 @@ function impersonate(req, res) {
   const owner = getTenantOwner(tenant.id);
   if (!owner) throw new AppError(400, 'Esta empresa não possui administrador vinculado.');
 
-  const token = signToken(owner);
+  const startedAt = new Date().toISOString();
+  const token = jwt.sign({
+    id: owner.id, name: owner.name, email: owner.email, role: owner.role,
+    tenant_id: owner.tenant_id, impersonated: true, developer_id: req.user.id,
+    original_user_id: req.user.id, started_at: startedAt
+  }, process.env.JWT_SECRET, { expiresIn: '30m' });
   logActivity(req.user.id, tenant.id, 'IMPERSONATE', `Entrou como ${owner.email}`);
   return res.json({
     token,
+    expires_in: 1800,
     redirect: '/admin',
     user: { id: owner.id, name: owner.name, email: owner.email, role: owner.role, tenant_id: owner.tenant_id }
   });
@@ -387,19 +430,28 @@ function backupTenant(req, res) {
   if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
 
   const tenantDb = require('../database/tenantDatabase').openTenantDatabase(tenant.database_name);
-  const tmpFile = path.join(os.tmpdir(), `${tenant.database_name.replace('.db', '')}-${Date.now()}.db`);
+  fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  const backupName = `${tenant.database_name.replace('.db', '')}-${Date.now()}.db`;
+  const tmpFile = path.join(BACKUPS_DIR, backupName);
   const escaped = tmpFile.replace(/'/g, "''");
   tenantDb.exec(`VACUUM INTO '${escaped}'`);
 
   logActivity(req.user.id, tenant.id, 'BACKUP', 'Backup do banco gerado');
-  res.download(tmpFile, `${tenant.database_name.replace('.db', '')}-backup-${todayStr()}.db`, (err) => {
-    try {
-      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-    } catch { /* ignore */ }
-    if (err) {
-      console.error('[developer] Erro ao enviar backup:', err.message);
-    }
-  });
+  if (req.method === 'GET') return res.download(tmpFile, `${tenant.database_name.replace('.db', '')}-backup-${todayStr()}.db`);
+  return res.status(201).json({ success: true, name: backupName, size: fs.statSync(tmpFile).size, created_at: new Date().toISOString() });
+}
+
+function listBackupsHandler(req, res) {
+  if (!fs.existsSync(BACKUPS_DIR)) return res.json([]);
+  const tenants = listTenants();
+  const backups = fs.readdirSync(BACKUPS_DIR)
+    .filter((name) => /^tenant_\d{4}_[a-z0-9_-]+-\d+\.db$/.test(name))
+    .map((name) => {
+      const stat = fs.statSync(path.join(BACKUPS_DIR, name));
+      const tenant = tenants.find((item) => name.startsWith(item.database_name.replace('.db', '') + '-'));
+      return { name, size: stat.size, created_at: stat.birthtime.toISOString(), tenant: tenant ? { id: tenant.id, name: tenant.name } : null };
+    });
+  return res.json(backups.sort((a, b) => b.created_at.localeCompare(a.created_at)));
 }
 
 function deleteTenantHandler(req, res) {
@@ -409,8 +461,15 @@ function deleteTenantHandler(req, res) {
     throw new AppError(400, 'A empresa padrão da plataforma não pode ser excluída.');
   }
 
+  const confirmation = String((req.body && req.body.confirmation) || '');
+  if (confirmation !== tenant.name && confirmation !== tenant.slug) {
+    throw new AppError(400, 'Digite exatamente o nome ou slug da empresa para confirmar.');
+  }
+  /* Exclusão definitiva: apaga o banco de dados exclusivo da empresa e a
+     linha em tenants — domínios, usuários e lançamentos financeiros somem
+     junto via ON DELETE CASCADE (foreign_keys ligado em openCore()). */
   deleteTenant(tenant.id);
-  logActivity(req.user.id, null, 'TENANT_DELETED', `Empresa "${tenant.name}" excluída`);
+  logActivity(req.user.id, null, 'TENANT_DELETED', `Empresa "${tenant.name}" excluída permanentemente`);
   return res.json({ success: true });
 }
 
@@ -468,7 +527,7 @@ function dnsInstructions(req, res) {
 
   const apex = row.domain;
   const www = `www.${apex}`;
-  const platformDomain = String(process.env.PLATFORM_DOMAIN || 'app.papi.app').trim();
+  const platformDomain = String(process.env.SAAS_CNAME_TARGET || process.env.PLATFORM_DOMAIN || 'app.papi.app').trim();
   const serverIp = String(process.env.PLATFORM_SERVER_IP || '').trim();
 
   const records = [];
@@ -523,7 +582,7 @@ function listUsersHandler(req, res) {
   const users = tenant_id
     ? listUsersByTenant(Number(tenant_id))
     : listUsers();
-  const result = users.map((u) => ({
+  const result = users.map(({ password_hash, ...u }) => ({
     ...u,
     tenant: u.tenant_id ? getTenantById(u.tenant_id) : null
   }));
@@ -553,7 +612,8 @@ function createUser(req, res) {
     active: 1
   });
   logActivity(req.user.id, tenant.id, 'USER_CREATED', `Usuário ${email} criado`);
-  return res.status(201).json({ ...user, tenant });
+  const { password_hash, ...safeUser } = user;
+  return res.status(201).json({ ...safeUser, tenant });
 }
 
 function updateUserHandler(req, res) {
@@ -577,7 +637,8 @@ function updateUserHandler(req, res) {
   }
 
   logActivity(req.user.id, user.tenant_id, 'USER_UPDATED', `Usuário ${user.email} atualizado`);
-  return res.json({ ...updated, tenant: updated.tenant_id ? getTenantById(updated.tenant_id) : null });
+  const { password_hash, ...safeUpdated } = updated;
+  return res.json({ ...safeUpdated, tenant: updated.tenant_id ? getTenantById(updated.tenant_id) : null });
 }
 
 function deleteUserHandler(req, res) {
@@ -646,6 +707,102 @@ function deletePlanHandler(req, res) {
   return res.json({ success: true });
 }
 
+/* ---------- Financeiro ---------- */
+
+const FINANCIAL_TYPES = ['MONTHLY', 'PACKAGE', 'PERCENTAGE'];
+const FINANCIAL_STATUSES = ['PENDING', 'PAID', 'CANCELED'];
+
+function financialWithTenant(entry) {
+  const tenant = getTenantById(entry.tenant_id);
+  const overdue = entry.status === 'PENDING' && entry.due_date && entry.due_date < todayStr();
+  return {
+    ...entry,
+    is_overdue: overdue,
+    tenant: tenant ? { id: tenant.id, name: tenant.name, slug: tenant.slug } : null
+  };
+}
+
+function listFinancialHandler(req, res) {
+  const { tenant_id, status, type } = req.query;
+  const filters = {};
+  if (tenant_id) filters.tenant_id = Number(tenant_id);
+  if (status) filters.status = status;
+  if (type) filters.type = type;
+  const entries = listFinancialEntries(filters).map(financialWithTenant);
+  return res.json(entries);
+}
+
+function validateFinancialInput(body, { partial = false } = {}) {
+  const {
+    tenant_id, type, description, amount, percentage,
+    installment_number, installment_total, due_date, status, notes
+  } = body || {};
+
+  if (!partial || tenant_id !== undefined) {
+    if (!tenant_id || !getTenantById(Number(tenant_id))) throw new AppError(400, 'Informe uma empresa válida.');
+  }
+  if (!partial || type !== undefined) {
+    if (!FINANCIAL_TYPES.includes(type)) throw new AppError(400, 'Tipo de cobrança inválido.');
+  }
+  if (!partial || amount !== undefined) {
+    if (amount === undefined || amount === null || amount === '' || Number(amount) <= 0) {
+      throw new AppError(400, 'Informe um valor maior que zero.');
+    }
+  }
+  if (!partial || due_date !== undefined) {
+    if (!due_date || !/^\d{4}-\d{2}-\d{2}$/.test(due_date)) throw new AppError(400, 'Informe uma data de vencimento válida.');
+  }
+  if (status !== undefined && !FINANCIAL_STATUSES.includes(status)) {
+    throw new AppError(400, 'Status inválido.');
+  }
+
+  const result = {};
+  if (tenant_id !== undefined) result.tenant_id = Number(tenant_id);
+  if (type !== undefined) result.type = type;
+  if (description !== undefined) result.description = String(description || '').trim() || null;
+  if (amount !== undefined) result.amount = Number(amount);
+  if (percentage !== undefined) result.percentage = (percentage === '' || percentage === null) ? null : Number(percentage);
+  if (installment_number !== undefined) result.installment_number = (installment_number === '' || installment_number === null) ? null : Number(installment_number);
+  if (installment_total !== undefined) result.installment_total = (installment_total === '' || installment_total === null) ? null : Number(installment_total);
+  if (due_date !== undefined) result.due_date = due_date;
+  if (status !== undefined) result.status = status;
+  if (notes !== undefined) result.notes = String(notes || '').trim() || null;
+  return result;
+}
+
+function createFinancialEntry(req, res) {
+  const data = validateFinancialInput(req.body);
+  if (!data.status) data.status = 'PENDING';
+  if (data.status === 'PAID') data.paid_at = todayStr();
+  const entry = insertFinancialEntry(data);
+  logActivity(req.user.id, entry.tenant_id, 'FINANCIAL_ENTRY_CREATED', `Cobrança de R$ ${Number(entry.amount).toFixed(2)} criada`);
+  return res.status(201).json(financialWithTenant(entry));
+}
+
+function updateFinancialEntryHandler(req, res) {
+  const existing = getFinancialEntry(req.params.id);
+  if (!existing) throw new AppError(404, 'Cobrança não encontrada.');
+
+  const data = validateFinancialInput(req.body, { partial: true });
+  if (data.status === 'PAID' && !existing.paid_at) {
+    data.paid_at = todayStr();
+  } else if (data.status && data.status !== 'PAID' && existing.status === 'PAID') {
+    data.paid_at = null;
+  }
+
+  const entry = updateFinancialEntry(existing.id, data);
+  logActivity(req.user.id, entry.tenant_id, 'FINANCIAL_ENTRY_UPDATED', `Cobrança #${entry.id} atualizada`);
+  return res.json(financialWithTenant(entry));
+}
+
+function deleteFinancialEntryHandler(req, res) {
+  const existing = getFinancialEntry(req.params.id);
+  if (!existing) throw new AppError(404, 'Cobrança não encontrada.');
+  deleteFinancialEntry(existing.id);
+  logActivity(req.user.id, existing.tenant_id, 'FINANCIAL_ENTRY_DELETED', `Cobrança #${existing.id} excluída`);
+  return res.json({ success: true });
+}
+
 /* ---------- Logs ---------- */
 
 function logsHandler(req, res) {
@@ -663,8 +820,7 @@ function platformSettings(req, res) {
   const core = getCoreDb();
   return res.json({
     platform_name: process.env.PLATFORM_NAME || 'Papi Core',
-    core_database: require('../database/coreDatabase').CORE_FILE,
-    tenants_directory: require('../database/tenantDatabase').tenantsDir(),
+    storage: 'SQLite isolado por empresa',
     node_env: process.env.NODE_ENV || 'development',
     default_tenant_slug: process.env.DEFAULT_TENANT_SLUG || 'torque-detail',
     platform_domain: process.env.PLATFORM_DOMAIN || '',
@@ -687,9 +843,12 @@ module.exports = {
   createTenant,
   updateTenantHandler,
   setTenantStatusHandler,
+  suspendTenant,
+  reactivateTenant,
   resetTenantPassword,
   impersonate,
   backupTenant,
+  listBackupsHandler,
   deleteTenantHandler,
   listDomainsHandler,
   addDomain,
@@ -704,6 +863,10 @@ module.exports = {
   createPlan,
   updatePlanHandler,
   deletePlanHandler,
+  listFinancialHandler,
+  createFinancialEntry,
+  updateFinancialEntryHandler,
+  deleteFinancialEntryHandler,
   logsHandler,
   platformSettings
 };

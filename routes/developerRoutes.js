@@ -16,14 +16,26 @@ const { requireDeveloper } = require('../middlewares/auth');
 
 const router = express.Router();
 
+const loginAttempts = new Map();
+function developerLoginRateLimit(req, res, next) {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const recent = (loginAttempts.get(key) || []).filter((time) => now - time < 15 * 60 * 1000);
+  if (recent.length >= 10) return res.status(429).json({ error: 'Muitas tentativas. Aguarde alguns minutos.' });
+  recent.push(now);
+  loginAttempts.set(key, recent);
+  next();
+}
+
 /* Autenticação do desenvolvedor (pública apenas o login) */
-router.post('/login', developerController.login);
+router.post('/login', developerLoginRateLimit, developerController.login);
 router.get('/me', requireDeveloper, developerController.me);
 router.post('/change-password', requireDeveloper, developerController.changePassword);
 
 router.use(requireDeveloper);
 
 router.get('/dashboard', developerController.dashboard);
+router.get('/backups', developerController.listBackupsHandler);
 
 /* Configurações da plataforma */
 router.get('/settings', developerController.platformSettings);
@@ -34,8 +46,11 @@ router.post('/tenants', developerController.createTenant);
 router.get('/tenants/:id', developerController.getTenantHandler);
 router.put('/tenants/:id', developerController.updateTenantHandler);
 router.patch('/tenants/:id/status', developerController.setTenantStatusHandler);
+router.post('/tenants/:id/suspend', developerController.suspendTenant);
+router.post('/tenants/:id/reactivate', developerController.reactivateTenant);
 router.post('/tenants/:id/reset-password', developerController.resetTenantPassword);
 router.post('/tenants/:id/impersonate', developerController.impersonate);
+router.post('/tenants/:id/backup', developerController.backupTenant);
 router.get('/tenants/:id/backup', developerController.backupTenant);
 router.delete('/tenants/:id', developerController.deleteTenantHandler);
 
@@ -57,6 +72,12 @@ router.get('/plans', developerController.listPlansHandler);
 router.post('/plans', developerController.createPlan);
 router.put('/plans/:id', developerController.updatePlanHandler);
 router.delete('/plans/:id', developerController.deletePlanHandler);
+
+/* Financeiro */
+router.get('/financial', developerController.listFinancialHandler);
+router.post('/financial', developerController.createFinancialEntry);
+router.put('/financial/:id', developerController.updateFinancialEntryHandler);
+router.delete('/financial/:id', developerController.deleteFinancialEntryHandler);
 
 /* Logs */
 router.get('/logs', developerController.logsHandler);
