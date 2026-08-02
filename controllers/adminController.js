@@ -128,7 +128,7 @@ function updateAppointment(req, res) {
        address_city = ?, address_state = ?, address_reference = ?,
        responsible_name = ?, responsible_phone = ?,
        has_water_access = ?, has_power_access = ?, key_delivery_confirmed = ?,
-       customer_notes = ?, updated_at = datetime('now', 'localtime')
+       payment_method = ?, customer_notes = ?, updated_at = datetime('now', 'localtime')
      WHERE id = ?`
   ).run(
     data.modality_id,
@@ -168,6 +168,7 @@ function updateAppointment(req, res) {
     data.has_water_access,
     data.has_power_access,
     data.key_delivery_confirmed,
+    data.payment_method,
     data.customer_notes,
     existing.id
   );

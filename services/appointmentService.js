@@ -14,6 +14,7 @@ const {
   AppError,
   ACTIVE_STATUSES,
   STATUSES,
+  PAYMENT_METHODS,
   VEHICLE_CATEGORIES,
   todayStr,
   isValidDateStr,
@@ -102,8 +103,17 @@ function validateAppointmentInput(body, opts = {}) {
     has_power_access,
     key_delivery_confirmed,
     customer_notes,
+    payment_method,
     status
   } = body || {};
+
+  let paymentMethod = null;
+  if (payment_method) {
+    paymentMethod = String(payment_method).toLowerCase();
+    if (!PAYMENT_METHODS.includes(paymentMethod)) {
+      throw new AppError(400, 'Forma de pagamento inválida.');
+    }
+  }
 
   if (!Number.isInteger(modality_id) || modality_id <= 0) {
     throw new AppError(400, 'Selecione a forma de atendimento.');
@@ -322,6 +332,7 @@ function validateAppointmentInput(body, opts = {}) {
     has_water_access: has_water_access ? 1 : 0,
     has_power_access: has_power_access ? 1 : 0,
     key_delivery_confirmed: key_delivery_confirmed ? 1 : 0,
+    payment_method: paymentMethod,
     customer_notes: customer_notes ? String(customer_notes).trim() : null
   };
 }
@@ -341,8 +352,8 @@ function insertAppointment(data) {
          address_city, address_state, address_reference,
          responsible_name, responsible_phone,
          has_water_access, has_power_access, key_delivery_confirmed,
-         customer_notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         payment_method, customer_notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       code,
@@ -384,6 +395,7 @@ function insertAppointment(data) {
       data.has_water_access,
       data.has_power_access,
       data.key_delivery_confirmed,
+      data.payment_method,
       data.customer_notes
     );
 

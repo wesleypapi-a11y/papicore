@@ -160,6 +160,7 @@ CREATE TABLE ${table} (
   has_water_access INTEGER NOT NULL DEFAULT 0,
   has_power_access INTEGER NOT NULL DEFAULT 0,
   key_delivery_confirmed INTEGER NOT NULL DEFAULT 0,
+  payment_method TEXT,
   rejection_reason TEXT,
   rejection_message TEXT,
   approved_at TEXT,
@@ -209,6 +210,7 @@ ensureColumn('services', 'pickup_extra_minutes', 'INTEGER NOT NULL DEFAULT 60');
 ensureColumn('appointments', 'end_date', 'TEXT');
 ensureColumn('appointments', 'booked_duration_minutes', 'INTEGER NOT NULL DEFAULT 60');
 ensureColumn('appointments', 'services_json', 'TEXT');
+ensureColumn('appointments', 'payment_method', 'TEXT');
 
 /* ---------- appointments: rebuild quando schema antigo ---------- */
 const STATUS_MAP = {
@@ -236,6 +238,7 @@ function migrateAppointments() {
       address_city, address_state, address_reference,
       responsible_name, responsible_phone,
       has_water_access, has_power_access, key_delivery_confirmed,
+      payment_method,
       rejection_reason, rejection_message, approved_at, rejected_at, approved_by, rejected_by,
       customer_notes, created_at, updated_at
     ) VALUES (
@@ -246,9 +249,10 @@ function migrateAppointments() {
       ?, ?, ?, ?,
       ?,
       ?, ?, ?, ?, ?,
-      ?, ?, ?,
+      ?, ?,       ?,
       ?, ?,
       ?, ?, ?,
+      ?,
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?
     )
@@ -267,6 +271,8 @@ function migrateAppointments() {
         null, null, null, null, null, null, null, null,
         null, null,
         0, 0, 0,
+        null, null, null,
+        null,
         null, null, null, null, null, null,
         r.notes, r.created_at, r.updated_at
       );

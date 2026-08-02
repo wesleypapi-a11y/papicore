@@ -358,19 +358,20 @@ textarea { resize: vertical; }
 
 .slots-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: 10px;
 }
 
 .slot-btn {
-  padding: 14px 8px;
+  padding: 14px 6px;
   border-radius: var(--radius-sm);
   background: var(--card);
   border: 2px solid var(--border);
   color: var(--text);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
+  letter-spacing: -0.2px;
   transition: border-color 0.12s, background 0.12s;
 }
 .slot-btn:hover { border-color: var(--accent); }
@@ -436,6 +437,74 @@ textarea { resize: vertical; }
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+/* ---------- payment ---------- */
+
+.payment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.payment-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  padding: 18px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 2px solid var(--border);
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.payment-card:hover { background: var(--card-hover); border-color: var(--border-strong); }
+.payment-card.selected { border-color: var(--accent); background: var(--accent-soft); }
+.payment-name { font-size: 16px; font-weight: 700; }
+.payment-desc { font-size: 13px; color: var(--text-soft); }
+
+.payment-detail {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.payment-note { font-size: 14px; color: var(--text-soft); margin-bottom: 14px; }
+.payment-note.muted { color: var(--text-muted); font-size: 13px; }
+
+.card-total {
+  margin: 4px 0 16px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.card-total strong { font-size: 20px; color: var(--accent); font-weight: 800; }
+
+.payment-success { text-align: center; padding: 18px 0 6px; }
+.payment-success .success-icon { width: 64px; height: 64px; margin-bottom: 14px; }
+.payment-success strong { font-size: 18px; color: var(--green); display: block; margin-bottom: 6px; }
+.payment-success p { font-size: 14px; color: var(--text-soft); }
+
+.pix-box { display: flex; flex-direction: column; gap: 4px; }
+.pix-code-wrap { display: flex; gap: 10px; align-items: stretch; }
+.pix-code-input {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+.pix-code-wrap .btn { white-space: nowrap; flex-shrink: 0; }
+
+.qr-box { text-align: center; }
+.qr-image {
+  display: inline-block;
+  background: #fff;
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin: 4px 0 10px;
+  box-shadow: var(--shadow);
+}
+.qr-image svg { display: block; width: 240px; height: 240px; }
 
 /* ---------- success ---------- */
 
@@ -728,19 +797,43 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .stat-card .stat-value { font-size: 26px; font-weight: 800; }
 .stat-card .stat-label { font-size: 12px; color: var(--text-muted); }
 
+.header-actions { display: flex; gap: 10px; }
+
+.admin-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 44;
+  display: none;
+}
+.admin-backdrop.show { display: block; }
+
 /* ---------- responsive ---------- */
 
+/* Admin: sidebar vira gaveta (drawer) no mobile */
 @media (max-width: 900px) {
   .admin-layout { grid-template-columns: 1fr; }
-  .admin-sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
-  .admin-nav { flex-direction: row; flex-wrap: wrap; }
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .admin-topbar { display: flex; }
-  .admin-sidebar { display: none; }
-  .admin-sidebar.open { display: block; }
+  .admin-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 268px;
+    max-width: 85vw;
+    height: 100vh;
+    border-right: 1px solid var(--border);
+    transform: translateX(-102%);
+    transition: transform 0.25s ease;
+    box-shadow: var(--shadow);
+    z-index: 45;
+  }
+  .admin-sidebar.open { transform: translateX(0); }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 700px) {
+  /* ---------- booking ---------- */
   .site-header { padding: 12px 16px; }
   .header-tagline { display: none; }
   .container { padding: 16px 14px 40px; }
@@ -748,6 +841,9 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .modality-grid { grid-template-columns: 1fr; }
   .unit-grid { grid-template-columns: 1fr; }
   .category-grid { grid-template-columns: repeat(2, 1fr); }
+  .payment-grid { grid-template-columns: 1fr; }
+  .pix-code-wrap { flex-direction: column; }
+  .pix-code-wrap .btn { width: 100%; }
   .service-grid { grid-template-columns: 1fr; }
   .address-grid { grid-template-columns: 1fr; }
   .field-row { flex-direction: column; gap: 0; }
@@ -757,7 +853,92 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .nav-row { flex-direction: column-reverse; }
   .nav-row .btn { width: 100%; }
   .progress-wrap { margin-bottom: 16px; }
+  .progress { min-width: 0; }
   .progress li .lbl { display: none; }
   .progress li { justify-content: center; flex: 1; }
+  .slot-btn { font-size: 14px; }
+
+  /* ---------- admin ---------- */
   .admin-main { padding: 18px 14px 50px; }
+  .admin-header { flex-direction: column; align-items: stretch; }
+  .admin-header > .btn,
+  .admin-header .header-actions .btn { width: 100%; }
+  .header-actions { flex-direction: column; }
+  .toolbar { flex-direction: column; }
+  .toolbar input, .toolbar select { width: 100%; min-width: 0; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 6px; margin-bottom: 16px; }
+  .tabs .tab { flex-shrink: 0; }
+  .btn-sm { padding: 10px 14px; }
+  .stat-grid { gap: 10px; }
+  .stat-card { padding: 14px; }
+  .stat-card .stat-value { font-size: 22px; }
+
+  /* tabelas viram cartões empilhados */
+  .table-wrap { overflow: visible; }
+  .table-wrap table, .table-wrap thead, .table-wrap tbody,
+  .table-wrap tr, .table-wrap th, .table-wrap td { display: block; }
+  .table-wrap thead { display: none; }
+  .table-wrap tbody { display: grid; gap: 12px; }
+  .table-wrap tr {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px 16px;
+    padding: 14px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .table-wrap tr:hover { border-color: var(--border-strong); }
+  .table-wrap td { border: none; padding: 0; font-size: 13px; }
+  .table-wrap td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+  }
+  .table-wrap td.cell-actions {
+    grid-column: 1 / -1;
+    border-top: 1px dashed var(--border);
+    padding-top: 10px;
+    margin-top: 2px;
+  }
+  .table-wrap td.cell-actions::before { display: none; }
+  .table-wrap td.cell-actions .row-actions { justify-content: flex-start; }
+  .table-wrap td.cell-actions .row-actions .btn { flex: 1; }
+  .table-wrap tr:hover td { background: transparent; }
+}
+
+/* Modais viram "bottom sheet" em telas pequenas */
+@media (max-width: 600px) {
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: 20px 20px 0 0;
+    padding: 20px 18px 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-header { flex-shrink: 0; }
+  .modal-body { overflow-y: auto; min-height: 0; padding-bottom: 18px; }
+  .modal-actions {
+    flex-shrink: 0;
+    margin: 0 -18px;
+    padding: 14px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+    background: var(--bg-soft);
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 20px 20px;
+  }
+  .modal-actions .btn { flex: 1; }
+}
+
+@media (max-width: 400px) {
+  .step-title { font-size: 20px; }
+  .modal-actions { flex-direction: column; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .qr-image svg { width: 200px; height: 200px; }
 }

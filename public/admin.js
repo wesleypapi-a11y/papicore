@@ -22,6 +22,12 @@
   const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const WEEKDAY_KEYS = [0, 1, 2, 3, 4, 5, 6];
   const CATEGORY_LABELS = { hatch: 'Hatch', sedan: 'Sedan', suv: 'SUV', pickup: 'Picape' };
+  const PAYMENT_LABELS = {
+    local: 'Pagamento no local',
+    card: 'Crédito/débito no local',
+    pix: 'Pix (copia e cola)',
+    qrcode: 'Pix (QR Code)'
+  };
 
   let state = {
     token: localStorage.getItem(TOKEN_KEY) || '',
@@ -162,6 +168,17 @@
     </div>`;
   }
 
+  /* ---------- sidebar (mobile drawer) ---------- */
+
+  function openSidebar() {
+    $('sidebar').classList.add('open');
+    $('sidebarBackdrop').classList.add('show');
+  }
+  function closeSidebar() {
+    $('sidebar').classList.remove('open');
+    $('sidebarBackdrop').classList.remove('show');
+  }
+
   /* ---------- navigation ---------- */
 
   async function enterPanel() {
@@ -206,7 +223,7 @@
       settings: 'Configurações'
     };
     $('topbarTitle').textContent = titles[name];
-    $('sidebar').classList.remove('open');
+    closeSidebar();
     const renderer = {
       dashboard: renderDashboard,
       agenda: renderAgenda,
@@ -287,7 +304,7 @@
           <td>${escapeHtml(a.customer_name)}</td>
           <td>${escapeHtml(a.vehicle_brand)} ${escapeHtml(a.vehicle_model)}</td>
           <td>${escapeHtml(a.service_name || '—')}${a.booked_duration_minutes ? `<br/><span class="muted">${fmtDur(a.booked_duration_minutes)}</span>` : ''}</td>
-          <td>${escapeHtml(a.modality_name || '—')}</td>
+          <td>${escapeHtml(a.modality_name || '—')}${a.payment_method ? `<br/><span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
           <td>${badge(a.status)}</td>
           <td><div class="row-actions">${actions.join('')}</div></td>
         </tr>`;
@@ -350,7 +367,7 @@
           <td>${escapeHtml(a.customer_name)}<br /><span class="muted">${escapeHtml(a.customer_phone)}</span></td>
           <td>${toDateBR(a.appointment_date)}<br /><span class="muted">${escapeHtml(a.start_time)} → ${a.end_date && a.end_date !== a.appointment_date ? toDateBR(a.end_date) + ' ' : ''}${escapeHtml(a.end_time || '—')}</span></td>
           <td>${escapeHtml(a.service_name || '—')}<br /><span class="muted">${escapeHtml(a.modality_name || '')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</span></td>
-          <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}</td>
+          <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}<br />${a.payment_method ? `<span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
           <td>${badge(a.status)}</td>
           <td><div class="row-actions">${actions.join('')}</div></td>
         </tr>`;
@@ -454,6 +471,14 @@
           <div class="field" id="apptEndTimeWrap">${fieldHtml('apptEndTime', 'Término (hora)', v('end_time', ''), 'time')}</div>
           <div class="field"><label for="apptStatus">Status</label>
             <select id="apptStatus">${statusOpts}</select></div>
+          <div class="field"><label for="apptPayment">Forma de pagamento</label>
+            <select id="apptPayment">
+              <option value="">—</option>
+              <option value="local">Pagamento no local</option>
+              <option value="card">Crédito ou débito no local</option>
+              <option value="pix">Pix (copia e cola)</option>
+              <option value="qrcode">Pix (QR Code)</option>
+            </select></div>
           <div class="field"><label for="apptPrice">Preço do serviço (R$)</label>
             <input type="number" id="apptPrice" value="${escapeHtml(v('service_price', ''))}" step="0.01" min="0" /></div>
           <div class="field"><label for="apptFee">Taxa da modalidade (R$)</label>
@@ -473,6 +498,7 @@
       $('apptService').value = appt.service_id || '';
       $('apptCategory').value = appt.vehicle_category;
       $('apptStatus').value = appt.status;
+      $('apptPayment').value = appt.payment_method || '';
     }
     const toggleManualEnd = () => {
       const on = $('apptManualEnd').checked;
@@ -498,6 +524,7 @@
         appointment_date: $('apptDate').value,
         start_time: $('apptTime').value,
         status: $('apptStatus').value,
+        payment_method: $('apptPayment').value || null,
         customer_notes: $('apptNotes').value || null
       };
       if (manualEnd) {
@@ -570,6 +597,7 @@
       ['Serviço', a.service_name],
       ['Modalidade', a.modality_name],
       ['Unidade', a.unit_name],
+      ['Pagamento', a.payment_method ? (PAYMENT_LABELS[a.payment_method] || a.payment_method) : ''],
       ['Preço serviço', money(a.service_price)],
       ['Taxa', money(a.modality_fee)],
       ['Total', money(a.total_price) + (a.price_is_estimate ? ' (estimativa)' : '')],
@@ -632,9 +660,9 @@
     }).join('');
 
     el.innerHTML = `
-      <div class="admin-header">
+        <div class="admin-header">
         <div><h1>Serviços e valores</h1><div class="sub">Catálogo exibido no agendamento do cliente</div></div>
-        <div style="display:flex;gap:10px;">
+        <div class="header-actions">
           <button class="btn btn-ghost" id="btnNewCategory">+ Nova categoria</button>
           <button class="btn btn-primary" id="btnNewService">+ Novo serviço</button>
         </div>
@@ -1215,11 +1243,32 @@
     });
 
     $('btnLogout').addEventListener('click', () => { logout(); });
-    $('btnMenu').addEventListener('click', () => $('sidebar').classList.toggle('open'));
+    $('btnMenu').addEventListener('click', () => {
+      if ($('sidebar').classList.contains('open')) closeSidebar();
+      else openSidebar();
+    });
+    $('sidebarBackdrop').addEventListener('click', closeSidebar);
   }
 
   async function init() {
     bindGlobals();
+
+    /* decora tabelas com data-label para o layout em cartões no mobile */
+    function decorateTables() {
+      document.querySelectorAll('#panelView table').forEach((table) => {
+        if (table.dataset.decorated) return;
+        table.dataset.decorated = '1';
+        const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+        table.querySelectorAll('tbody tr').forEach((tr) => {
+          [...tr.children].forEach((td, i) => {
+            if (heads[i]) td.dataset.label = heads[i];
+            if (td.querySelector('button')) td.classList.add('cell-actions');
+          });
+        });
+      });
+    }
+    new MutationObserver(() => decorateTables()).observe($('panelView'), { childList: true, subtree: true });
+
     if (state.token) {
       try {
         await enterPanel();

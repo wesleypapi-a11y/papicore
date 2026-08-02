@@ -17,6 +17,15 @@ const STATUS_LABELS = {
 
 const ACTIVE_STATUSES = ['pending', 'confirmed', 'completed'];
 
+const PAYMENT_METHODS = ['local', 'card', 'pix', 'qrcode'];
+
+const PAYMENT_LABELS = {
+  local: 'Pagamento no local',
+  card: 'Crédito ou débito no local',
+  pix: 'Pix (copia e cola)',
+  qrcode: 'Pix (QR Code)'
+};
+
 const VEHICLE_CATEGORIES = ['hatch', 'sedan', 'suv', 'pickup'];
 
 const VEHICLE_CATEGORY_LABELS = {
@@ -219,6 +228,8 @@ module.exports = {
   STATUSES,
   STATUS_LABELS,
   ACTIVE_STATUSES,
+  PAYMENT_METHODS,
+  PAYMENT_LABELS,
   VEHICLE_CATEGORIES,
   VEHICLE_CATEGORY_LABELS,
   REJECTION_REASONS,

@@ -24,11 +24,20 @@
     key_delivery_confirmed: false,
     has_water_access: false,
     has_power_access: false,
-    customer_notes: ''
+    customer_notes: '',
+    paymentMethod: '',
+    cardPaid: false
   };
 
-  const STEP_LABELS = ['Atendimento', 'Dados', 'Veículo', 'Data', 'Serviço', 'Horário', 'Revisão'];
-  const TOTAL_STEPS = 7;
+  const STEP_LABELS = ['Atendimento', 'Dados', 'Veículo', 'Data', 'Serviço', 'Horário', 'Revisão', 'Pagamento'];
+  const TOTAL_STEPS = 8;
+
+  const PAYMENT_METHODS = [
+    { key: 'local', name: 'Pagamento no local', desc: 'Pague em dinheiro ou no meio que preferir na hora do serviço.' },
+    { key: 'card', name: 'Crédito ou débito no local', desc: 'Informe os dados do cartão e finalize o pagamento.' },
+    { key: 'pix', name: 'Pix (copia e cola)', desc: 'Copie o código Pix e pague pelo aplicativo do seu banco.' },
+    { key: 'qrcode', name: 'Pix (QR Code)', desc: 'Escaneie o QR Code com o aplicativo do seu banco.' }
+  ];
 
   function digits(v) {
     return String(v || '').replace(/\D/g, '');
@@ -216,6 +225,16 @@
     if (n === 6) {
       if (!state.slot) { alert('Selecione um horário.'); return false; }
     }
+    if (n === 7) {
+      if (!validateAddressSubmit()) return false;
+    }
+    if (n === 8) {
+      if (!state.paymentMethod) { alert('Selecione a forma de pagamento.'); return false; }
+      if (state.paymentMethod === 'card' && !state.cardPaid) {
+        alert('Finalize o pagamento com o cartão antes de enviar.');
+        return false;
+      }
+    }
     return true;
   }
 
@@ -224,6 +243,7 @@
     if (n === 5) renderCatalog();
     if (n === 6) renderSlots();
     if (n === 7) renderReview();
+    if (n === 8) renderPayment();
   }
 
   /* ---------- step 1: modalities ---------- */
@@ -256,6 +276,8 @@
         state.key_delivery_confirmed = false;
         state.has_water_access = false;
         state.has_power_access = false;
+        state.paymentMethod = '';
+        state.cardPaid = false;
         saveState();
         grid.querySelectorAll('.modality-card').forEach((c) => c.classList.remove('selected'));
         card.classList.add('selected');
@@ -717,6 +739,205 @@
     `;
   }
 
+  /* ---------- step 8: payment ---------- */
+
+  function renderPayment() {
+    const grid = $('paymentGrid');
+    grid.innerHTML = '';
+    PAYMENT_METHODS.forEach((p) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'payment-card';
+      btn.dataset.key = p.key;
+      btn.innerHTML = `<span class="payment-name">${p.name}</span><span class="payment-desc">${p.desc}</span>`;
+      if (state.paymentMethod === p.key) btn.classList.add('selected');
+      btn.addEventListener('click', () => {
+        state.paymentMethod = p.key;
+        state.cardPaid = false;
+        saveState();
+        grid.querySelectorAll('.payment-card').forEach((c) => c.classList.remove('selected'));
+        btn.classList.add('selected');
+        renderPaymentDetail();
+      });
+      grid.appendChild(btn);
+    });
+    renderPaymentDetail();
+  }
+
+  function paymentTotal() {
+    const totals = servicesTotals();
+    const fee = Number(state.modality.fee || 0);
+    return totals.value + fee;
+  }
+
+  function renderPaymentDetail() {
+    const detail = $('paymentDetail');
+    detail.innerHTML = '';
+    detail.hidden = !state.paymentMethod;
+    if (!state.paymentMethod) return;
+    const method = state.paymentMethod;
+    const total = paymentTotal();
+
+    if (method === 'local') {
+      detail.innerHTML = `<p class="payment-note">Você pagará no local, no momento da entrega do veículo. Total estimado: <strong>${money(total)}</strong>.</p>`;
+    } else if (method === 'card') {
+      if (state.cardPaid) {
+        detail.innerHTML = `
+          <div class="payment-success">
+            <div class="success-icon">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#27c469" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            </div>
+            <strong>Pagamento aprovado!</strong>
+            <p>Valor de ${money(total)} autorizado. Você já pode enviar a solicitação.</p>
+          </div>`;
+        return;
+      }
+      detail.innerHTML = `
+        <div class="card-form">
+          <h3 class="review-section-title">Dados do cartão</h3>
+          <div class="field"><label for="cardNumber">Número do cartão</label>
+            <input type="text" id="cardNumber" inputmode="numeric" maxlength="19" autocomplete="off" placeholder="0000 0000 0000 0000" /></div>
+          <div class="field"><label for="cardName">Nome impresso no cartão</label>
+            <input type="text" id="cardName" autocomplete="off" placeholder="Como está no cartão" /></div>
+          <div class="field-row">
+            <div class="field"><label for="cardExp">Validade</label>
+              <input type="text" id="cardExp" inputmode="numeric" maxlength="5" autocomplete="off" placeholder="MM/AA" /></div>
+            <div class="field"><label for="cardCvv">CVV</label>
+              <input type="text" id="cardCvv" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="123" /></div>
+          </div>
+          <div class="card-total">Total: <strong>${money(total)}</strong></div>
+          <button type="button" class="btn btn-primary btn-lg" id="cardPayBtn">Pagar agora</button>
+        </div>`;
+      const num = $('cardNumber');
+      const name = $('cardName');
+      const exp = $('cardExp');
+      const cvv = $('cardCvv');
+      num.addEventListener('input', () => { maskCardNumber(num); });
+      exp.addEventListener('input', () => { maskCardExp(exp); });
+      cvv.addEventListener('input', () => { cvv.value = digits(cvv.value).slice(0, 4); });
+      $('cardPayBtn').addEventListener('click', () => {
+        if (digits(num.value).length < 15) { alert('Número do cartão inválido.'); return; }
+        if (name.value.trim().length < 3) { alert('Informe o nome impresso no cartão.'); return; }
+        if (!/^\d{2}\/\d{2}$/.test(exp.value)) { alert('Validade inválida. Use o formato MM/AA.'); return; }
+        if (digits(cvv.value).length < 3) { alert('CVV inválido.'); return; }
+        const btn = $('cardPayBtn');
+        btn.disabled = true;
+        btn.textContent = 'Processando pagamento...';
+        setTimeout(() => {
+          state.cardPaid = true;
+          saveState();
+          renderPaymentDetail();
+        }, 1200);
+      });
+    } else if (method === 'pix') {
+      const code = buildPixCode(total);
+      detail.innerHTML = `
+        <div class="pix-box">
+          <p class="payment-note">Copie o código abaixo e pague pelo aplicativo do seu banco (Pix). Total: <strong>${money(total)}</strong>.</p>
+          <div class="pix-code-wrap">
+            <input type="text" class="pix-code-input" id="pixCodeInput" value="${escapeHtml(code)}" readonly />
+            <button type="button" class="btn btn-primary" id="pixCopyBtn">Copiar código</button>
+          </div>
+        </div>`;
+      const copyBtn = $('pixCopyBtn');
+      copyBtn.addEventListener('click', () => {
+        const input = $('pixCodeInput');
+        input.select();
+        input.setSelectionRange(0, input.value.length);
+        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+        if (navigator.clipboard) navigator.clipboard.writeText(input.value).catch(() => {});
+        copyBtn.textContent = 'Código copiado!';
+        setTimeout(() => { copyBtn.textContent = 'Copiar código'; }, 2000);
+      });
+    } else if (method === 'qrcode') {
+      const code = buildPixCode(total);
+      detail.innerHTML = `
+        <div class="qr-box">
+          <p class="payment-note">Escaneie o QR Code abaixo com o aplicativo do seu banco (Pix). Total: <strong>${money(total)}</strong>.</p>
+          <div class="qr-image">${fakeQrSvg(code)}</div>
+          <p class="payment-note muted">QR Code ilustrativo (fictício) — nenhuma cobrança real é gerada.</p>
+        </div>`;
+    }
+  }
+
+  function maskCardNumber(input) {
+    const v = digits(input.value).slice(0, 16);
+    const parts = [];
+    for (let i = 0; i < v.length; i += 4) parts.push(v.slice(i, i + 4));
+    input.value = parts.join(' ');
+  }
+
+  function maskCardExp(input) {
+    let v = digits(input.value).slice(0, 4);
+    if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2);
+    input.value = v;
+  }
+
+  function pixField(id, value) {
+    const s = String(value);
+    return `${id}${String(s.length).padStart(2, '0')}${s}`;
+  }
+
+  function crc16(text) {
+    let crc = 0xffff;
+    for (let i = 0; i < text.length; i += 1) {
+      crc ^= text.charCodeAt(i) << 8;
+      for (let j = 0; j < 8; j += 1) {
+        crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+      }
+    }
+    return crc.toString(16).toUpperCase().padStart(4, '0');
+  }
+
+  function buildPixCode(total) {
+    const s = state.settings;
+    const phone = digits(s.phone || s.whatsapp || '') || '34999999999';
+    const name = (s.company_name || 'TORQUE DETAIL')
+      .replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, 25) || 'TORQUE DETAIL';
+    const city = 'UBERLANDIA';
+    const amt = (Number(total) || 0).toFixed(2);
+    const txid = 'TORQUE' + String(Date.now()).slice(-4);
+    const sub = pixField('00', 'BR.GOV.BCB.PIX') + pixField('01', phone);
+    let payload =
+      '000201' +
+      pixField('26', sub) +
+      pixField('52', '0000') +
+      pixField('53', '986') +
+      pixField('54', amt) +
+      pixField('58', 'BR') +
+      pixField('59', name) +
+      pixField('60', city) +
+      pixField('62', pixField('05', txid)) +
+      '6304';
+    return payload + crc16(payload);
+  }
+
+  function fakeQrSvg(text) {
+    const size = 25;
+    let seed = 2166136261;
+    for (let i = 0; i < text.length; i += 1) seed = ((seed ^ text.charCodeAt(i)) * 16777619) >>> 0;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const g = [];
+    for (let r = 0; r < size; r += 1) { g.push([]); for (let c = 0; c < size; c += 1) g[r].push(rand() < 0.5); }
+    const finder = (r0, c0) => {
+      for (let r = 0; r < 7; r += 1) for (let c = 0; c < 7; c += 1) {
+        const border = r === 0 || r === 6 || c === 0 || c === 6;
+        const core = r >= 2 && r <= 4 && c >= 2 && c <= 4;
+        g[r0 + r][c0 + c] = border || core;
+      }
+    };
+    finder(0, 0);
+    finder(0, size - 7);
+    finder(size - 7, 0);
+    for (let i = 8; i < size - 8; i += 1) { g[6][i] = i % 2 === 0; g[i][6] = i % 2 === 0; }
+    const cell = 12;
+    let rects = '';
+    for (let r = 0; r < size; r += 1) for (let c = 0; c < size; c += 1) {
+      if (g[r][c]) rects += `<rect x="${c * cell}" y="${r * cell}" width="${cell}" height="${cell}"/>`;
+    }
+    return `<svg viewBox="0 0 ${size * cell} ${size * cell}" role="img" aria-label="QR Code Pix (ilustrativo)">${rects}</svg>`;
+  }
+
   /* ---------- submit ---------- */
 
   function validateAddressSubmit() {
@@ -780,6 +1001,7 @@
       has_water_access: state.has_water_access,
       has_power_access: state.has_power_access,
       key_delivery_confirmed: state.key_delivery_confirmed,
+      payment_method: state.paymentMethod || null,
       customer_notes: state.customer_notes.trim() || null
     };
   }
