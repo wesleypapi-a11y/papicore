@@ -155,12 +155,29 @@ function seedCore() {
       );
     }
 
-    /* Domínio principal da Torque Detail (não verificado até o dev validar) */
-    db.prepare('INSERT OR IGNORE INTO tenant_domains (tenant_id, domain, is_primary, verified) VALUES (?, ?, 1, 0)').run(
+    /* Domínio principal da Torque Detail: configurado pelo próprio operador da
+       plataforma via env var, então já nasce verificado (diferente de um
+       domínio que um tenant adicionaria depois e precisaria comprovar
+       propriedade via DNS). */
+    db.prepare('INSERT OR IGNORE INTO tenant_domains (tenant_id, domain, is_primary, verified) VALUES (?, ?, 1, 1)').run(
       tenantId,
       process.env.TORQUE_DETAIL_DOMAIN || 'torquedetail.com.br'
     );
   }
+}
+
+/*
+ * Corrige instalações que já tinham o domínio padrão da Torque Detail
+ * salvo como não verificado (estado em que a rota pública ficava
+ * inacessível por esse domínio). Idempotente: roda a cada boot.
+ */
+function ensureDefaultDomainVerified() {
+  const tenant = db.prepare('SELECT * FROM tenants WHERE slug = ?').get('torque-detail');
+  if (!tenant) return;
+  const domain = normalizeDomain(process.env.TORQUE_DETAIL_DOMAIN || 'torquedetail.com.br');
+  db.prepare(
+    'UPDATE tenant_domains SET verified = 1 WHERE tenant_id = ? AND domain = ? AND verified = 0'
+  ).run(tenant.id, domain);
 }
 
 /*
@@ -239,6 +256,7 @@ function initCore() {
   seedCore();
   migrateLegacyData();
   ensureDefaultTenant();
+  ensureDefaultDomainVerified();
   return db;
 }
 
