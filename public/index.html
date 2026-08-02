@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e1015" />
+  <title>Torque Detail — Agendamento Online</title>
+  <link rel="icon" href="/assets/favicon.png" />
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="booking-app">
+  <header class="site-header">
+    <div class="brand">
+      <img src="/assets/logo-icon.png" alt="Torque Detail" class="brand-logo" />
+      <span class="brand-name" id="brandName">Torque Detail</span>
+    </div>
+    <span class="header-tagline">Agendamento online</span>
+  </header>
+
+  <main class="container">
+    <div class="progress-wrap" id="progressWrap" hidden>
+      <ol class="progress" id="progress"></ol>
+    </div>
+
+    <form id="bookingForm" novalidate>
+      <section class="step" data-step="1" hidden>
+        <h2 class="step-title">Como você quer ser atendido?</h2>
+        <p class="step-subtitle">Escolha a forma de atendimento para continuar.</p>
+        <div class="modality-grid" id="modalityGrid"></div>
+      </section>
+
+      <section class="step" data-step="2" hidden>
+        <h2 class="step-title">Dados pessoais</h2>
+        <p class="step-subtitle">Informe seus dados para contato.</p>
+        <div class="field">
+          <label for="customerName">Nome completo</label>
+          <input type="text" id="customerName" autocomplete="name" placeholder="Seu nome completo" />
+        </div>
+        <div class="field">
+          <label for="customerPhone">WhatsApp / Telefone</label>
+          <input type="tel" id="customerPhone" inputmode="numeric" autocomplete="tel" placeholder="(00) 00000-0000" />
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="customerEmail">E-mail <span class="opt">(opcional)</span></label>
+            <input type="email" id="customerEmail" autocomplete="email" placeholder="voce@email.com" />
+          </div>
+          <div class="field">
+            <label for="customerCpf">CPF <span class="opt">(opcional)</span></label>
+            <input type="text" id="customerCpf" inputmode="numeric" autocomplete="off" placeholder="000.000.000-00" />
+          </div>
+        </div>
+      </section>
+
+      <section class="step" data-step="3" hidden>
+        <h2 class="step-title">Dados do veículo</h2>
+        <p class="step-subtitle">Conte pra gente qual é o seu veículo.</p>
+        <div class="field-row">
+          <div class="field">
+            <label for="vehicleBrand">Marca</label>
+            <input type="text" id="vehicleBrand" placeholder="Ex.: Volkswagen" />
+          </div>
+          <div class="field">
+            <label for="vehicleModel">Modelo</label>
+            <input type="text" id="vehicleModel" placeholder="Ex.: Polo" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="vehicleYear">Ano <span class="opt">(opcional)</span></label>
+            <input type="text" id="vehicleYear" inputmode="numeric" maxlength="4" placeholder="2023" />
+          </div>
+          <div class="field">
+            <label for="vehiclePlate">Placa <span class="opt">(opcional)</span></label>
+            <input type="text" id="vehiclePlate" maxlength="8" placeholder="ABC-1D23" />
+          </div>
+          <div class="field">
+            <label for="vehicleColor">Cor <span class="opt">(opcional)</span></label>
+            <input type="text" id="vehicleColor" placeholder="Branco" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Categoria do veículo</label>
+          <div class="category-grid" id="categoryGrid"></div>
+        </div>
+      </section>
+
+      <section class="step" data-step="4" hidden>
+        <h2 class="step-title">Escolha a data</h2>
+        <div id="unitBlock" hidden>
+          <p class="step-subtitle">Selecione a unidade de atendimento.</p>
+          <div class="unit-grid" id="unitGrid"></div>
+        </div>
+        <p class="step-subtitle" id="dateSubtitle">Escolha o dia disponível.</p>
+        <div class="calendar" id="calendar"></div>
+      </section>
+
+      <section class="step" data-step="5" hidden>
+        <h2 class="step-title">Escolha o serviço</h2>
+        <p class="step-subtitle" id="catalogSubtitle"></p>
+        <div id="catalog"></div>
+      </section>
+
+      <section class="step" data-step="6" hidden>
+        <h2 class="step-title">Escolha o horário</h2>
+        <p class="step-subtitle" id="slotSubtitle"></p>
+        <div id="slotLoading" class="loading" hidden>Consultando horários...</div>
+        <div class="slots-grid" id="slotsGrid"></div>
+      </section>
+
+      <section class="step" data-step="7" hidden>
+        <h2 class="step-title">Revisão e envio</h2>
+        <div id="addressBlock" hidden></div>
+        <div class="field">
+          <label for="customerNotes">Observações <span class="opt">(opcional)</span></label>
+          <textarea id="customerNotes" rows="3" placeholder="Alguma observação para a equipe?"></textarea>
+        </div>
+        <div class="review-card" id="reviewCard"></div>
+        <div class="nav-row">
+          <button type="button" class="btn btn-ghost" data-action="back">Voltar</button>
+          <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">Enviar solicitação de agendamento</button>
+        </div>
+      </section>
+
+      <div class="nav-row step-nav" id="navRow" hidden>
+        <button type="button" class="btn btn-ghost" data-action="back" id="btnBack">Voltar</button>
+        <button type="button" class="btn btn-primary" data-action="next" id="btnNext">Continuar</button>
+      </div>
+    </form>
+
+    <section class="success" id="successScreen" hidden>
+      <div class="success-icon">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#27c469" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+      </div>
+      <h2>Solicitação enviada com sucesso!</h2>
+      <p class="success-msg" id="successMsg"></p>
+      <div class="success-code">
+        <span>Código do agendamento</span>
+        <strong id="successCode"></strong>
+      </div>
+      <p class="success-note">Seu horário ficou reservado e será confirmado após a análise da nossa equipe. Acompanhe o status pelo WhatsApp.</p>
+      <div class="success-actions">
+        <a class="btn btn-primary" id="btnWhatsapp" target="_blank" rel="noopener">Falar com a Torque Detail pelo WhatsApp</a>
+        <button class="btn btn-ghost" id="btnHome">Voltar para o início</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span id="footerName">Torque Detail</span> — <span id="footerPhone"></span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

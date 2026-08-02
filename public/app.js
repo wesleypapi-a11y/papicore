@@ -1,0 +1,901 @@
+(function () {
+  'use strict';
+
+  const STORAGE_KEY = 'torque_booking_state';
+  const $ = (id) => document.getElementById(id);
+
+  const state = {
+    settings: {},
+    modalities: [],
+    units: [],
+    currentStep: 1,
+    modality: null,
+    unit: null,
+    customer: { name: '', phone: '', email: '', cpf: '' },
+    vehicle: { brand: '', model: '', year: '', plate: '', color: '', category: '' },
+    date: null,
+    service: null,
+    slot: null,
+    address: {},
+    responsible_name: '',
+    key_delivery_confirmed: false,
+    has_water_access: false,
+    has_power_access: false,
+    customer_notes: ''
+  };
+
+  const STEP_LABELS = ['Atendimento', 'Dados', 'Veículo', 'Data', 'Serviço', 'Horário', 'Revisão'];
+  const TOTAL_STEPS = 7;
+
+  function digits(v) {
+    return String(v || '').replace(/\D/g, '');
+  }
+
+  function money(value) {
+    const v = Number(value || 0);
+    return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  }
+
+  function toDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function parseDate(dateStr) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  function todayStr() {
+    return toDateStr(new Date());
+  }
+
+  function addDays(d, n) {
+    const copy = new Date(d);
+    copy.setDate(copy.getDate() + n);
+    return copy;
+  }
+
+  function formatDateBR(dateStr) {
+    const d = parseDate(dateStr);
+    return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+  }
+
+  function formatDateShort(dateStr) {
+    const d = parseDate(dateStr);
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+
+  const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data && data.error ? data.error : 'Algo deu errado. Tente novamente.';
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  function saveState() {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function loadState() {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      Object.assign(state, saved);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  /* ---------- API data ---------- */
+
+  async function init() {
+    const [settings, modalities, units] = await Promise.all([
+      api('/api/settings'),
+      api('/api/modalities'),
+      api('/api/units')
+    ]);
+    state.settings = settings || {};
+    state.modalities = modalities || [];
+    state.units = units || [];
+    $('brandName').textContent = state.settings.company_name || 'Torque Detail';
+    $('footerName').textContent = state.settings.company_name || 'Torque Detail';
+    $('footerPhone').textContent = state.settings.phone || '';
+
+    if (state.modality && !state.modalities.some((m) => m.id === state.modality.id)) state.modality = null;
+    if (state.unit && !state.units.some((u) => u.id === state.unit.id)) state.unit = null;
+
+    renderProgress();
+    renderModalities();
+    renderCategoryOptions();
+    renderCalendar();
+    goToStep(state.currentStep || 1, true);
+    bindGlobal();
+  }
+
+  function renderProgress() {
+    const wrap = $('progressWrap');
+    const list = $('progress');
+    list.innerHTML = '';
+    for (let i = 1; i <= TOTAL_STEPS; i += 1) {
+      const li = document.createElement('li');
+      li.dataset.step = i;
+      li.innerHTML = `<span class="dot">${i}</span><span class="lbl">${STEP_LABELS[i - 1]}</span>`;
+      list.appendChild(li);
+    }
+    wrap.hidden = false;
+    updateProgress();
+  }
+
+  function updateProgress() {
+    const items = $('progress').querySelectorAll('li');
+    items.forEach((li) => {
+      const n = Number(li.dataset.step);
+      li.classList.toggle('done', n < state.currentStep);
+      li.classList.toggle('active', n === state.currentStep);
+    });
+  }
+
+  /* ---------- steps ---------- */
+
+  function goToStep(n, force) {
+    if (!force && state.currentStep === n) return;
+    if (n < 1 || n > TOTAL_STEPS) return;
+    state.currentStep = n;
+    saveState();
+    document.querySelectorAll('.step').forEach((sec) => {
+      sec.hidden = Number(sec.dataset.step) !== n;
+    });
+    $('successScreen').hidden = true;
+    const last = n === TOTAL_STEPS;
+    const first = n === 1;
+    $('navRow').hidden = false;
+    $('navRow').style.display = last ? 'none' : 'flex';
+    $('btnBack').hidden = first;
+    updateProgress();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function validateStep(n) {
+    if (n === 1) {
+      if (!state.modality) { alert('Selecione a forma de atendimento.'); return false; }
+    }
+    if (n === 2) {
+      if (state.customer.name.trim().length < 3) { alert('Informe seu nome completo.'); return false; }
+      const ph = digits(state.customer.phone);
+      if (ph.length < 10) { alert('Informe um telefone válido com DDD.'); return false; }
+      if (state.customer.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.customer.email)) { alert('E-mail informado é inválido.'); return false; }
+      if (state.customer.cpf && !validCPF(state.customer.cpf)) { alert('CPF informado é inválido.'); return false; }
+    }
+    if (n === 3) {
+      if (state.vehicle.brand.trim().length < 2) { alert('Informe a marca do veículo.'); return false; }
+      if (state.vehicle.model.trim().length < 2) { alert('Informe o modelo do veículo.'); return false; }
+      if (state.vehicle.year && !/^\d{4}$/.test(state.vehicle.year.trim())) { alert('Ano do veículo inválido.'); return false; }
+      if (state.vehicle.plate && !validPlate(state.vehicle.plate)) { alert('Placa inválida. Use ABC-1234 ou o padrão Mercosul.'); return false; }
+      if (!state.vehicle.category) { alert('Selecione a categoria do veículo.'); return false; }
+    }
+    if (n === 4) {
+      if (state.modality.slug === 'in-store' && !state.unit) { alert('Selecione a unidade de atendimento.'); return false; }
+      if (!state.date) { alert('Selecione a data do agendamento.'); return false; }
+    }
+    if (n === 5) {
+      if (!state.service) { alert('Selecione um serviço.'); return false; }
+    }
+    if (n === 6) {
+      if (!state.slot) { alert('Selecione um horário.'); return false; }
+    }
+    return true;
+  }
+
+  function stepRender(n) {
+    if (n === 4) renderCalendar();
+    if (n === 5) renderCatalog();
+    if (n === 6) renderSlots();
+    if (n === 7) renderReview();
+  }
+
+  /* ---------- step 1: modalities ---------- */
+
+  function renderModalities() {
+    const grid = $('modalityGrid');
+    grid.innerHTML = '';
+    state.modalities.forEach((m) => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'modality-card';
+      card.dataset.slug = m.slug;
+      card.innerHTML = `
+        <span class="modality-name">${m.name}</span>
+        <span class="modality-desc">${m.description || ''}</span>
+        <span class="modality-fee">${m.fee > 0 ? '+' + money(m.fee) : 'Sem taxa adicional'}</span>
+      `;
+      if (state.modality && state.modality.id === m.id) card.classList.add('selected');
+      card.addEventListener('click', () => {
+        state.modality = { id: m.id, name: m.name, slug: m.slug, fee: m.fee };
+        state.unit = null;
+        state.date = null;
+        state.service = null;
+        state.slot = null;
+        state.address = {};
+        state.responsible_name = '';
+        state.key_delivery_confirmed = false;
+        state.has_water_access = false;
+        state.has_power_access = false;
+        saveState();
+        grid.querySelectorAll('.modality-card').forEach((c) => c.classList.remove('selected'));
+        card.classList.add('selected');
+      });
+      grid.appendChild(card);
+    });
+  }
+
+  /* ---------- step 3: vehicle category ---------- */
+
+  const CATEGORY_META = {
+    hatch: { label: 'Hatch' },
+    sedan: { label: 'Sedan' },
+    suv: { label: 'SUV' },
+    pickup: { label: 'Picape' }
+  };
+
+  function renderCategoryOptions() {
+    const grid = $('categoryGrid');
+    grid.innerHTML = '';
+    Object.keys(CATEGORY_META).forEach((key) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'category-option';
+      btn.dataset.key = key;
+      btn.textContent = CATEGORY_META[key].label;
+      if (state.vehicle.category === key) btn.classList.add('selected');
+      btn.addEventListener('click', () => {
+        state.vehicle.category = key;
+        saveState();
+        grid.querySelectorAll('.category-option').forEach((c) => c.classList.remove('selected'));
+        btn.classList.add('selected');
+      });
+      grid.appendChild(btn);
+    });
+  }
+
+  /* ---------- step 4: units + calendar ---------- */
+
+  function renderUnits() {
+    const block = $('unitBlock');
+    const grid = $('unitGrid');
+    grid.innerHTML = '';
+    if (state.modality && state.modality.slug !== 'in-store') {
+      block.hidden = true;
+      return;
+    }
+    block.hidden = false;
+    state.units.forEach((u) => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'unit-card';
+      card.innerHTML = `
+        <span class="unit-name">${u.name}</span>
+        <span class="unit-address">${u.address || ''}</span>
+        <span class="unit-hours">${u.opening_time} às ${u.closing_time} · ${u.phone || ''}</span>
+      `;
+      if (state.unit && state.unit.id === u.id) card.classList.add('selected');
+      card.addEventListener('click', () => {
+        state.unit = u;
+        state.date = null;
+        state.service = null;
+        state.slot = null;
+        saveState();
+        renderCalendar();
+        grid.querySelectorAll('.unit-card').forEach((c) => c.classList.remove('selected'));
+        card.classList.add('selected');
+      });
+      grid.appendChild(card);
+    });
+  }
+
+  const calView = { month: null };
+
+  function renderCalendar() {
+    renderUnits();
+    const today = new Date();
+    if (!calView.month) calView.month = new Date(today.getFullYear(), today.getMonth(), 1);
+    if (state.date) {
+      const d = parseDate(state.date);
+      calView.month = new Date(d.getFullYear(), d.getMonth(), 1);
+    }
+    const monthStart = calView.month;
+    const year = monthStart.getFullYear();
+    const month = monthStart.getMonth();
+    const firstDow = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const working = (state.unit && state.unit.working_days && state.unit.working_days.length)
+      ? state.unit.working_days
+      : (state.settings.working_days && state.settings.working_days.length ? state.settings.working_days : [1, 2, 3, 4, 5, 6]);
+
+    $('dateSubtitle').textContent = state.modality && state.modality.slug === 'in-store'
+      ? 'Escolha a unidade e depois o dia disponível.'
+      : 'Escolha o dia disponível.';
+
+    const cal = $('calendar');
+    cal.innerHTML = `
+      <div class="cal-head">
+        <button type="button" class="cal-nav" data-nav="-1" aria-label="Mês anterior">‹</button>
+        <span class="cal-title">${monthStart.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</span>
+        <button type="button" class="cal-nav" data-nav="1" aria-label="Próximo mês">›</button>
+      </div>
+      <div class="cal-week">
+        ${WEEKDAY_LABELS.map((w) => `<span class="cal-wd">${w}</span>`).join('')}
+      </div>
+      <div class="cal-grid"></div>
+    `;
+    const gridEl = cal.querySelector('.cal-grid');
+    for (let i = 0; i < firstDow; i += 1) gridEl.appendChild(document.createElement('span'));
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const dateStr = toDateStr(new Date(year, month, day));
+      const isWorking = working.includes(new Date(year, month, day).getDay());
+      const isPast = dateStr < todayStr();
+      const enabled = isWorking && !isPast;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cal-day' + (enabled ? '' : ' disabled');
+      if (state.date === dateStr) btn.classList.add('selected');
+      btn.textContent = String(day);
+      if (enabled) {
+        btn.addEventListener('click', () => {
+          state.date = dateStr;
+          state.service = null;
+          state.slot = null;
+          saveState();
+          gridEl.querySelectorAll('.cal-day').forEach((c) => c.classList.remove('selected'));
+          btn.classList.add('selected');
+        });
+      }
+      gridEl.appendChild(btn);
+    }
+    cal.querySelector('[data-nav="1"]').addEventListener('click', () => {
+      calView.month = new Date(year, month + 1, 1);
+      renderCalendar();
+    });
+    cal.querySelector('[data-nav="-1"]').addEventListener('click', () => {
+      const minMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const candidate = new Date(year, month - 1, 1);
+      if (candidate < minMonth) return;
+      calView.month = candidate;
+      renderCalendar();
+    });
+  }
+
+  /* ---------- step 5: catalog ---------- */
+
+  const catalogCache = {};
+
+  function servicePrice(service) {
+    if (service.price_type === 'fixed') return { value: service.fixed_price, estimate: false };
+    if (service.price_type === 'starting') return { value: service.starting_price, estimate: true };
+    return { value: service['price_' + state.vehicle.category] || 0, estimate: false };
+  }
+
+  function currentServicePrice() {
+    const s = state.service;
+    if (!s) return { value: 0, estimate: false };
+    if (s.price_type === 'category') {
+      const cat = catalogCache[state.modality.id];
+      const found = cat && cat.flat().find((x) => x.id === s.id);
+      if (found) return servicePrice(found);
+      return { value: s.price || 0, estimate: false };
+    }
+    return { value: s.price || 0, estimate: !!s.estimate };
+  }
+
+  async function renderCatalog() {
+    const el = $('catalog');
+    const subtitle = $('catalogSubtitle');
+    el.innerHTML = '<div class="loading">Carregando serviços...</div>';
+    subtitle.textContent = state.modality.name + ' · ' + state.vehicle.category.toUpperCase();
+    try {
+      const data = await api('/api/catalog?modality_id=' + state.modality.id);
+      catalogCache[state.modality.id] = data.catalog.map((c) => c.services).flat();
+      const sections = data.catalog.filter((c) => c.services.length > 0);
+      subtitle.textContent = `${state.modality.name} · ${CATEGORY_META[state.vehicle.category].label}`;
+      el.innerHTML = '';
+      sections.forEach((cat) => {
+        const section = document.createElement('div');
+        section.className = 'catalog-section';
+        section.innerHTML = `<h3 class="catalog-cat">${cat.name}</h3>`;
+        const list = document.createElement('div');
+        list.className = 'service-grid';
+        cat.services.forEach((s) => {
+          const p = servicePrice(s);
+          const card = document.createElement('button');
+          card.type = 'button';
+          card.className = 'service-card';
+          card.dataset.id = s.id;
+          card.innerHTML = `
+            <span class="service-name">${s.name}</span>
+            ${s.description ? `<span class="service-desc">${s.description}</span>` : ''}
+            ${s.package_items && s.package_items.length ? `<span class="service-items">${s.package_items.slice(0, 3).join(' · ')}${s.package_items.length > 3 ? ' · +' + (s.package_items.length - 3) + ' itens' : ''}</span>` : ''}
+            <span class="service-foot">
+              <span class="service-duration">${s.duration_minutes} min</span>
+              <span class="service-price">${p.estimate ? 'a partir de ' : ''}${money(p.value)}</span>
+            </span>
+          `;
+          if (state.service && state.service.id === s.id) card.classList.add('selected');
+          card.addEventListener('click', () => {
+            state.service = {
+              id: s.id,
+              name: s.name,
+              price_type: s.price_type,
+              price: p.value,
+              estimate: p.estimate,
+              duration_minutes: s.duration_minutes,
+              category_name: cat.name,
+              description: s.description
+            };
+            state.slot = null;
+            saveState();
+            list.querySelectorAll('.service-card').forEach((c) => c.classList.remove('selected'));
+            card.classList.add('selected');
+          });
+          list.appendChild(card);
+        });
+        section.appendChild(list);
+        el.appendChild(section);
+      });
+    } catch (err) {
+      el.innerHTML = `<div class="error-box">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  /* ---------- step 6: slots ---------- */
+
+  const slotCache = {};
+
+  async function renderSlots() {
+    const grid = $('slotsGrid');
+    const loading = $('slotLoading');
+    const subtitle = $('slotSubtitle');
+    subtitle.textContent = `${state.service.name} · ${formatDateBR(state.date)}`;
+    grid.innerHTML = '';
+    const key = `${state.modality.id}|${state.unit ? state.unit.id : ''}|${state.service.id}|${state.date}`;
+    if (!slotCache[key]) {
+      loading.hidden = false;
+      try {
+        const params = new URLSearchParams({
+          modality_id: state.modality.id,
+          service_id: state.service.id,
+          date: state.date
+        });
+        if (state.unit) params.set('unit_id', state.unit.id);
+        const data = await api('/api/availability?' + params.toString());
+        slotCache[key] = data;
+      } catch (err) {
+        loading.hidden = true;
+        grid.innerHTML = `<div class="error-box">${escapeHtml(err.message)}</div>`;
+        return;
+      }
+      loading.hidden = true;
+    }
+    const data = slotCache[key];
+    if (!data.working || data.full_day_blocked) {
+      grid.innerHTML = `<div class="error-box">Não há horários disponíveis nesta data.</div>`;
+      return;
+    }
+    data.slots.forEach((s) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'slot-btn';
+      const available = s.status === 'available';
+      if (!available) btn.classList.add('disabled');
+      btn.dataset.time = s.time;
+      btn.textContent = s.time;
+      btn.title = s.reason || '';
+      if (state.slot === s.time && available) btn.classList.add('selected');
+      if (available) {
+        btn.addEventListener('click', () => {
+          state.slot = s.time;
+          saveState();
+          grid.querySelectorAll('.slot-btn').forEach((c) => c.classList.remove('selected'));
+          btn.classList.add('selected');
+        });
+      }
+      grid.appendChild(btn);
+    });
+    if (data.slots.length === 0) {
+      grid.innerHTML = `<div class="error-box">Nenhum horário disponível neste dia.</div>`;
+    }
+  }
+
+  /* ---------- step 7: review + address ---------- */
+
+  function renderAddress() {
+    const block = $('addressBlock');
+    block.innerHTML = '';
+    if (!state.modality) return;
+    const slug = state.modality.slug;
+    const isPickup = slug === 'pickup';
+    const isDelivery = slug === 'delivery';
+    block.hidden = !(isPickup || isDelivery);
+    if (!(isPickup || isDelivery)) return;
+
+    const title = document.createElement('h3');
+    title.className = 'review-section-title';
+    title.textContent = isPickup ? 'Local de retirada e entrega' : 'Endereço do serviço (Delivery)';
+    block.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'address-grid';
+    const fields = [
+      { id: 'addrStreet', label: 'Rua', key: 'address_street' },
+      { id: 'addrNumber', label: 'Número', key: 'address_number' },
+      { id: 'addrComplement', label: 'Complemento (opcional)', key: 'address_complement' },
+      { id: 'addrNeighborhood', label: 'Bairro', key: 'address_neighborhood' },
+      { id: 'addrCity', label: 'Cidade', key: 'address_city' },
+      { id: 'addrState', label: 'UF', key: 'address_state', max: 2 },
+      { id: 'addrZipcode', label: 'CEP', key: 'address_zipcode' },
+      { id: 'addrReference', label: 'Ponto de referência (opcional)', key: 'address_reference' }
+    ];
+    fields.forEach((f) => {
+      const field = document.createElement('div');
+      field.className = 'field';
+      const label = document.createElement('label');
+      label.setAttribute('for', f.id);
+      label.textContent = f.label;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = f.id;
+      if (f.max) input.maxLength = f.max;
+      input.value = state.address[f.key] || '';
+      if (f.key === 'address_zipcode') input.placeholder = '00000-000';
+      if (f.key === 'address_state') input.placeholder = 'MG';
+      input.addEventListener('input', () => {
+        state.address[f.key] = input.value;
+        if (f.key === 'address_zipcode') input.value = maskCep(input.value);
+        saveState();
+      });
+      field.appendChild(label);
+      field.appendChild(input);
+      grid.appendChild(field);
+    });
+    block.appendChild(grid);
+
+    const responsible = document.createElement('div');
+    responsible.className = 'field';
+    responsible.innerHTML = `<label for="responsibleName">Responsável pela entrega da chave</label>`;
+    const respInput = document.createElement('input');
+    respInput.type = 'text';
+    respInput.id = 'responsibleName';
+    respInput.value = state.responsible_name;
+    respInput.addEventListener('input', () => { state.responsible_name = respInput.value; saveState(); });
+    responsible.appendChild(respInput);
+    block.appendChild(responsible);
+
+    if (isPickup) {
+      const chk = document.createElement('label');
+      chk.className = 'checkbox';
+      chk.innerHTML = `<input type="checkbox" id="keyCheckbox" ${state.key_delivery_confirmed ? 'checked' : ''} />
+        <span>Confirmo que a chave do veículo será entregue ao responsável informado no momento da retirada.</span>`;
+      chk.querySelector('input').addEventListener('change', () => { state.key_delivery_confirmed = chk.querySelector('input').checked; saveState(); });
+      block.appendChild(chk);
+    }
+    if (isDelivery) {
+      const chk1 = document.createElement('label');
+      chk1.className = 'checkbox';
+      chk1.innerHTML = `<input type="checkbox" id="waterCheckbox" ${state.has_water_access ? 'checked' : ''} />
+        <span>Confirmo que há ponto de água disponível e em funcionamento no local do serviço.</span>`;
+      chk1.querySelector('input').addEventListener('change', () => { state.has_water_access = chk1.querySelector('input').checked; saveState(); });
+      block.appendChild(chk1);
+
+      const chk2 = document.createElement('label');
+      chk2.className = 'checkbox';
+      chk2.innerHTML = `<input type="checkbox" id="powerCheckbox" ${state.has_power_access ? 'checked' : ''} />
+        <span>Confirmo que há tomada elétrica em funcionamento no local do serviço.</span>`;
+      chk2.querySelector('input').addEventListener('change', () => { state.has_power_access = chk2.querySelector('input').checked; saveState(); });
+      block.appendChild(chk2);
+    }
+  }
+
+  function renderReview() {
+    renderAddress();
+    const card = $('reviewCard');
+    const p = currentServicePrice();
+    const fee = Number(state.modality.fee || 0);
+    const total = p.value + fee;
+
+    let unitLine = '';
+    if (state.modality.slug === 'in-store' && state.unit) {
+      unitLine = `<div class="review-line"><span>Unidade</span><strong>${state.unit.name}</strong></div>`;
+    }
+    let addressLine = '';
+    if (state.modality.slug !== 'in-store') {
+      const a = state.address;
+      if (a.address_street) {
+        addressLine = `<div class="review-line"><span>Endereço</span><strong>${a.address_street}, ${a.address_number || ''}${a.address_neighborhood ? ' — ' + a.address_neighborhood : ''}${a.address_city ? ', ' + a.address_city + '/' + a.address_state : ''}</strong></div>`;
+      }
+    }
+
+    card.innerHTML = `
+      <h3 class="review-section-title">Resumo do agendamento</h3>
+      <div class="review-line"><span>Forma de atendimento</span><strong>${state.modality.name}</strong></div>
+      ${unitLine}
+      <div class="review-line"><span>Veículo</span><strong>${state.vehicle.brand} ${state.vehicle.model}${state.vehicle.year ? ' · ' + state.vehicle.year : ''} · ${CATEGORY_META[state.vehicle.category].label}</strong></div>
+      <div class="review-line"><span>Data</span><strong>${formatDateShort(state.date)}</strong></div>
+      <div class="review-line"><span>Serviço</span><strong>${state.service.name}</strong></div>
+      <div class="review-line"><span>Horário</span><strong>${state.slot} (${state.service.duration_minutes} min)</strong></div>
+      ${addressLine}
+      <div class="review-total">
+        <div class="review-line"><span>Serviço</span><strong>${money(p.value)}</strong></div>
+        <div class="review-line"><span>Taxa (${state.modality.name})</span><strong>${fee > 0 ? money(fee) : 'Grátis'}</strong></div>
+        <div class="review-line total"><span>Total estimado</span><strong>${money(total)}</strong></div>
+      </div>
+      ${p.estimate ? '<p class="review-note">Valor a partir de: o preço final será confirmado após avaliação do veículo.</p>' : ''}
+    `;
+  }
+
+  /* ---------- submit ---------- */
+
+  function validateAddressSubmit() {
+    const slug = state.modality.slug;
+    if (slug === 'in-store') return true;
+    const a = state.address;
+    const required = ['address_street', 'address_number', 'address_neighborhood', 'address_city', 'address_state', 'address_zipcode'];
+    for (const k of required) {
+      if (!a[k] || !String(a[k]).trim()) {
+        alert('Informe o endereço completo para esta modalidade.');
+        return false;
+      }
+    }
+    if (state.responsible_name.trim().length < 3) {
+      alert('Informe o responsável pela entrega da chave.');
+      return false;
+    }
+    if (slug === 'pickup' && !state.key_delivery_confirmed) {
+      alert('Confirme que a chave será entregue ao responsável.');
+      return false;
+    }
+    if (slug === 'delivery' && !state.has_water_access) {
+      alert('Confirme que há ponto de água disponível no local.');
+      return false;
+    }
+    if (slug === 'delivery' && !state.has_power_access) {
+      alert('Confirme que há tomada elétrica em funcionamento no local.');
+      return false;
+    }
+    return true;
+  }
+
+  function buildPayload() {
+    const a = state.address;
+    return {
+      modality_id: state.modality.id,
+      unit_id: state.unit ? state.unit.id : null,
+      service_id: state.service.id,
+      customer_name: state.customer.name.trim(),
+      customer_phone: state.customer.phone,
+      customer_email: state.customer.email.trim() || null,
+      customer_cpf: state.customer.cpf || null,
+      vehicle_brand: state.vehicle.brand.trim(),
+      vehicle_model: state.vehicle.model.trim(),
+      vehicle_year: state.vehicle.year.trim() || null,
+      vehicle_plate: state.vehicle.plate || null,
+      vehicle_color: state.vehicle.color.trim() || null,
+      vehicle_category: state.vehicle.category,
+      appointment_date: state.date,
+      start_time: state.slot,
+      address_zipcode: a.address_zipcode || null,
+      address_street: a.address_street || null,
+      address_number: a.address_number || null,
+      address_complement: a.address_complement || null,
+      address_neighborhood: a.address_neighborhood || null,
+      address_city: a.address_city || null,
+      address_state: a.address_state || null,
+      address_reference: a.address_reference || null,
+      responsible_name: state.responsible_name.trim() || null,
+      responsible_phone: state.customer.phone,
+      has_water_access: state.has_water_access,
+      has_power_access: state.has_power_access,
+      key_delivery_confirmed: state.key_delivery_confirmed,
+      customer_notes: state.customer_notes.trim() || null
+    };
+  }
+
+  async function submitBooking() {
+    if (!validateAddressSubmit()) return;
+    const btn = $('submitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+    try {
+      const appointment = await api('/api/appointments', {
+        method: 'POST',
+        body: JSON.stringify(buildPayload())
+      });
+      showSuccess(appointment);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Enviar solicitação de agendamento';
+    }
+  }
+
+  function showSuccess(appointment) {
+    $('bookingForm').hidden = true;
+    $('navRow').hidden = true;
+    $('progressWrap').hidden = true;
+    $('successScreen').hidden = false;
+    $('successCode').textContent = appointment.appointment_code || '';
+    const msg = state.settings.confirmation_message || 'Nossa equipe analisará a disponibilidade e entrará em contato para confirmar.';
+    $('successMsg').textContent = msg;
+    const phone = digits(state.settings.whatsapp || state.settings.phone || '');
+    const text = encodeURIComponent(`Olá! Acabei de enviar a solicitação de agendamento ${appointment.appointment_code || ''} pela Torque Detail.`);
+    const link = $('btnWhatsapp');
+    if (phone) {
+      link.href = `https://wa.me/${phone}?text=${text}`;
+      link.hidden = false;
+    } else {
+      link.hidden = true;
+    }
+    sessionStorage.removeItem(STORAGE_KEY);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /* ---------- masks ---------- */
+
+  function maskPhone(input) {
+    let v = digits(input.value);
+    if (v.length > 11) v = v.slice(0, 11);
+    if (v.length > 6) v = `(${v.slice(0, 2)}) ${v.slice(2, 7)}-${v.slice(7)}`;
+    else if (v.length > 2) v = `(${v.slice(0, 2)}) ${v.slice(2)}`;
+    else if (v.length > 0) v = `(${v}`;
+    input.value = v;
+  }
+
+  function maskCpf(input) {
+    let v = digits(input.value);
+    if (v.length > 11) v = v.slice(0, 11);
+    if (v.length > 9) v = `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6, 9)}-${v.slice(9)}`;
+    else if (v.length > 6) v = `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6)}`;
+    else if (v.length > 3) v = `${v.slice(0, 3)}.${v.slice(3)}`;
+    input.value = v;
+  }
+
+  function maskCep(input) {
+    let v = digits(input.value);
+    if (v.length > 8) v = v.slice(0, 8);
+    if (v.length > 5) v = `${v.slice(0, 5)}-${v.slice(5)}`;
+    input.value = v;
+  }
+
+  function maskPlate(input) {
+    let v = String(input.value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+    if (v.length > 3) v = v.slice(0, 3) + '-' + v.slice(3);
+    input.value = v;
+  }
+
+  function validCPF(v) {
+    const d = digits(v);
+    if (!/^\d{11}$/.test(d)) return false;
+    if (/^(\d)\1{10}$/.test(d)) return false;
+    const calc = (len) => {
+      let sum = 0;
+      for (let i = 0; i < len; i += 1) sum += Number(d[i]) * (len + 1 - i);
+      const rest = (sum * 10) % 11;
+      return rest === 10 ? 0 : rest;
+    };
+    return calc(9) === Number(d[9]) && calc(10) === Number(d[10]);
+  }
+
+  function validPlate(v) {
+    const p = String(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (p.length !== 7) return false;
+    return /^[A-Z]{3}[0-9]{4}$/.test(p) || /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(p);
+  }
+
+  function escapeHtml(v) {
+    return String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /* ---------- global events ---------- */
+
+  function bindGlobal() {
+    $('btnNext').addEventListener('click', () => {
+      if (!validateStep(state.currentStep)) return;
+      goToStep(state.currentStep + 1);
+      stepRender(state.currentStep);
+    });
+    $('btnBack').addEventListener('click', () => {
+      const n = state.currentStep - 1;
+      goToStep(n, true);
+      stepRender(n);
+    });
+    document.querySelectorAll('[data-action="back"]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const n = state.currentStep - 1;
+        goToStep(n, true);
+        stepRender(n);
+      });
+    });
+    $('bookingForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!validateStep(state.currentStep)) return;
+      submitBooking();
+    });
+    $('btnHome').addEventListener('click', () => {
+      sessionStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    });
+
+    const nameInput = $('customerName');
+    nameInput.addEventListener('input', () => { state.customer.name = nameInput.value; saveState(); });
+
+    const phoneInput = $('customerPhone');
+    phoneInput.addEventListener('input', () => { maskPhone(phoneInput); state.customer.phone = phoneInput.value; saveState(); });
+
+    const emailInput = $('customerEmail');
+    emailInput.addEventListener('input', () => { state.customer.email = emailInput.value; saveState(); });
+
+    const cpfInput = $('customerCpf');
+    cpfInput.addEventListener('input', () => { maskCpf(cpfInput); state.customer.cpf = cpfInput.value; saveState(); });
+
+    const brandInput = $('vehicleBrand');
+    brandInput.addEventListener('input', () => { state.vehicle.brand = brandInput.value; saveState(); });
+
+    const modelInput = $('vehicleModel');
+    modelInput.addEventListener('input', () => { state.vehicle.model = modelInput.value; saveState(); });
+
+    const yearInput = $('vehicleYear');
+    yearInput.addEventListener('input', () => {
+      yearInput.value = yearInput.value.replace(/\D/g, '').slice(0, 4);
+      state.vehicle.year = yearInput.value;
+      saveState();
+    });
+
+    const plateInput = $('vehiclePlate');
+    plateInput.addEventListener('input', () => { maskPlate(plateInput); state.vehicle.plate = plateInput.value; saveState(); });
+
+    const colorInput = $('vehicleColor');
+    colorInput.addEventListener('input', () => { state.vehicle.color = colorInput.value; saveState(); });
+
+    const notesInput = $('customerNotes');
+    notesInput.addEventListener('input', () => { state.customer_notes = notesInput.value; saveState(); });
+  }
+
+  function restoreFields() {
+    const nameInput = $('customerName');
+    const phoneInput = $('customerPhone');
+    const emailInput = $('customerEmail');
+    const cpfInput = $('customerCpf');
+    const brandInput = $('vehicleBrand');
+    const modelInput = $('vehicleModel');
+    const yearInput = $('vehicleYear');
+    const plateInput = $('vehiclePlate');
+    const colorInput = $('vehicleColor');
+    const notesInput = $('customerNotes');
+    nameInput.value = state.customer.name;
+    phoneInput.value = state.customer.phone;
+    emailInput.value = state.customer.email;
+    cpfInput.value = state.customer.cpf;
+    brandInput.value = state.vehicle.brand;
+    modelInput.value = state.vehicle.model;
+    yearInput.value = state.vehicle.year;
+    plateInput.value = state.vehicle.plate;
+    colorInput.value = state.vehicle.color;
+    notesInput.value = state.customer_notes;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    loadState();
+    restoreFields();
+    init();
+  });
+})();
