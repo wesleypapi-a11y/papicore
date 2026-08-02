@@ -187,6 +187,9 @@ CREATE TABLE ${table} (
 `;
 
 db.exec(BASE_DDL);
+if (!tableExists('appointments')) {
+  db.exec(appointmentsDDL('appointments'));
+}
 
 /* ---------- units: novos campos de endereço ---------- */
 ensureColumn('units', 'address_street', 'TEXT');
@@ -329,9 +332,7 @@ const SEED_SERVICES = [
 
 seedCatalog();
 
-if (!tableExists('appointments')) {
-  db.exec(appointmentsDDL('appointments'));
-} else if (!columnNames('appointments').includes('start_time')) {
+if (!columnNames('appointments').includes('start_time')) {
   migrateAppointments();
 }
 
