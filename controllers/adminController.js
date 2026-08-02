@@ -211,6 +211,12 @@ function acceptAppointment(req, res) {
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(req.params.id);
+
+  const { notifyAppointmentConfirmed } = require('../services/whatsappService');
+  notifyAppointmentConfirmed(appointment).catch((err) => {
+    console.error('[whatsapp] Erro na confirmação ao cliente:', err.message);
+  });
+
   return res.json(appointment);
 }
 

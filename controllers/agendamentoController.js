@@ -154,6 +154,10 @@ function checkAvailability(req, res) {
 
 function createAppointmentPublic(req, res) {
   const appointment = createAppointment(req.body);
+  const { notifyStoreNewAppointment } = require('../services/whatsappService');
+  notifyStoreNewAppointment(appointment).catch((err) => {
+    console.error('[whatsapp] Erro no aviso de novo agendamento:', err.message);
+  });
   return res.status(201).json(appointment);
 }
 

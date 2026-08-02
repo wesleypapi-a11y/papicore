@@ -18,7 +18,14 @@
       <img src="/assets/logo-icon.png" alt="Torque Detail" class="brand-logo" />
       <span class="brand-name" id="brandName">Torque Detail</span>
     </div>
-    <span class="header-tagline">Agendamento online</span>
+    <div class="header-right">
+      <span class="header-tagline">Agendamento online</span>
+      <div class="view-switch" id="viewSwitch" role="group" aria-label="Alternar visualização">
+        <button type="button" data-view="auto" class="active" title="Visualização automática (responsiva)">Auto</button>
+        <button type="button" data-view="mobile" title="Forçar visualização mobile">📱</button>
+        <button type="button" data-view="desktop" title="Forçar visualização desktop">🖥</button>
+      </div>
+    </div>
   </header>
 
   <main class="container">
@@ -161,6 +168,36 @@
     <span id="footerName">Torque Detail</span> — <span id="footerPhone"></span>
   </footer>
 
+  <script>
+    (function () {
+      var m = localStorage.getItem('torque_view_mode') || 'auto';
+      var c = document.documentElement.classList;
+      c.toggle('lock-mobile', m === 'mobile');
+      c.toggle('lock-desktop', m === 'desktop');
+    })();
+  </script>
+  <script>
+    (function () {
+      var KEY = 'torque_view_mode';
+      function current() { return localStorage.getItem(KEY) || 'auto'; }
+      function sync() {
+        var m = current();
+        var c = document.documentElement.classList;
+        c.toggle('lock-mobile', m === 'mobile');
+        c.toggle('lock-desktop', m === 'desktop');
+        document.querySelectorAll('.view-switch button').forEach(function (b) {
+          b.classList.toggle('active', b.dataset.view === m);
+        });
+      }
+      document.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('.view-switch button') : null;
+        if (!btn) return;
+        localStorage.setItem(KEY, btn.dataset.view);
+        sync();
+      });
+      sync();
+    })();
+  </script>
   <script src="/app.js"></script>
 </body>
 </html>

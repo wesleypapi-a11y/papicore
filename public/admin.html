@@ -44,6 +44,11 @@
     <div class="admin-topbar">
       <button id="btnMenu" class="hamburger" aria-label="Menu">☰</button>
       <strong id="topbarTitle">Dashboard</strong>
+      <div class="view-switch" id="viewSwitch" role="group" aria-label="Alternar visualização">
+        <button type="button" data-view="auto" class="active" title="Visualização automática (responsiva)">Auto</button>
+        <button type="button" data-view="mobile" title="Forçar visualização mobile">📱</button>
+        <button type="button" data-view="desktop" title="Forçar visualização desktop">🖥</button>
+      </div>
     </div>
     <div class="admin-layout">
       <div id="sidebarBackdrop" class="admin-backdrop"></div>
@@ -82,6 +87,36 @@
   <div id="loader" class="loader-overlay hidden"><div class="spinner"></div></div>
   <div id="toast" class="toast hidden"></div>
 
+  <script>
+    (function () {
+      var m = localStorage.getItem('torque_view_mode') || 'auto';
+      var c = document.documentElement.classList;
+      c.toggle('lock-mobile', m === 'mobile');
+      c.toggle('lock-desktop', m === 'desktop');
+    })();
+  </script>
+  <script>
+    (function () {
+      var KEY = 'torque_view_mode';
+      function current() { return localStorage.getItem(KEY) || 'auto'; }
+      function sync() {
+        var m = current();
+        var c = document.documentElement.classList;
+        c.toggle('lock-mobile', m === 'mobile');
+        c.toggle('lock-desktop', m === 'desktop');
+        document.querySelectorAll('.view-switch button').forEach(function (b) {
+          b.classList.toggle('active', b.dataset.view === m);
+        });
+      }
+      document.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('.view-switch button') : null;
+        if (!btn) return;
+        localStorage.setItem(KEY, btn.dataset.view);
+        sync();
+      });
+      sync();
+    })();
+  </script>
   <script src="/admin.js"></script>
 </body>
 </html>
