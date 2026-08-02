@@ -27,7 +27,7 @@ const APPOINTMENT_SELECT = `
 
 function listAppointments(req, res) {
   const db = getDb();
-  const { unit_id, modality_id, date, status, search } = req.query;
+  const { unit_id, modality_id, date, from, to, status, search } = req.query;
   const where = [];
   const params = [];
 
@@ -42,6 +42,16 @@ function listAppointments(req, res) {
   if (date && isValidDateStr(date)) {
     where.push('a.appointment_date = ?');
     params.push(date);
+  }
+  /* Intervalo de datas (usado pela Agenda para carregar o mês inteiro em
+     uma única consulta). Independente do filtro exato de "date" acima. */
+  if (from && isValidDateStr(from)) {
+    where.push('COALESCE(a.end_date, a.appointment_date) >= ?');
+    params.push(from);
+  }
+  if (to && isValidDateStr(to)) {
+    where.push('a.appointment_date <= ?');
+    params.push(to);
   }
   if (status && status !== 'all') {
     where.push('a.status = ?');

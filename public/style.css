@@ -1152,14 +1152,143 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .muted { color: var(--text-muted); font-size: 13px; }
 .empty-state { text-align: center; padding: 40px 0; color: var(--text-muted); }
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; min-width: 0; }
 .stat-card .stat-value { font-size: 26px; font-weight: 800; }
-.stat-card .stat-label { font-size: 12px; color: var(--text-muted); }
+.stat-card .stat-label { font-size: 12px; color: var(--text-muted); overflow-wrap: break-word; }
+
+.agenda-col-left .stat-grid { gap: 8px; }
+.agenda-col-left .stat-card { padding: 10px 8px; text-align: center; }
+.agenda-col-left .stat-card .stat-value { font-size: 20px; }
+.agenda-col-left .stat-card .stat-label { font-size: 11px; }
 
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
 .grid-3 .panel { margin-bottom: 0; }
 
 .header-actions { display: flex; gap: 10px; }
+
+/* ---------- agenda ---------- */
+
+.agenda-active .admin-main { max-width: 1500px; }
+
+.agenda-header h1 { display: flex; align-items: center; gap: 10px; }
+.agenda-header .agenda-icon { font-size: 22px; }
+.agenda-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agenda-month-select {
+  width: auto; min-width: 170px; background: var(--bg-soft); border: 1px solid var(--border);
+  color: var(--text); border-radius: var(--radius-sm); padding: 9px 12px; font-size: 13px; font-weight: 600;
+}
+.agenda-nav-btn { width: 38px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; }
+
+/* Visual igual ao .view-switch do topbar, mas com classe própria: o
+   listener global do topbar delega cliques por ".view-switch button" e
+   reagiria (incorretamente) a estes botões se a classe fosse reutilizada. */
+.agenda-mode-switch {
+  display: inline-flex; align-items: center; background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border); border-radius: 999px; padding: 4px; gap: 2px; flex-shrink: 0;
+}
+.agenda-mode-switch button {
+  border: none; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600;
+  line-height: 1; padding: 7px 13px; border-radius: 999px; display: inline-flex; align-items: center;
+  justify-content: center; transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.agenda-mode-switch button:hover { color: var(--text); }
+.agenda-mode-switch button.active { background: var(--accent); color: #0b0d12; box-shadow: 0 4px 16px rgba(255, 122, 0, 0.4); }
+
+.agenda-grid { display: grid; grid-template-columns: 38% 1fr; gap: 20px; align-items: start; }
+.agenda-col-left { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.agenda-col-right { min-width: 0; }
+
+.agenda-panel-title { text-align: center; font-weight: 700; font-size: 15px; margin-bottom: 14px; text-transform: capitalize; }
+.agenda-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 6px; }
+.agenda-cal-weekdays span { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
+.agenda-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+
+.agenda-cal-day {
+  position: relative; aspect-ratio: 1; border-radius: 10px; background: var(--bg-soft);
+  border: 1px solid transparent; color: var(--text); font-size: 13px; font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.agenda-cal-day:hover { background: var(--card-hover); border-color: var(--border-strong); }
+.agenda-cal-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.agenda-cal-day.is-outside { opacity: 0.35; }
+.agenda-cal-day.is-today { border-color: var(--accent); color: var(--accent); }
+.agenda-cal-day.is-selected { background: var(--accent); color: #0b0d12; border-color: var(--accent); }
+.agenda-cal-day.is-selected .agenda-cal-dot { background: #0b0d12; }
+.agenda-cal-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+
+.agenda-summary-title, .agenda-upcoming-title, .agenda-daily-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+
+.agenda-upcoming-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.agenda-upcoming-item:last-child { border-bottom: none; }
+.agenda-upcoming-time { font-weight: 700; font-size: 14px; min-width: 44px; }
+.agenda-upcoming-info { flex: 1; min-width: 0; }
+.agenda-upcoming-name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agenda-upcoming-service { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agenda-upcoming-foot { text-align: center; margin-top: 10px; }
+
+.agenda-daily-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.agenda-daily-head .agenda-daily-title { margin-bottom: 0; text-transform: capitalize; }
+.agenda-daily-count { color: var(--text-muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.agenda-empty-note { color: var(--text-muted); font-size: 13px; margin-bottom: 14px; }
+.agenda-fullday-banner {
+  background: var(--red-soft); border: 1px solid var(--red); color: var(--text);
+  border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13px; margin-bottom: 14px;
+}
+
+.agenda-timeline { position: relative; border-top: 1px solid var(--border); margin-top: 8px; overflow-x: auto; }
+.agenda-tick { position: absolute; left: 0; width: 100%; border-top: 1px solid var(--border); }
+.agenda-tick-label {
+  position: absolute; left: 0; top: -8px; font-size: 11px; color: var(--text-muted); background: var(--card);
+  padding-right: 8px; font-weight: 600;
+}
+.agenda-tick-content { position: absolute; left: 58px; right: 0; top: 0; bottom: 0; }
+.agenda-slot, .agenda-lunch-band, .agenda-blocked-band { position: absolute; left: 0; right: 0; border-radius: 8px; }
+
+.agenda-slot-add {
+  position: absolute; inset: 2px; border-radius: 8px; border: 1px dashed transparent;
+  display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; color: var(--text-muted);
+  opacity: 0; transition: opacity 0.12s, border-color 0.12s, color 0.12s; cursor: pointer; background: transparent;
+}
+.agenda-slot:hover .agenda-slot-add, .agenda-slot-add:focus-visible {
+  opacity: 1; border-color: var(--accent); color: var(--accent); background: var(--accent-soft); outline: none;
+}
+
+.agenda-lunch-band {
+  z-index: 3; background: var(--bg-soft); color: var(--text-muted); border: 1px dashed var(--border-strong);
+  display: flex; align-items: center; padding: 0 12px; font-size: 12px; gap: 6px;
+}
+.agenda-blocked-band {
+  z-index: 3; background: rgba(125, 135, 151, 0.14); color: var(--text-soft); border: 1px solid var(--border-strong);
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 6px 12px; gap: 1px; font-size: 12px;
+}
+.agenda-blocked-band strong { font-size: 13px; color: var(--text); }
+
+.agenda-appt-card {
+  position: absolute; border-radius: 10px; padding: 7px 10px; border-left: 4px solid var(--border-strong);
+  background: var(--card); box-shadow: var(--shadow); overflow: hidden; z-index: 4; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; transition: filter 0.12s; text-align: left;
+}
+.agenda-appt-card:hover, .agenda-appt-card:focus-visible { filter: brightness(1.15); outline: none; }
+.agenda-appt-card.status-pending { border-left-color: var(--amber); background: linear-gradient(180deg, rgba(255, 176, 32, 0.16), var(--card) 65%); }
+.agenda-appt-card.status-confirmed { border-left-color: var(--green); background: linear-gradient(180deg, rgba(39, 196, 105, 0.16), var(--card) 65%); }
+.agenda-appt-card.status-completed { border-left-color: var(--blue); background: linear-gradient(180deg, rgba(58, 160, 255, 0.16), var(--card) 65%); }
+.agenda-appt-card.status-cancelled, .agenda-appt-card.status-rejected { border-left-color: var(--red); opacity: 0.7; }
+
+.agenda-appt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.agenda-appt-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agenda-appt-sub { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agenda-appt-time { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+
+.agenda-skeleton-cal, .agenda-skeleton-line {
+  background: var(--bg-soft); border-radius: 8px; animation: agenda-pulse 1.2s ease-in-out infinite;
+}
+.agenda-skeleton-cal { aspect-ratio: 7 / 6; }
+.agenda-skeleton-line { height: 44px; margin-bottom: 8px; }
+@keyframes agenda-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
+
+.agenda-error { text-align: center; padding: 30px 0; color: var(--text-muted); }
+.agenda-error .btn { margin-top: 12px; }
 
 .admin-backdrop {
   position: fixed;
@@ -1193,6 +1322,7 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .admin-sidebar.open { transform: translateX(0); }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .grid-3 { grid-template-columns: repeat(2, 1fr); }
+  .agenda-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 1080px) {
@@ -1248,6 +1378,15 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .stat-card { padding: 14px; }
   .stat-card .stat-value { font-size: 22px; }
   .grid-3 { grid-template-columns: 1fr; }
+
+  /* ---------- agenda ---------- */
+  .agenda-controls { width: 100%; }
+  .agenda-month-select { flex: 1 1 140px; min-width: 0; }
+  .agenda-tick-label, .agenda-slot, .agenda-lunch-band, .agenda-blocked-band { left: 46px; }
+  .agenda-appt-card { padding: 6px 8px; }
+  .agenda-appt-name, .agenda-appt-sub { font-size: 11px; white-space: normal; line-height: 1.2; }
+  .agenda-appt-time { display: none; }
+  .agenda-appt-head { flex-wrap: wrap; }
 
   /* tabelas viram cartões empilhados */
   .table-wrap { overflow: visible; }
@@ -1373,6 +1512,10 @@ html.lock-mobile .admin-sidebar.open { transform: translateX(0); }
 html.lock-mobile .admin-backdrop.show { display: block; }
 html.lock-mobile .stat-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-mobile .grid-3 { grid-template-columns: 1fr; }
+html.lock-mobile .agenda-grid { grid-template-columns: 1fr; }
+html.lock-mobile .agenda-controls { width: 100%; }
+html.lock-mobile .agenda-tick-label, html.lock-mobile .agenda-slot,
+html.lock-mobile .agenda-lunch-band, html.lock-mobile .agenda-blocked-band { left: 46px; }
 html.lock-mobile .admin-main { padding: 18px 14px 50px; }
 html.lock-mobile .admin-header { flex-direction: column; align-items: stretch; }
 html.lock-mobile .admin-header > .btn,
@@ -1485,6 +1628,7 @@ html.lock-desktop .admin-sidebar {
 html.lock-desktop .admin-backdrop { display: none; }
 html.lock-desktop .stat-grid { grid-template-columns: repeat(4, 1fr); }
 html.lock-desktop .grid-3 { grid-template-columns: repeat(3, 1fr); }
+html.lock-desktop .agenda-grid { grid-template-columns: 38% 1fr; }
 html.lock-desktop .admin-main { padding: 26px 30px 60px; }
 html.lock-desktop .admin-header { flex-direction: row; align-items: center; }
 html.lock-desktop .admin-header > .btn,

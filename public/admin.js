@@ -21,6 +21,8 @@
   ];
   const WEEKDAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const WEEKDAY_KEYS = [0, 1, 2, 3, 4, 5, 6];
+  const MONTH_LABELS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const AGENDA_DOT_STATUSES = ['pending', 'confirmed', 'completed'];
   const CATEGORY_LABELS = { hatch: 'Hatch', sedan: 'Sedan', suv: 'SUV', pickup: 'Picape' };
   const PAYMENT_LABELS = {
     local: 'Pagamento no local',
@@ -39,6 +41,7 @@
     modalities: [],
     services: [],
     categories: [],
+    agenda: null,
     financeFilters: {
       period: 'month',
       from: '',
@@ -70,6 +73,23 @@
     if (!dateStr) return '';
     const [y, m, d] = dateStr.slice(0, 10).split('-');
     return `${d}/${m}/${y}`;
+  }
+
+  /* Constrói a data local a partir de "AAAA-MM-DD" sem passar por UTC
+     (new Date('AAAA-MM-DD') interpreta como UTC e pode mudar o dia). */
+  function parseDate(dateStr) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  function toDateStr(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function toDateFull(dateStr) {
+    const d = parseDate(dateStr);
+    const s = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
   const PRODUCTIVE_HOURS_PER_DAY = 480;
@@ -196,8 +216,23 @@
     try {
       state.user = await api('/api/admin/me');
     } catch (e) { /* ignore */ }
+    showImpersonationBanner();
     await loadBase();
     showView('dashboard');
+  }
+
+  function showImpersonationBanner() {
+    document.getElementById('impersonationBanner')?.remove();
+    try {
+      const payload = JSON.parse(atob(state.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (!payload.impersonated) return;
+      const banner = document.createElement('div');
+      banner.id = 'impersonationBanner';
+      banner.style.cssText = 'position:fixed;z-index:9999;left:0;right:0;top:0;padding:10px;text-align:center;background:#f59e0b;color:#111;font-weight:700';
+      banner.innerHTML = 'Você está acessando esta empresa como desenvolvedor. <button type="button">Sair da empresa e voltar ao painel do desenvolvedor</button>';
+      banner.querySelector('button').onclick = () => { localStorage.removeItem(TOKEN_KEY); location.href = '/desenvolvedor'; };
+      document.body.appendChild(banner);
+    } catch { /* token inválido será tratado pela API */ }
   }
 
   async function loadBase() {
@@ -215,6 +250,7 @@
 
   async function showView(name) {
     state.view = name;
+    document.body.classList.toggle('agenda-active', name === 'agenda');
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     $('view-' + name).classList.remove('hidden');
     document.querySelectorAll('.admin-nav button[data-view]').forEach((b) => {
@@ -296,48 +332,440 @@
 
   /* ---------- agenda ---------- */
 
-  async function renderAgenda() {
-    const el = $('view-agenda');
-    const date = state.modal ? state.modal.agendaDate || todayStr() : todayStr();
-    const data = await api('/api/admin/agenda?date=' + date);
-    state.modal = { agendaDate: date };
+  function agendaMonthKey(year, month) { return `${year}-${month}`; }
 
-    const rows = data.appointments.map((a) => {
-      const actions = [];
-      if (a.status === 'pending') {
-        actions.push(`<button class="btn btn-sm btn-success" data-action="accept" data-id="${a.id}">Aceitar</button>`);
-        actions.push(`<button class="btn btn-sm btn-danger" data-action="reject" data-id="${a.id}">Recusar</button>`);
-      }
-      actions.push(`<button class="btn btn-sm btn-outline" data-action="detail" data-id="${a.id}">Detalhes</button>`);
-      return `
-        <tr>
-          <td><strong>${escapeHtml(a.start_time)}</strong><br /><span class="muted">${a.end_date && a.end_date !== date ? toDateBR(a.end_date) + ' ' : ''}${escapeHtml(a.end_time || '—')}</span></td>
-          <td>${escapeHtml(a.customer_name)}</td>
-          <td>${escapeHtml(a.vehicle_brand)} ${escapeHtml(a.vehicle_model)}</td>
-          <td>${escapeHtml(a.service_name || '—')}${a.booked_duration_minutes ? `<br/><span class="muted">${fmtDur(a.booked_duration_minutes)}</span>` : ''}</td>
-          <td>${escapeHtml(a.modality_name || '—')}${a.payment_method ? `<br/><span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
-          <td>${badge(a.status)}</td>
-          <td><div class="row-actions">${actions.join('')}</div></td>
-        </tr>`;
-    }).join('');
+  /* Intervalo de 42 dias (6 semanas) que cobre a grade visível do mês,
+     incluindo os dias de preenchimento do mês anterior/seguinte. */
+  function agendaGridRange(year, month) {
+    const firstDow = new Date(year, month, 1).getDay();
+    const start = new Date(year, month, 1 - firstDow);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 41);
+    return { start, end };
+  }
 
-    el.innerHTML = `
-      <div class="admin-header">
-        <div><h1>Agenda</h1><div class="sub">Horários do dia (início → término)</div></div>
-        <input type="date" id="agendaDate" value="${date}" style="width:auto;" />
-      </div>
-      <div class="panel">
-        ${data.appointments.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Início → Término</th><th>Cliente</th><th>Veículo</th><th>Serviço</th><th>Modalidade</th><th>Status</th><th></th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table></div>` : '<div class="empty-state">Nenhum agendamento nesta data.</div>'}
+  function agendaDefaultState() {
+    const t = new Date();
+    return {
+      year: t.getFullYear(),
+      month: t.getMonth(),
+      selectedDate: todayStr(),
+      monthKey: '',
+      monthAppointments: [],
+      settings: null,
+      dayBlockedDate: null,
+      dayBlocked: [],
+      fetchToken: 0,
+      loading: false,
+      error: null
+    };
+  }
+
+  async function agendaEnsureMonth(force) {
+    const ag = state.agenda;
+    const key = agendaMonthKey(ag.year, ag.month);
+    if (!force && ag.monthKey === key) return;
+    const token = ++ag.fetchToken;
+    const { start, end } = agendaGridRange(ag.year, ag.month);
+    try {
+      const rows = await api(`/api/admin/appointments?from=${toDateStr(start)}&to=${toDateStr(end)}`);
+      if (token !== ag.fetchToken) return; /* navegação mais recente já em andamento */
+      ag.monthAppointments = rows;
+      ag.monthKey = key;
+      ag.error = null;
+    } catch (e) {
+      if (token !== ag.fetchToken) return;
+      ag.error = e.message;
+    }
+  }
+
+  async function agendaEnsureSettings() {
+    if (state.agenda.settings) return;
+    try {
+      state.agenda.settings = await api('/api/admin/settings');
+    } catch {
+      state.agenda.settings = {};
+    }
+  }
+
+  async function agendaEnsureDayBlocks(dateStr) {
+    const ag = state.agenda;
+    if (ag.dayBlockedDate === dateStr) return;
+    try {
+      ag.dayBlocked = await api('/api/admin/blocked-schedules?date=' + dateStr);
+      ag.dayBlockedDate = dateStr;
+    } catch {
+      ag.dayBlocked = [];
+      ag.dayBlockedDate = dateStr;
+    }
+  }
+
+  function agendaAppointmentsForDate(dateStr) {
+    return state.agenda.monthAppointments
+      .filter((a) => a.appointment_date === dateStr)
+      .sort((a, b) => (a.start_time < b.start_time ? -1 : a.start_time > b.start_time ? 1 : 0));
+  }
+
+  function agendaDayCounts() {
+    const counts = new Map();
+    state.agenda.monthAppointments.forEach((a) => {
+      if (!AGENDA_DOT_STATUSES.includes(a.status)) return;
+      counts.set(a.appointment_date, (counts.get(a.appointment_date) || 0) + 1);
+    });
+    return counts;
+  }
+
+  function agendaBuildCalendarGrid() {
+    const ag = state.agenda;
+    const { start } = agendaGridRange(ag.year, ag.month);
+    const counts = agendaDayCounts();
+    const today = todayStr();
+    let html = '';
+    for (let i = 0; i < 42; i += 1) {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      const dateStr = toDateStr(d);
+      const isOutside = d.getMonth() !== ag.month;
+      const isToday = dateStr === today;
+      const isSelected = dateStr === ag.selectedDate;
+      const count = counts.get(dateStr) || 0;
+      const cls = ['agenda-cal-day'];
+      if (isOutside) cls.push('is-outside');
+      if (isToday) cls.push('is-today');
+      if (isSelected) cls.push('is-selected');
+      html += `<button type="button" class="${cls.join(' ')}" data-date="${dateStr}" aria-selected="${isSelected}" ${count ? `title="${count} agendamento${count > 1 ? 's' : ''}"` : ''}>
+        <span>${d.getDate()}</span>
+        ${count ? '<span class="agenda-cal-dot"></span>' : ''}
+      </button>`;
+    }
+    return html;
+  }
+
+  function agendaBuildSummaryHtml(dayAppts) {
+    const total = dayAppts.length;
+    const confirmed = dayAppts.filter((a) => a.status === 'confirmed').length;
+    const pending = dayAppts.filter((a) => a.status === 'pending').length;
+    const cancelled = dayAppts.filter((a) => a.status === 'cancelled' || a.status === 'rejected').length;
+    return `
+      <h3 class="agenda-summary-title">Resumo do dia ${toDateBR(state.agenda.selectedDate)}</h3>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-value">${total}</div><div class="stat-label">Agendamentos</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${confirmed}</div><div class="stat-label">Confirmados</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--amber)">${pending}</div><div class="stat-label">Pendentes</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--red)">${cancelled}</div><div class="stat-label">Cancelados</div></div>
       </div>
     `;
-    $('agendaDate').addEventListener('change', (e) => {
-      state.modal.agendaDate = e.target.value;
-      renderAgenda();
+  }
+
+  function agendaBuildUpcomingHtml(dayAppts) {
+    const isToday = state.agenda.selectedDate === todayStr();
+    const nowTime = isToday ? `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}` : null;
+    const active = dayAppts.filter((a) => a.status === 'pending' || a.status === 'confirmed');
+    const upcoming = (isToday ? active.filter((a) => a.start_time >= nowTime) : active).slice(0, 3);
+    return `
+      <h3 class="agenda-upcoming-title">Próximos agendamentos</h3>
+      ${upcoming.length ? upcoming.map((a) => `
+        <div class="agenda-upcoming-item">
+          <div class="agenda-upcoming-time">${escapeHtml(a.start_time)}</div>
+          <div class="agenda-upcoming-info">
+            <div class="agenda-upcoming-name">${escapeHtml(a.customer_name)}</div>
+            <div class="agenda-upcoming-service">${escapeHtml(a.service_name || '—')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</div>
+          </div>
+          ${badge(a.status)}
+        </div>
+      `).join('') : '<div class="muted">Nenhum próximo agendamento.</div>'}
+      <div class="agenda-upcoming-foot"><button type="button" class="btn btn-ghost btn-sm" id="agViewAll">Ver todos →</button></div>
+    `;
+  }
+
+  function timeToMin(t) {
+    const [h, m] = String(t || '0:0').split(':').map(Number);
+    return h * 60 + m;
+  }
+  function minToTime(m) {
+    const mm = Math.max(0, Math.round(m));
+    return `${String(Math.floor(mm / 60)).padStart(2, '0')}:${String(mm % 60).padStart(2, '0')}`;
+  }
+
+  /* Layout em colunas para agendamentos simultâneos (mesma lógica de
+     algoritmos de calendário: cada item ocupa a primeira coluna livre). */
+  function agendaAssignColumns(items) {
+    const sorted = [...items].sort((a, b) => a.startMin - b.startMin);
+    const columns = [];
+    sorted.forEach((item) => {
+      let col = columns.findIndex((endMin) => endMin <= item.startMin);
+      if (col === -1) { col = columns.length; columns.push(0); }
+      columns[col] = item.endMin;
+      item.col = col;
     });
-    bindRowActions(el);
+    const totalCols = columns.length || 1;
+    sorted.forEach((item) => { item.totalCols = totalCols; });
+    return sorted;
+  }
+
+  function agendaBuildDailyHtml(dayAppts, settings) {
+    const opening = settings.default_opening_time || '08:00';
+    const closing = settings.default_closing_time || '17:00';
+    const lunchStart = settings.lunch_start || '12:00';
+    const lunchEnd = settings.lunch_end || '13:00';
+    const interval = Number(settings.default_interval) || 60;
+    const openMin = timeToMin(opening);
+    const closeMin = timeToMin(closing);
+    const lunchStartMin = timeToMin(lunchStart);
+    const lunchEndMin = timeToMin(lunchEnd);
+    const totalMin = Math.max(60, closeMin - openMin);
+    const PX = 1.15; /* pixels por minuto */
+    const dateStr = state.agenda.selectedDate;
+
+    const fullDayBlock = state.agenda.dayBlocked.find((b) => b.block_full_day);
+    const partialBlocks = state.agenda.dayBlocked.filter((b) => !b.block_full_day && b.blocked_time);
+
+    const ticks = [];
+    for (let m = openMin; m < closeMin; m += interval) ticks.push(m);
+
+    const items = dayAppts.map((a) => {
+      const startMin = Math.max(openMin, timeToMin(a.start_time));
+      const sameDayEnd = !a.end_date || a.end_date === dateStr;
+      const endMin = Math.min(closeMin, sameDayEnd ? timeToMin(a.end_time || a.start_time) : closeMin);
+      return { a, startMin, endMin: Math.max(endMin, startMin + 20) };
+    });
+    agendaAssignColumns(items);
+
+    let html = `<div class="agenda-timeline" style="height:${Math.round(totalMin * PX) + 20}px;">`;
+
+    ticks.forEach((m) => {
+      html += `<div class="agenda-tick" style="top:${Math.round((m - openMin) * PX)}px;"><span class="agenda-tick-label">${minToTime(m)}</span></div>`;
+    });
+
+    html += '<div class="agenda-tick-content">';
+
+    if (fullDayBlock) {
+      html += `<div class="agenda-fullday-banner-inline agenda-blocked-band" style="top:0;height:${Math.round(totalMin * PX)}px;">
+        <strong>Dia bloqueado</strong><span>${escapeHtml(fullDayBlock.reason || 'Sem atendimento nesta data.')}</span>
+      </div>`;
+    } else {
+      /* Almoço */
+      if (lunchEndMin > openMin && lunchStartMin < closeMin) {
+        const top = Math.max(0, lunchStartMin - openMin) * PX;
+        const height = Math.max(20, (Math.min(lunchEndMin, closeMin) - Math.max(lunchStartMin, openMin)) * PX);
+        html += `<div class="agenda-lunch-band" style="top:${Math.round(top)}px;height:${Math.round(height)}px;">Intervalo · Almoço (${lunchStart}–${lunchEnd})</div>`;
+      }
+
+      /* Bloqueios parciais */
+      partialBlocks.forEach((b) => {
+        const bStart = Math.max(openMin, timeToMin(b.blocked_time));
+        const bEnd = Math.min(closeMin, timeToMin(b.blocked_time_end || b.blocked_time) || bStart + interval);
+        const top = (bStart - openMin) * PX;
+        const height = Math.max(20, (Math.max(bEnd, bStart + interval) - bStart) * PX);
+        html += `<div class="agenda-blocked-band" style="top:${Math.round(top)}px;height:${Math.round(height)}px;">
+          <strong>Horário bloqueado</strong><span>${escapeHtml(b.blocked_time)}${b.blocked_time_end ? ' – ' + escapeHtml(b.blocked_time_end) : ''}${b.reason ? ' · ' + escapeHtml(b.reason) : ''}</span>
+        </div>`;
+      });
+
+      /* Horários livres (uma faixa por intervalo, atrás dos cards/bloqueios) */
+      ticks.forEach((m) => {
+        const covered = items.some((it) => m >= it.startMin && m < it.endMin)
+          || (m >= lunchStartMin && m < lunchEndMin)
+          || partialBlocks.some((b) => m >= timeToMin(b.blocked_time) && m < timeToMin(b.blocked_time_end || b.blocked_time) + interval);
+        if (covered) return;
+        const top = (m - openMin) * PX;
+        const height = interval * PX;
+        html += `<div class="agenda-slot" style="top:${Math.round(top)}px;height:${Math.round(height)}px;" data-slot-time="${minToTime(m)}">
+          <button type="button" class="agenda-slot-add" data-action="newSlot" data-time="${minToTime(m)}">+ Novo agendamento</button>
+        </div>`;
+      });
+    }
+
+    /* Cards de agendamento (por cima de tudo) */
+    items.forEach(({ a, startMin, endMin, col, totalCols }) => {
+      const top = (startMin - openMin) * PX;
+      const height = Math.max(30, (endMin - startMin) * PX);
+      const widthPct = 100 / totalCols;
+      const leftPct = col * widthPct;
+      const endLabel = a.end_date && a.end_date !== dateStr ? `${toDateBR(a.end_date)} ${a.end_time || ''}` : (a.end_time || '');
+      html += `<div class="agenda-appt-card status-${a.status}" data-action="agendaDetail" data-id="${a.id}" tabindex="0"
+        style="top:${Math.round(top)}px;height:${Math.round(height)}px;left:calc(${leftPct}% + ${leftPct > 0 ? '4px' : '0px'});width:calc(${widthPct}% - ${totalCols > 1 ? '8px' : '4px'});">
+        <div class="agenda-appt-head"><span class="agenda-appt-name">${escapeHtml(a.customer_name)}</span>${badge(a.status)}</div>
+        <div class="agenda-appt-sub">${escapeHtml(a.service_name || '—')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</div>
+        <div class="agenda-appt-time">${escapeHtml(a.start_time)}${endLabel ? ' → ' + escapeHtml(endLabel) : ''}</div>
+      </div>`;
+    });
+
+    html += '</div></div>';
+    return html;
+  }
+
+  function agendaBuildDailyPanel(dayAppts, settings) {
+    const dateStr = state.agenda.selectedDate;
+    const count = dayAppts.length;
+    return `
+      <div class="agenda-daily-head">
+        <h3 class="agenda-daily-title">${toDateFull(dateStr)}</h3>
+        <span class="agenda-daily-count">${count} agendamento${count === 1 ? '' : 's'}</span>
+      </div>
+      ${count === 0 ? '<div class="agenda-empty-note">Nenhum agendamento para esta data. Os horários disponíveis estão exibidos abaixo.</div>' : ''}
+      ${agendaBuildDailyHtml(dayAppts, settings)}
+    `;
+  }
+
+  function agendaSkeletonHtml() {
+    return `
+      <div class="agenda-skeleton-cal"></div>
+      <div class="panel" style="margin-top:18px;"><div class="agenda-skeleton-line"></div><div class="agenda-skeleton-line"></div></div>
+    `;
+  }
+
+  function agendaBindSidePanels(el) {
+    el.querySelectorAll('[data-action="agendaDetail"]').forEach((card) => {
+      const open = () => openDetailModal(Number(card.dataset.id));
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+    el.querySelectorAll('[data-action="newSlot"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openAppointmentModal(undefined, { date: state.agenda.selectedDate, time: btn.dataset.time });
+      });
+    });
+    const viewAll = $('agViewAll');
+    if (viewAll) viewAll.addEventListener('click', () => showView('appointments'));
+  }
+
+  async function agendaRenderSidePanels() {
+    const el = $('view-agenda');
+    if (!el || el.classList.contains('hidden')) return;
+    await agendaEnsureDayBlocks(state.agenda.selectedDate);
+    const dayAppts = agendaAppointmentsForDate(state.agenda.selectedDate);
+    const summaryEl = $('agSummaryBody');
+    const upcomingEl = $('agUpcomingBody');
+    const dailyEl = $('agDailyBody');
+    if (summaryEl) summaryEl.innerHTML = agendaBuildSummaryHtml(dayAppts);
+    if (upcomingEl) upcomingEl.innerHTML = agendaBuildUpcomingHtml(dayAppts);
+    if (dailyEl) dailyEl.innerHTML = agendaBuildDailyPanel(dayAppts, state.agenda.settings || {});
+    agendaBindSidePanels(el);
+  }
+
+  function agendaSelectDate(dateStr, { changeMonth } = {}) {
+    const ag = state.agenda;
+    ag.selectedDate = dateStr;
+    if (changeMonth) {
+      const d = parseDate(dateStr);
+      ag.year = d.getFullYear();
+      ag.month = d.getMonth();
+    }
+  }
+
+  async function agendaGoToMonth(year, month, selectedDate) {
+    const ag = state.agenda;
+    ag.year = year;
+    ag.month = month;
+    ag.selectedDate = selectedDate || toDateStr(new Date(year, month, 1));
+    await renderAgenda();
+  }
+
+  function agendaMonthOptionsHtml() {
+    const ag = state.agenda;
+    const opts = [];
+    const base = new Date(ag.year, ag.month, 1);
+    for (let i = -12; i <= 12; i += 1) {
+      const d = new Date(base.getFullYear(), base.getMonth() + i, 1);
+      const val = `${d.getFullYear()}-${d.getMonth()}`;
+      const label = `${MONTH_LABELS[d.getMonth()]} de ${d.getFullYear()}`;
+      opts.push(`<option value="${val}" ${i === 0 ? 'selected' : ''}>${label}</option>`);
+    }
+    return opts.join('');
+  }
+
+  async function renderAgenda() {
+    const el = $('view-agenda');
+    if (!state.agenda) state.agenda = agendaDefaultState();
+    const ag = state.agenda;
+    const firstLoad = !ag.monthKey;
+
+    if (firstLoad) {
+      el.innerHTML = `
+        <div class="admin-header agenda-header"><div><h1><span class="agenda-icon">📅</span>Agenda</h1><div class="sub">Visualize e gerencie os agendamentos.</div></div></div>
+        <div class="agenda-grid"><div class="agenda-col-left">${agendaSkeletonHtml()}</div><div class="agenda-col-right"><div class="panel">${agendaSkeletonHtml()}</div></div></div>
+      `;
+    }
+
+    await Promise.all([agendaEnsureSettings(), agendaEnsureMonth(firstLoad)]);
+
+    if (ag.error) {
+      el.innerHTML = `
+        <div class="admin-header agenda-header"><div><h1><span class="agenda-icon">📅</span>Agenda</h1><div class="sub">Visualize e gerencie os agendamentos.</div></div></div>
+        <div class="agenda-error">Não foi possível carregar os agendamentos.<br /><button class="btn btn-outline" id="agRetry">Tentar novamente</button></div>
+      `;
+      $('agRetry').addEventListener('click', () => renderAgenda());
+      return;
+    }
+
+    el.innerHTML = `
+      <div class="admin-header agenda-header">
+        <div><h1><span class="agenda-icon">📅</span>Agenda</h1><div class="sub">Visualize e gerencie os agendamentos.</div></div>
+        <div class="agenda-controls">
+          <button type="button" class="btn btn-outline btn-sm" id="agToday">Hoje</button>
+          <button type="button" class="btn btn-outline btn-sm agenda-nav-btn" id="agPrev" aria-label="Mês anterior">‹</button>
+          <button type="button" class="btn btn-outline btn-sm agenda-nav-btn" id="agNext" aria-label="Próximo mês">›</button>
+          <select id="agMonthSelect" class="agenda-month-select" aria-label="Selecionar mês">${agendaMonthOptionsHtml()}</select>
+          <div class="agenda-mode-switch" role="group" aria-label="Alternar período">
+            <button type="button" class="active" data-mode="month">Mês</button>
+            <button type="button" data-mode="week" title="Visualização semanal em breve">Semana</button>
+          </div>
+        </div>
+      </div>
+      <div class="agenda-grid">
+        <div class="agenda-col-left">
+          <div class="panel agenda-cal-panel">
+            <div class="agenda-panel-title">${MONTH_LABELS[ag.month]} de ${ag.year}</div>
+            <div class="agenda-cal-weekdays">${WEEKDAY_LABELS.map((w) => `<span>${w}</span>`).join('')}</div>
+            <div class="agenda-cal-grid" id="agCalGrid">${agendaBuildCalendarGrid()}</div>
+          </div>
+          <div class="panel" id="agSummaryBody"></div>
+          <div class="panel" id="agUpcomingBody"></div>
+        </div>
+        <div class="agenda-col-right">
+          <div class="panel agenda-daily-panel" id="agDailyBody"></div>
+        </div>
+      </div>
+    `;
+
+    await agendaRenderSidePanels();
+
+    $('agToday').addEventListener('click', () => {
+      const t = new Date();
+      agendaGoToMonth(t.getFullYear(), t.getMonth(), todayStr());
+    });
+    $('agPrev').addEventListener('click', () => {
+      const d = new Date(ag.year, ag.month - 1, 1);
+      agendaGoToMonth(d.getFullYear(), d.getMonth());
+    });
+    $('agNext').addEventListener('click', () => {
+      const d = new Date(ag.year, ag.month + 1, 1);
+      agendaGoToMonth(d.getFullYear(), d.getMonth());
+    });
+    $('agMonthSelect').addEventListener('change', (e) => {
+      const [y, m] = e.target.value.split('-').map(Number);
+      agendaGoToMonth(y, m);
+    });
+    el.querySelectorAll('.agenda-mode-switch button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.mode === 'week') { toast('Visualização semanal em breve.'); return; }
+      });
+    });
+    el.querySelectorAll('#agCalGrid .agenda-cal-day').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const dateStr = btn.dataset.date;
+        const d = parseDate(dateStr);
+        if (d.getMonth() !== ag.month || d.getFullYear() !== ag.year) {
+          agendaGoToMonth(d.getFullYear(), d.getMonth(), dateStr);
+          return;
+        }
+        agendaSelectDate(dateStr);
+        el.querySelectorAll('#agCalGrid .agenda-cal-day').forEach((c) => {
+          c.classList.toggle('is-selected', c.dataset.date === dateStr);
+          c.setAttribute('aria-selected', String(c.dataset.date === dateStr));
+        });
+        agendaRenderSidePanels();
+      });
+    });
   }
 
   /* ---------- appointments ---------- */
@@ -440,7 +868,10 @@
   }
 
   function renderAgendaOrAppointments() {
-    if (state.view === 'agenda') return renderAgenda();
+    if (state.view === 'agenda') {
+      if (state.agenda) state.agenda.monthKey = ''; /* força recarregar após a mutação */
+      return renderAgenda();
+    }
     return renderAppointments();
   }
 
@@ -689,7 +1120,7 @@
 
   /* ---------- appointment modal (create/edit) ---------- */
 
-  async function openAppointmentModal(id) {
+  async function openAppointmentModal(id, prefill) {
     let appt = null;
     if (id) appt = await api('/api/admin/appointments/' + id);
     await loadBase();
@@ -718,8 +1149,8 @@
           <div class="field"><label for="apptCategory">Categoria</label>
             <select id="apptCategory">${catOpts}</select></div>
           <div class="field">${fieldHtml('apptPlate', 'Placa', v('vehicle_plate'), 'text', 'ABC-1D23')}</div>
-          <div class="field"><label for="apptDate">Data</label><input type="date" id="apptDate" value="${escapeHtml(v('appointment_date', todayStr()))}" /></div>
-          <div class="field">${fieldHtml('apptTime', 'Início', v('start_time'), 'time')}</div>
+          <div class="field"><label for="apptDate">Data</label><input type="date" id="apptDate" value="${escapeHtml(v('appointment_date', (prefill && prefill.date) || todayStr()))}" /></div>
+          <div class="field">${fieldHtml('apptTime', 'Início', v('start_time', (prefill && prefill.time) || ''), 'time')}</div>
           <div class="field"><label class="switch-row"><input type="checkbox" id="apptManualEnd" ${v('end_time') ? 'checked' : ''} /><span>Definir término manualmente</span></label></div>
           <div class="field" id="apptEndWrap"><label for="apptEndDate">Término (data)</label><input type="date" id="apptEndDate" value="${escapeHtml(v('end_date', v('appointment_date', todayStr())))}" /></div>
           <div class="field" id="apptEndTimeWrap">${fieldHtml('apptEndTime', 'Término (hora)', v('end_time', ''), 'time')}</div>
@@ -753,6 +1184,8 @@
       $('apptCategory').value = appt.vehicle_category;
       $('apptStatus').value = appt.status;
       $('apptPayment').value = appt.payment_method || '';
+    } else if (prefill && prefill.unitId) {
+      $('apptUnit').value = prefill.unitId;
     }
     const toggleManualEnd = () => {
       const on = $('apptManualEnd').checked;
@@ -864,12 +1297,38 @@
     if (a.rejected_at) reasonLines.push(['Recusado em', a.rejected_at + (a.rejected_by ? ' por ' + a.rejected_by : '')]);
     if (a.approved_at) reasonLines.push(['Aprovado em', a.approved_at + (a.approved_by ? ' por ' + a.approved_by : '')]);
 
-    openModal('Detalhes do agendamento', `
+    const actionButtons = [];
+    if (a.status === 'pending') {
+      actionButtons.push('<button class="btn btn-success" data-modal-action="accept">Aceitar</button>');
+      actionButtons.push('<button class="btn btn-danger" data-modal-action="reject">Recusar</button>');
+    }
+    if (a.status === 'confirmed') {
+      actionButtons.push('<button class="btn btn-success" data-modal-action="complete">Concluir</button>');
+      actionButtons.push('<button class="btn btn-outline" data-modal-action="cancel">Cancelar</button>');
+    }
+    if (a.status === 'pending' || a.status === 'confirmed') {
+      actionButtons.push('<button class="btn btn-outline" data-modal-action="edit">Editar</button>');
+    }
+    actionButtons.push('<button class="btn btn-danger" data-modal-action="delete">Excluir</button>');
+
+    const overlay = openModal('Detalhes do agendamento', `
       <div class="panel">
         ${lines.filter(([, val]) => val).map(([k, val]) => `<div class="review-line"><span>${escapeHtml(k)}</span><strong>${escapeHtml(val)}</strong></div>`).join('')}
         ${reasonLines.length ? `<div class="review-total">${reasonLines.filter(([, val]) => val).map(([k, val]) => `<div class="review-line"><span>${escapeHtml(k)}</span><strong>${escapeHtml(val)}</strong></div>`).join('')}</div>` : ''}
       </div>
-    `, `<button class="btn btn-ghost" data-close>Fechar</button>`);
+    `, `${actionButtons.join('')}<button class="btn btn-ghost" data-close>Fechar</button>`);
+
+    overlay.querySelectorAll('[data-modal-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.modalAction;
+        if (action === 'edit') { closeModal(); openAppointmentModal(id); return; }
+        if (action === 'reject') { closeModal(); openRejectModal(id); return; }
+        if (action === 'accept') { confirmAction('Aceitar este agendamento?', `/api/admin/appointments/${id}/accept`, 'PATCH', null, () => { closeModal(); renderAgendaOrAppointments(); }); return; }
+        if (action === 'complete') { confirmAction('Marcar como concluído?', `/api/admin/appointments/${id}/status`, 'PATCH', { status: 'completed' }, () => { closeModal(); renderAgendaOrAppointments(); }); return; }
+        if (action === 'cancel') { confirmAction('Cancelar este agendamento?', `/api/admin/appointments/${id}/status`, 'PATCH', { status: 'cancelled' }, () => { closeModal(); renderAgendaOrAppointments(); }); return; }
+        if (action === 'delete') { confirmAction('Excluir definitivamente este agendamento?', `/api/admin/appointments/${id}`, 'DELETE', null, () => { closeModal(); renderAgendaOrAppointments(); }); }
+      });
+    });
   }
 
   /* ---------- services ---------- */
