@@ -4,6 +4,13 @@ function errorHandler(err, req, res, next) {
   }
 
   if (err && err.name === 'MulterError') {
+    /* Quando o limite de tamanho estoura, o multer aborta a leitura do corpo
+       da requisição imediatamente. Se o navegador ainda estiver enviando o
+       arquivo nesse momento, a conexão é encerrada antes que ele receba esta
+       resposta — e o fetch() do navegador reporta isso como "Failed to
+       fetch" em vez de entregar a mensagem de erro. Drenar o restante do
+       corpo antes de responder evita esse encerramento abrupto. */
+    if (!req.readableEnded) req.resume();
     const message = err.code === 'LIMIT_FILE_SIZE'
       ? 'O arquivo excede o tamanho permitido.'
       : 'Falha no envio do arquivo.';

@@ -431,6 +431,15 @@ function setDomainVerified(domainId, verified) {
   return getDomainById(domainId);
 }
 
+/* Troca o hostname de um domínio já cadastrado. Volta verified para 0, já
+   que um domínio novo precisa apontar o DNS e ser verificado de novo. */
+function setDomainValue(domainId, domain) {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) throw new Error('Domínio inválido.');
+  db.prepare('UPDATE tenant_domains SET domain = ?, verified = 0 WHERE id = ?').run(normalized, domainId);
+  return getDomainById(domainId);
+}
+
 function updateDomain(domainId, fields) {
   const allowed = ['is_primary', 'verified'];
   const sets = [];
@@ -758,6 +767,7 @@ module.exports = {
   insertDomain,
   setDomainPrimary,
   setDomainVerified,
+  setDomainValue,
   updateDomain,
   deleteDomain,
   /* usuários */

@@ -27,9 +27,11 @@ const {
   countTenantAppointments,
   listDomains,
   getDomainById,
+  getDomainRow,
   insertDomain,
   setDomainPrimary,
   setDomainVerified,
+  setDomainValue,
   updateDomain,
   deleteDomain,
   listUsers,
@@ -505,7 +507,21 @@ function updateDomainHandler(req, res) {
   const row = getDomainById(req.params.domainId);
   if (!row) throw new AppError(404, 'Domínio não encontrado.');
 
-  const { is_primary, verified } = req.body || {};
+  const { is_primary, verified, domain } = req.body || {};
+
+  if (domain !== undefined) {
+    const normalized = String(domain || '').trim().toLowerCase().replace(/^www\./, '');
+    if (!normalized || !normalized.includes('.') || /\s/.test(normalized)) {
+      throw new AppError(400, 'Informe um domínio válido (ex: esteticaalpha.com.br).');
+    }
+    if (normalized !== row.domain) {
+      const existing = getDomainRow(normalized);
+      if (existing && existing.domain_id !== row.id) {
+        throw new AppError(409, 'Este domínio já está cadastrado para outra empresa.');
+      }
+      setDomainValue(row.id, normalized);
+    }
+  }
   if (is_primary !== undefined) setDomainPrimary(row.id);
   if (verified !== undefined) setDomainVerified(row.id, verified ? 1 : 0);
 
