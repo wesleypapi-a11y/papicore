@@ -1581,6 +1581,41 @@
 
   /* ---------- units ---------- */
 
+  function splitUnitAddress(addr) {
+    const out = {
+      address_street: '', address_number: '', address_complement: '',
+      address_neighborhood: '', address_city: '', address_state: '', address_zipcode: ''
+    };
+    const s = String(addr || '').trim();
+    if (!s) return out;
+    const sections = s.split(' - ').map((x) => x.trim()).filter(Boolean);
+    const first = sections.shift() || '';
+    const m = first.match(/^(.+?)\s*,\s*(\d+)([^\d].*)?$/);
+    if (m) {
+      out.address_street = m[1].trim();
+      out.address_number = m[2];
+      out.address_complement = (m[3] || '').trim().replace(/^[,;\s]+/, '');
+    } else {
+      out.address_street = first;
+    }
+    if (sections.length) {
+      if (/^[A-Za-z]{2}$/.test(sections[sections.length - 1])) {
+        out.address_state = sections.pop().toUpperCase();
+      }
+      if (sections.length === 1) {
+        out.address_neighborhood = sections[0];
+      } else if (sections.length >= 2) {
+        out.address_neighborhood = sections[0];
+        out.address_city = sections[1];
+        if (sections.length > 2) {
+          const rest = sections.slice(2).join(' - ');
+          out.address_complement = out.address_complement ? `${out.address_complement} - ${rest}` : rest;
+        }
+      }
+    }
+    return out;
+  }
+
   async function renderUnits() {
     await loadBase();
     const el = $('view-units');
@@ -1619,6 +1654,9 @@
   async function openUnitModal(id) {
     let u = null;
     if (id) u = state.units.find((x) => x.id === id);
+    if (u && !u.address_street && !u.address_number && u.address) {
+      u = { ...u, ...splitUnitAddress(u.address) };
+    }
     const v = (f, def) => (u && u[f] != null ? u[f] : def);
     const days = v('working_days', [1, 2, 3, 4, 5, 6]);
 
@@ -1656,9 +1694,15 @@
     `);
 
     $('unitSave').addEventListener('click', async () => {
+      const saveBtn = $('unitSave');
+      if (saveBtn.disabled) return;
+      saveBtn.disabled = true;
       const days = [...document.querySelectorAll('.unitDay:checked')].map((c) => Number(c.dataset.day));
+      const addrParts = ['unitStreet', 'unitNumber', 'unitComplement', 'unitNeighborhood', 'unitCity', 'unitState']
+        .map((f) => $(f).value.trim()).filter(Boolean);
       const body = {
         name: $('unitName').value,
+        address: addrParts.length ? addrParts.join(', ') : (u && u.address) || '',
         address_street: $('unitStreet').value,
         address_number: $('unitNumber').value,
         address_complement: $('unitComplement').value,
@@ -1666,7 +1710,7 @@
         address_city: $('unitCity').value,
         address_state: $('unitState').value,
         address_zipcode: $('unitZipcode').value,
-        address_reference: $('unitReference').value,
+        address_reference: $('unitReference').value || null,
         maps_link: $('unitMaps').value || null,
         phone: $('unitPhone').value,
         capacity: Number($('unitCapacity').value),
@@ -1688,6 +1732,7 @@
         toast(e.message, 'error');
       }
       hideLoader();
+      saveBtn.disabled = false;
     });
   }
 

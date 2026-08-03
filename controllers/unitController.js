@@ -22,9 +22,6 @@ function getOne(req, res) {
 }
 
 function buildAddress(data) {
-  if (!data.address && !data.address_street) {
-    throw new AppError(400, 'Informe o endereço da unidade.');
-  }
   const street = data.address_street !== undefined ? String(data.address_street || '').trim() : '';
   const number = data.address_number !== undefined ? String(data.address_number || '').trim() : '';
   const complement = data.address_complement !== undefined ? String(data.address_complement || '').trim() : '';
@@ -34,9 +31,13 @@ function buildAddress(data) {
   const zipcode = data.address_zipcode !== undefined ? String(data.address_zipcode || '').trim() : '';
 
   const hasGranular = data.address_street !== undefined;
-  const address = hasGranular
-    ? [street, number, complement, neighborhood, city, state].filter(Boolean).join(', ') || String(data.address || '').trim()
-    : String(data.address || '').trim();
+  const combined = String(data.address || '').trim();
+  const granular = [street, number, complement, neighborhood, city, state].filter(Boolean).join(', ');
+  const address = (hasGranular ? granular : '') || combined;
+
+  if (!address) {
+    throw new AppError(400, 'Informe o endereço da unidade.');
+  }
 
   return {
     address,
@@ -126,7 +127,13 @@ function update(req, res) {
   const existing = db.prepare('SELECT * FROM units WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Unidade não encontrada.');
 
-  const data = validateUnit({ ...req.body });
+  const body = { ...req.body };
+  const hasAddress =
+    Boolean(body.address && String(body.address).trim()) ||
+    Boolean(body.address_street !== undefined && String(body.address_street).trim());
+  if (!hasAddress && existing.address) body.address = existing.address;
+
+  const data = validateUnit(body);
   db.prepare(
     `UPDATE units SET
        name = ?, address = ?, address_street = ?, address_number = ?, address_complement = ?,
