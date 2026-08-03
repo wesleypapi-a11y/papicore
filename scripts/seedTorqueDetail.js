@@ -10,7 +10,13 @@ const { createTenantDatabase, closeTenantDatabase, deleteTenantDatabase, tenantF
 const CORE_FILE = path.join(__dirname, '..', 'data', 'papi_core.db');
 const SLUG = 'torque-detail';
 const DATABASE_NAME = 'tenant_0001_torque_detail.db';
-const DOMAIN = 'torquedetail.com.br';
+const DOMAIN = String(process.env.TORQUE_DETAIL_DOMAIN || 'torquedetail.com.br')
+  .trim()
+  .toLowerCase()
+  .replace(/^https?:\/\//, '')
+  .replace(/\/.*$/, '')
+  .replace(/:\d+$/, '')
+  .replace(/^www\./, '');
 const SEED_MARKER = 'SEED_TORQUE_DETAIL_V1';
 const REQUIRED_TENANT_TABLES = ['appointments', 'blocked_schedules', 'company_settings', 'financial_entries', 'service_categories', 'service_modalities', 'services', 'units'];
 

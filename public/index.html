@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0d12" />
-  <title>Torque Detail — Agendamento Online</title>
-  <link rel="icon" href="/Logo/favicon.jpg" />
+  <title>Agendamento Online</title>
+  <link id="pageFavicon" rel="icon" href="/assets/favicon.png" />
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,7 +14,7 @@
 </head>
 <body class="booking-app">
   <div class="ambient" aria-hidden="true">
-    <div class="ambient-watermark">TORQUE</div>
+    <div class="ambient-watermark" id="brandWatermark"></div>
     <div class="ambient-lines"></div>
     <div class="ambient-glow glow-left"></div>
     <div class="ambient-glow glow-right"></div>
@@ -23,8 +23,8 @@
 
   <header class="site-header">
     <div class="brand">
-      <img src="/Logo/Logo branco sem fundo.jpg" alt="Torque Detail" class="brand-logo" />
-      <span class="brand-name" id="brandName">Torque Detail</span>
+      <img id="brandLogo" src="/assets/logo.png" alt="" class="brand-logo" />
+      <span class="brand-name" id="brandName">Agendamento</span>
     </div>
     <div class="header-right">
       <span class="header-tagline">Agendamento Online</span>
@@ -218,7 +218,7 @@
       </div>
       <p class="success-note">Seu horário ficou reservado e será confirmado após a análise da nossa equipe. Acompanhe o status pelo WhatsApp.</p>
       <div class="success-actions">
-        <a class="btn btn-primary" id="btnWhatsapp" target="_blank" rel="noopener">Falar com a Torque Detail pelo WhatsApp</a>
+        <a class="btn btn-primary" id="btnWhatsapp" target="_blank" rel="noopener">Falar com a empresa pelo WhatsApp</a>
         <button class="btn btn-ghost" id="btnHome">Voltar para o início</button>
       </div>
     </section>
@@ -227,7 +227,7 @@
   <footer class="site-footer">
     <div class="footer-inner">
       <div class="footer-brand">
-        <img src="/Logo/Logo branco sem fundo.jpg" alt="Torque Detail" class="footer-logo" />
+        <img id="footerLogo" src="/assets/logo.png" alt="" class="footer-logo" />
         <p>Excelência em cuidados para seu veículo.</p>
       </div>
       <div class="footer-social">
@@ -236,7 +236,7 @@
         <a class="footer-link" id="footerWa" href="#" target="_blank" rel="noopener">WhatsApp</a>
         <a class="footer-link" href="#" rel="noopener">Instagram</a>
       </div>
-      <div class="footer-copy">© <span id="footerName">Torque Detail</span> — Todos os direitos reservados.</div>
+      <div class="footer-copy">© <span id="footerName">Empresa</span> — Todos os direitos reservados.</div>
     </div>
   </footer>
 

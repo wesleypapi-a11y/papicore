@@ -1,7 +1,7 @@
 /*
  * developerController.js
  *
- * Controladores do painel exclusivo do desenvolvedor ("Papi Core"),
+ * Controladores do painel exclusivo do desenvolvedor ("PapiCore"),
  * acessível somente por usuários com role = developer.
  *
  * Gerencia toda a plataforma: empresas (tenants), domínios, usuários, planos,
@@ -527,7 +527,7 @@ function dnsInstructions(req, res) {
 
   const apex = row.domain;
   const www = `www.${apex}`;
-  const platformDomain = String(process.env.SAAS_CNAME_TARGET || process.env.PLATFORM_DOMAIN || 'app.papi.app').trim();
+  const platformDomain = String(process.env.SAAS_CNAME_TARGET || process.env.PLATFORM_DOMAIN || 'app.papicore.com.br').trim();
   const serverIp = String(process.env.PLATFORM_SERVER_IP || '').trim();
 
   const records = [];
@@ -819,7 +819,7 @@ function logsHandler(req, res) {
 function platformSettings(req, res) {
   const core = getCoreDb();
   return res.json({
-    platform_name: process.env.PLATFORM_NAME || 'Papi Core',
+    platform_name: process.env.PLATFORM_NAME || 'PapiCore',
     storage: 'SQLite isolado por empresa',
     node_env: process.env.NODE_ENV || 'development',
     default_tenant_slug: process.env.DEFAULT_TENANT_SLUG || 'torque-detail',

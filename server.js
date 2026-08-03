@@ -1,7 +1,7 @@
 /*
  * server.js
  *
- * Ponto de entrada da plataforma "Papi Core" — SaaS multi-tenant.
+ * Ponto de entrada da plataforma "PapiCore" — SaaS multi-tenant.
  *
  * Três áreas:
  *   1. Pública (/)      — agendamento, abre o banco pelo domínio da empresa;
@@ -45,11 +45,11 @@ if (missingEnvVars.length) {
   process.exit(1);
 }
 
-if (process.env.NODE_ENV === 'production') {
-  console.warn(
-    '[papi-core] Bancos SQLite ficam em ./data. No Render, monte um Persistent Disk nesse caminho — ' +
-    'sem disco persistente, todo o conteúdo (tenants, usuários, agendamentos) é perdido a cada deploy ou reinício.'
+if (process.env.NODE_ENV === 'production' && !process.env.DATA_DIR) {
+  console.error(
+    '[papi-core] DATA_DIR não configurado. Configure DATA_DIR=/var/data.'
   );
+  process.exit(1);
 }
 
 /* Inicializa o banco central, migra o app.db legado e garante o tenant padrão. */
@@ -122,5 +122,5 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Papi Core rodando em http://localhost:${PORT}`);
+  console.log(`PapiCore rodando em http://localhost:${PORT}`);
 });

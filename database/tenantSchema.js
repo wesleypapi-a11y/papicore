@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS units (
 
 CREATE TABLE IF NOT EXISTS company_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
-  company_name TEXT NOT NULL DEFAULT 'Torque Detail',
+  company_name TEXT NOT NULL DEFAULT 'Empresa',
   phone TEXT,
   whatsapp TEXT,
   logo_url TEXT,

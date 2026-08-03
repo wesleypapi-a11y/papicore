@@ -2,7 +2,7 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
-  const TOKEN_KEY = 'torque_admin_token';
+  const TOKEN_KEY = `papicore_admin_token:${window.location.hostname}`;
 
   const STATUS_LABELS = {
     pending: 'Aguardando confirmação',
@@ -1888,6 +1888,7 @@
           <div class="field">${fieldHtml('setName', 'Nome da empresa', s.company_name, 'text')}</div>
           <div class="field">${fieldHtml('setPhone', 'Telefone', s.phone, 'text', '(00) 00000-0000')}</div>
           <div class="field">${fieldHtml('setWhatsapp', 'WhatsApp', s.whatsapp, 'text', '(00) 00000-0000')}</div>
+          <div class="field">${fieldHtml('setLogoUrl', 'URL da logo', s.logo_url, 'url', 'https://dominio-do-cliente.com.br/logo.png')}</div>
           <div class="field">${fieldHtml('setCapacity', 'Capacidade simultânea (padrão)', s.capacity || 1, 'number')}</div>
         </div>
         <h3 class="review-section-title">Horário de funcionamento</h3>
@@ -1914,6 +1915,7 @@
         company_name: $('setName').value,
         phone: $('setPhone').value || null,
         whatsapp: $('setWhatsapp').value || null,
+        logo_url: $('setLogoUrl').value || null,
         default_opening_time: $('setOpen').value,
         default_closing_time: $('setClose').value,
         lunch_start: $('setLunchStart').value,

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'torque_booking_state';
+  const STORAGE_KEY = `papicore_booking_state:${window.location.hostname}`;
   const $ = (id) => document.getElementById(id);
 
   const state = {
@@ -145,12 +145,26 @@
     state.settings = settings || {};
     state.modalities = modalities || [];
     state.units = units || [];
-    $('brandName').textContent = state.settings.company_name || 'Torque Detail';
-    $('footerName').textContent = state.settings.company_name || 'Torque Detail';
+    const companyName = state.settings.company_name || 'Empresa';
+    const logoUrl = state.settings.logo_url || '/assets/logo.png';
+    $('brandName').textContent = companyName;
+    $('footerName').textContent = companyName;
+    document.title = `${companyName} — Agendamento Online`;
+    const watermark = $('brandWatermark');
+    if (watermark) watermark.textContent = companyName.split(/\s+/)[0].toUpperCase();
+    ['brandLogo', 'footerLogo'].forEach((id) => {
+      const img = $(id);
+      if (img) {
+        img.src = logoUrl;
+        img.alt = companyName;
+      }
+    });
     $('footerPhone').textContent = state.settings.phone || '';
     const wa = digits(state.settings.whatsapp || state.settings.phone || '');
     const waLink = $('footerWa');
     if (waLink && wa) waLink.href = 'https://wa.me/' + wa;
+    const bookingWa = $('btnWhatsapp');
+    if (bookingWa) bookingWa.textContent = `Falar com a ${companyName} pelo WhatsApp`;
 
     if (state.modality && !state.modalities.some((m) => m.id === state.modality.id)) state.modality = null;
     if (state.unit && !state.units.some((u) => u.id === state.unit.id)) state.unit = null;
@@ -1057,7 +1071,8 @@
     const msg = state.settings.confirmation_message || 'Nossa equipe analisará a disponibilidade e entrará em contato para confirmar.';
     $('successMsg').textContent = msg;
     const phone = digits(state.settings.whatsapp || state.settings.phone || '');
-    const text = encodeURIComponent(`Olá! Acabei de enviar a solicitação de agendamento ${appointment.appointment_code || ''} pela Torque Detail.`);
+    const companyName = state.settings.company_name || 'empresa';
+    const text = encodeURIComponent(`Olá! Acabei de enviar a solicitação de agendamento ${appointment.appointment_code || ''} pela ${companyName}.`);
     const link = $('btnWhatsapp');
     if (phone) {
       link.href = `https://wa.me/${phone}?text=${text}`;

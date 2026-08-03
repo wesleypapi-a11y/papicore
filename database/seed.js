@@ -1,7 +1,7 @@
 /*
  * seed.js
  *
- * Inicializa a plataforma "Papi Core":
+ * Inicializa a plataforma "PapiCore":
  *   - cria o banco central (papi_core.db) com planos, tenant padrão e usuários;
  *   - migra data/app.db (quando existir) para o banco da primeira empresa;
  *   - cria o banco padrão do primeiro cliente quando necessário.

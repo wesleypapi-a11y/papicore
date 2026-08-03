@@ -1,7 +1,7 @@
 /*
  * coreDatabase.js
  *
- * Banco central da plataforma "Papi Core": data/papi_core.db
+ * Banco central da plataforma "PapiCore": data/papi_core.db
  *
  * Este banco NÃO armazena agendamentos, clientes, serviços ou agenda de
  * nenhuma empresa. Ele controla apenas a plataforma:
@@ -30,7 +30,10 @@ const {
   deleteTenantDatabase
 } = require('./tenantDatabase');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR =
+  process.env.DATA_DIR ||
+  path.join(__dirname, '..', 'data');
+
 const CORE_FILE = path.join(DATA_DIR, 'papi_core.db');
 const LEGACY_FILE = path.join(DATA_DIR, 'app.db');
 

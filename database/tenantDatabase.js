@@ -23,7 +23,10 @@ const Database = require('better-sqlite3');
 
 const { upgradeSchema, seedDefaults } = require('./tenantSchema');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR =
+  process.env.DATA_DIR ||
+  path.join(__dirname, '..', 'data');
+
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
 
 const als = new AsyncLocalStorage();
