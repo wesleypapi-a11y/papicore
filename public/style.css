@@ -722,6 +722,16 @@ body.booking-app {
 
 .slot-duration-note { color: var(--text-muted); font-size: 14px; margin: 0 0 14px; }
 
+.slot-long-message {
+  border: 1px dashed var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
 .loading { color: var(--text-muted); padding: 24px 0; text-align: center; }
 .error-box {
   background: var(--red-soft);

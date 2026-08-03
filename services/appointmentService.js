@@ -8,7 +8,8 @@ const {
   computeEndDateTime,
   productiveMinutesBetween,
   dateTimeStr,
-  datetimeOverlap
+  datetimeOverlap,
+  isLongService
 } = require('./durationService');
 const {
   AppError,
@@ -199,9 +200,6 @@ function validateAppointmentInput(body, opts = {}) {
   if (appointment_date < todayStr()) {
     throw new AppError(400, 'Não é possível agendar para uma data no passado.');
   }
-  if (!isValidTime(start_time)) {
-    throw new AppError(400, 'Horário inválido. Use o formato HH:MM.');
-  }
 
   const settings = getSettings();
   const duration = services.reduce((sum, s) => sum + serviceDuration(s, category), 0);
@@ -211,6 +209,16 @@ function validateAppointmentInput(body, opts = {}) {
   const workingDays = unit ? parseWorkingDays(unit.working_days) : parseWorkingDays(settings.working_days);
   const lunch = lunchConfig(unit, settings);
   const daily = dailyProductiveMinutes(opening, closing, lunch.start, lunch.end);
+
+  /* Serviço de longa duração: o cliente não escolhe horário na tela. Internamente
+     usa-se o primeiro horário comercial do dia; o horário real é confirmado depois. */
+  let startTime = start_time;
+  if (isLongService(duration) && (!startTime || !isValidTime(startTime))) {
+    startTime = opening;
+  }
+  if (!isValidTime(startTime)) {
+    throw new AppError(400, 'Horário inválido. Use o formato HH:MM.');
+  }
 
   if (!isWorkingDay(workingDays, appointment_date)) {
     throw new AppError(400, 'Não atendemos nesta data.');
@@ -243,18 +251,18 @@ function validateAppointmentInput(body, opts = {}) {
   let bookedDuration = duration;
   if (manualEnd) {
     end = { date: body.end_date, time: body.end_time };
-    if (dateTimeStr(end.date, end.time) <= dateTimeStr(appointment_date, start_time)) {
+    if (dateTimeStr(end.date, end.time) <= dateTimeStr(appointment_date, startTime)) {
       throw new AppError(400, 'O término deve ser após o início.');
     }
-    bookedDuration = productiveMinutesBetween(appointment_date, start_time, end.date, end.time, engineOpts);
+    bookedDuration = productiveMinutesBetween(appointment_date, startTime, end.date, end.time, engineOpts);
   } else {
-    if (!validSlots.includes(start_time)) {
+    if (!validSlots.includes(startTime)) {
       throw new AppError(400, 'Horário fora do expediente para este serviço.');
     }
-    end = computeEndDateTime(appointment_date, start_time, duration, engineOpts);
+    end = computeEndDateTime(appointment_date, startTime, duration, engineOpts);
   }
   const now = nowDateTime();
-  if (appointment_date === now.date && start_time <= now.time) {
+  if (appointment_date === now.date && startTime <= now.time) {
     throw new AppError(400, 'Não é possível agendar para um horário que já passou.');
   }
 
@@ -323,7 +331,7 @@ function validateAppointmentInput(body, opts = {}) {
     vehicle_color: vehicle_color ? String(vehicle_color).trim() : null,
     vehicle_category: category,
     appointment_date,
-    start_time,
+    start_time: startTime,
     address_zipcode: address_zipcode ? String(address_zipcode).trim() : null,
     address_street: address_street ? String(address_street).trim() : null,
     address_number: address_number ? String(address_number).trim() : null,

@@ -148,7 +148,6 @@
     const companyName = state.settings.company_name || 'Empresa';
     const logoUrl = state.settings.logo_url || '/assets/logo.png';
     $('brandName').textContent = companyName;
-    $('footerName').textContent = companyName;
     document.title = `${companyName} — Agendamento Online`;
     const watermark = $('brandWatermark');
     if (watermark) watermark.textContent = companyName.split(/\s+/)[0].toUpperCase();
@@ -251,7 +250,7 @@
       if (!state.services.length) { alert('Selecione ao menos um serviço.'); return false; }
     }
     if (n === 6) {
-      if (!state.slot) { alert('Selecione um horário.'); return false; }
+      if (!state.longService && !state.slot) { alert('Selecione um horário.'); return false; }
     }
     if (n === 7) {
       if (!validateAddressSubmit()) return false;
@@ -301,11 +300,13 @@
         state.unit = null;
         state.date = null;
         state.services = [];
-        state.slot = null;
-        state.slotEndDate = null;
-        state.slotEndTime = null;
-        state.slotDuration = null;
-        state.address = {};
+      state.slot = null;
+      state.slotEndDate = null;
+      state.slotEndTime = null;
+      state.slotDuration = null;
+      state.longService = false;
+      state.estimatedEnd = null;
+      state.address = {};
         state.responsible_name = '';
         state.key_delivery_confirmed = false;
         state.has_water_access = false;
@@ -345,6 +346,8 @@
         state.slotEndDate = null;
         state.slotEndTime = null;
         state.slotDuration = null;
+        state.longService = false;
+        state.estimatedEnd = null;
         slotCache = {};
         saveState();
         grid.querySelectorAll('.category-option').forEach((c) => c.classList.remove('selected'));
@@ -445,6 +448,8 @@
           state.slotEndDate = null;
           state.slotEndTime = null;
           state.slotDuration = null;
+          state.longService = false;
+          state.estimatedEnd = null;
           saveState();
           gridEl.querySelectorAll('.cal-day').forEach((c) => c.classList.remove('selected'));
           btn.classList.add('selected');
@@ -598,8 +603,31 @@
       loading.hidden = true;
     }
     const data = slotCache[key];
+    const longNote = $('slotLongNote');
+    state.longService = false;
+    state.estimatedEnd = null;
+    if (longNote) longNote.hidden = true;
     if (!data.working || data.full_day_blocked) {
       grid.innerHTML = `<div class="error-box">Não há horários disponíveis nesta data.</div>`;
+      return;
+    }
+    if (data.is_long_service) {
+      state.longService = true;
+      state.slot = null;
+      state.slotEndDate = null;
+      state.slotEndTime = null;
+      state.slotDuration = data.duration_minutes || null;
+      state.estimatedEnd = data.estimated_end_date && data.estimated_end_time
+        ? { date: data.estimated_end_date, time: data.estimated_end_time }
+        : null;
+      saveState();
+      grid.innerHTML = '';
+      const pickupExtra = data.vehicle_category === 'pickup' ? ' (inclui acréscimo para picape)' : '';
+      const deliveryWord = state.modality.slug === 'in-store' ? 'atendimento' : 'entrega';
+      longNote.innerHTML = `
+        <p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${pickupExtra}</p>
+        <p class="slot-long-message">Este serviço possui duração estimada de <strong>${fmtDur(data.duration_minutes)}</strong>. Por ser um serviço de longa duração, não é necessário escolher um horário. A empresa entrará em contato para confirmar o horário de ${deliveryWord} do veículo.</p>`;
+      longNote.hidden = false;
       return;
     }
     const durNote = data.duration_minutes ? `<p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${data.vehicle_category === 'pickup' ? ' (inclui acréscimo para picape)' : ''}</p>` : '';
@@ -766,8 +794,12 @@
       <div class="review-line"><span>Data</span><strong>${formatDateShort(state.date)}</strong></div>
       <h3 class="review-section-title">Serviços selecionados</h3>
       ${servicesLines}
-      <div class="review-line"><span>Início</span><strong>${formatDateShort(state.date)} às ${state.slot}</strong></div>
-      <div class="review-line"><span>Previsão de término</span><strong>${state.slotEndTime ? (state.slotEndDate !== state.date ? formatDateShort(state.slotEndDate) + ' às ' + state.slotEndTime : state.slotEndTime) : '—'}</strong></div>
+      ${state.longService
+        ? `<div class="review-line"><span>Início</span><strong>${formatDateShort(state.date)} · horário a confirmar</strong></div>`
+        : `<div class="review-line"><span>Início</span><strong>${formatDateShort(state.date)} às ${state.slot}</strong></div>`}
+      ${state.longService
+        ? `<div class="review-line"><span>Previsão de término</span><strong>${state.estimatedEnd ? formatDateShort(state.estimatedEnd.date) + ' às ' + state.estimatedEnd.time : 'A confirmar'}</strong></div>`
+        : `<div class="review-line"><span>Previsão de término</span><strong>${state.slotEndTime ? (state.slotEndDate !== state.date ? formatDateShort(state.slotEndDate) + ' às ' + state.slotEndTime : state.slotEndTime) : '—'}</strong></div>`}
       <div class="review-line"><span>Total de horas de trabalho</span><strong>${fmtDur(duration)}</strong></div>
       ${addressLine}
       <div class="review-total">
@@ -1027,7 +1059,7 @@
       vehicle_color: state.vehicle.color.trim() || null,
       vehicle_category: state.vehicle.category,
       appointment_date: state.date,
-      start_time: state.slot,
+      start_time: state.longService ? null : state.slot,
       address_zipcode: a.address_zipcode || null,
       address_street: a.address_street || null,
       address_number: a.address_number || null,

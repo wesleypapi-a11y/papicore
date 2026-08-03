@@ -30,6 +30,13 @@
     pix: 'Pix (copia e cola)',
     qrcode: 'Pix (QR Code)'
   };
+  const LONG_SERVICE_THRESHOLD_MINUTES = 2 * 24 * 60;
+  function isLongAppointment(a) {
+    return Number(a && a.booked_duration_minutes || 0) > LONG_SERVICE_THRESHOLD_MINUTES;
+  }
+  function appointmentTimeLabel(a) {
+    return isLongAppointment(a) ? 'Horário a confirmar' : (a.start_time || '—');
+  }
 
   let state = {
     token: localStorage.getItem(TOKEN_KEY) || '',
@@ -320,7 +327,7 @@
                   <td><strong>${escapeHtml(a.appointment_code)}</strong></td>
                   <td>${escapeHtml(a.customer_name)}</td>
                   <td>${toDateBR(a.appointment_date)}</td>
-                  <td>${escapeHtml(a.start_time)}</td>
+                  <td>${escapeHtml(appointmentTimeLabel(a))}</td>
                   <td>${escapeHtml(a.service_name || '—')}</td>
                   <td>${badge(a.status)}</td>
                 </tr>`).join('')}
@@ -464,7 +471,7 @@
       <h3 class="agenda-upcoming-title">Próximos agendamentos</h3>
       ${upcoming.length ? upcoming.map((a) => `
         <div class="agenda-upcoming-item">
-          <div class="agenda-upcoming-time">${escapeHtml(a.start_time)}</div>
+          <div class="agenda-upcoming-time">${escapeHtml(appointmentTimeLabel(a))}</div>
           <div class="agenda-upcoming-info">
             <div class="agenda-upcoming-name">${escapeHtml(a.customer_name)}</div>
             <div class="agenda-upcoming-service">${escapeHtml(a.service_name || '—')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</div>
@@ -585,7 +592,7 @@
         style="top:${Math.round(top)}px;height:${Math.round(height)}px;left:calc(${leftPct}% + ${leftPct > 0 ? '4px' : '0px'});width:calc(${widthPct}% - ${totalCols > 1 ? '8px' : '4px'});">
         <div class="agenda-appt-head"><span class="agenda-appt-name">${escapeHtml(a.customer_name)}</span>${badge(a.status)}</div>
         <div class="agenda-appt-sub">${escapeHtml(a.service_name || '—')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</div>
-        <div class="agenda-appt-time">${escapeHtml(a.start_time)}${endLabel ? ' → ' + escapeHtml(endLabel) : ''}</div>
+        <div class="agenda-appt-time">${escapeHtml(appointmentTimeLabel(a))}${endLabel ? ' → ' + escapeHtml(endLabel) : ''}</div>
       </div>`;
     });
 
@@ -804,7 +811,7 @@
         <tr>
           <td><strong>${escapeHtml(a.appointment_code)}</strong></td>
           <td>${escapeHtml(a.customer_name)}<br /><span class="muted">${escapeHtml(a.customer_phone)}</span></td>
-          <td>${toDateBR(a.appointment_date)}<br /><span class="muted">${escapeHtml(a.start_time)} → ${a.end_date && a.end_date !== a.appointment_date ? toDateBR(a.end_date) + ' ' : ''}${escapeHtml(a.end_time || '—')}</span></td>
+          <td>${toDateBR(a.appointment_date)}<br /><span class="muted">${escapeHtml(appointmentTimeLabel(a))}${isLongAppointment(a) ? '' : ' → ' + (a.end_date && a.end_date !== a.appointment_date ? toDateBR(a.end_date) + ' ' : '') + escapeHtml(a.end_time || '—')}</span></td>
           <td>${escapeHtml(a.service_name || '—')}<br /><span class="muted">${escapeHtml(a.modality_name || '')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</span></td>
           <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}<br />${a.payment_method ? `<span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
           <td>${badge(a.status)}</td>
@@ -1279,7 +1286,7 @@
       ['Cor', a.vehicle_color],
       ['Categoria', CATEGORY_LABELS[a.vehicle_category] || a.vehicle_category],
       ['Data', toDateBR(a.appointment_date) + (a.end_date && a.end_date !== a.appointment_date ? ' → ' + toDateBR(a.end_date) : '')],
-      ['Horário', `${a.start_time} às ${a.end_time}`],
+      ['Horário', isLongAppointment(a) ? 'Horário a confirmar' : `${a.start_time} às ${a.end_time}`],
       ['Duração', a.booked_duration_minutes ? fmtDur(a.booked_duration_minutes) : ''],
       ['Serviço', a.service_name],
       ['Modalidade', a.modality_name],

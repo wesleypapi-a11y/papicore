@@ -1,4 +1,5 @@
 const { getDb } = require('../database/tenantDatabase');
+const { LONG_SERVICE_THRESHOLD_MINUTES } = require('./durationService');
 const {
   PAYMENT_LABELS,
   VEHICLE_CATEGORY_LABELS,
@@ -32,6 +33,15 @@ function fmtDuration(minutes) {
   return `${m} min`;
 }
 
+function isLongAppointment(a) {
+  return Number(a && a.booked_duration_minutes || 0) > LONG_SERVICE_THRESHOLD_MINUTES;
+}
+
+/* Horário exibido nas mensagens: para longa duração o horário ainda será confirmado. */
+function timeLabel(a) {
+  return isLongAppointment(a) ? 'A confirmar' : `${a.start_time} às ${a.end_time}`;
+}
+
 function getCompanyName() {
   const db = getDb();
   const s = db.prepare('SELECT company_name FROM company_settings WHERE id = 1').get();
@@ -59,7 +69,7 @@ function buildConfirmationMessage(a) {
   lines.push('');
   lines.push(`Código: *${a.appointment_code}*`);
   lines.push(`Data: *${fmtDateBR(a.appointment_date)}*`);
-  lines.push(`Horário: *${a.start_time} às ${a.end_time}*`);
+  lines.push(`Horário: *${timeLabel(a)}*`);
   if (a.booked_duration_minutes) lines.push(`Duração: ${fmtDuration(a.booked_duration_minutes)}`);
   lines.push('');
   lines.push(`Serviço: ${a.service_name}`);
@@ -86,7 +96,7 @@ function buildStoreNotificationMessage(a) {
   if (a.unit_name) lines.push(`Unidade: ${a.unit_name}`);
   if (a.modality_name) lines.push(`Modalidade: ${a.modality_name}`);
   lines.push(`Data: ${fmtDateBR(a.appointment_date)}`);
-  lines.push(`Horário: ${a.start_time} às ${a.end_time}`);
+  lines.push(`Horário: ${timeLabel(a)}`);
   if (a.booked_duration_minutes) lines.push(`Duração: ${fmtDuration(a.booked_duration_minutes)}`);
   lines.push(`Valor: ${formatMoney(a.total_price)}`);
   lines.push(`Pagamento: ${getPaymentLabel(a)}`);

@@ -4,6 +4,14 @@ const { minutesOf, formatMinutes, toDateStr } = require('../utils/helpers');
    Horário padrão 08:00-17:00 com almoço 12:00-13:00 => 8h úteis/dia. */
 const LUNCH_DEFAULT = { start: '12:00', end: '13:00' };
 
+/* Serviço de longa duração: duração total acima de 2 dias de trabalho.
+   Acima desse limite o cliente não escolhe horário; o horário é confirmado depois. */
+const LONG_SERVICE_THRESHOLD_MINUTES = 2 * 24 * 60;
+
+function isLongService(durationMinutes) {
+  return Number(durationMinutes || 0) > LONG_SERVICE_THRESHOLD_MINUTES;
+}
+
 function lunchConfig(unit, settings) {
   const start = (unit && unit.lunch_start) || (settings && settings.lunch_start) || LUNCH_DEFAULT.start;
   const end = (unit && unit.lunch_end) || (settings && settings.lunch_end) || LUNCH_DEFAULT.end;
@@ -127,6 +135,8 @@ function datetimeOverlap(newStartDT, newEndDT, existingStartDT, existingEndDT) {
 
 module.exports = {
   LUNCH_DEFAULT,
+  LONG_SERVICE_THRESHOLD_MINUTES,
+  isLongService,
   lunchConfig,
   dailyProductiveMinutes,
   serviceDuration,

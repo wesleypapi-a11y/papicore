@@ -14,7 +14,8 @@ const {
   addDaysStr,
   computeEndDateTime,
   dateTimeStr,
-  datetimeOverlap
+  datetimeOverlap,
+  isLongService
 } = require('./durationService');
 
 function getUnit(id) {
@@ -91,6 +92,7 @@ function getAvailability({ date, service = null, services = null, category = 'ha
 
   const duration = svcList.length ? svcList.reduce((sum, s) => sum + serviceDuration(s, category), 0) : interval;
   const daily = dailyProductiveMinutes(opening, closing, lunch.start, lunch.end);
+  const longService = isLongService(duration);
 
   const working = isWorkingDay(workingDays, date);
   const blocked = getBlocked(date, unit ? unit.id : null);
@@ -152,6 +154,11 @@ function getAvailability({ date, service = null, services = null, category = 'ha
     }
   }
 
+  let estimatedEnd = null;
+  if (longService) {
+    estimatedEnd = computeEndDateTime(date, opening, duration, engineOpts);
+  }
+
   return {
     date,
     working,
@@ -164,6 +171,9 @@ function getAvailability({ date, service = null, services = null, category = 'ha
     service_names: svcList.map((s) => s.name),
     vehicle_category: category,
     duration_minutes: duration,
+    is_long_service: longService,
+    estimated_end_date: estimatedEnd ? estimatedEnd.date : null,
+    estimated_end_time: estimatedEnd ? estimatedEnd.time : null,
     unit_id: unit ? unit.id : null,
     unit_name: unit ? unit.name : null,
     capacity,
