@@ -330,6 +330,22 @@ function insertTenant(data) {
   return getTenantById(info.lastInsertRowid);
 }
 
+/*
+ * Cria tenant + usuário (owner) + domínio principal de forma atômica no
+ * banco central. Se qualquer insert falhar, nada fica gravado (rollback).
+ * O tenant é inserido primeiro; o usuário herda tenant_id do tenant criado.
+ */
+function createTenantBundle({ tenant, user, domain }) {
+  const tx = db.transaction(() => {
+    const t = insertTenant(tenant);
+    const u = insertUser({ ...user, tenant_id: t.id });
+    let d = null;
+    if (domain) d = insertDomain(t.id, domain, true);
+    return { tenant: t, user: u, domain: d };
+  });
+  return tx();
+}
+
 function updateTenant(id, fields) {
   const allowed = ['name', 'slug', 'document', 'email', 'phone', 'plan', 'status', 'expires_at'];
   const sets = [];
@@ -376,12 +392,14 @@ function nextTenantId() {
 /* ---------- Domínios ---------- */
 
 /*
- * Normaliza um host: remove protocolo, porta e o prefixo "www", e converte
- * para minúsculas. Ex.: "WWW.TorqueDetail.com.br:8080" -> "torquedetail.com.br"
+ * Normaliza um host: remove protocolo, porta, path e o prefixo "www", e
+ * converte para minúsculas.
+ * Ex.: "WWW.TorqueDetail.com.br:8080/admin" -> "torquedetail.com.br"
  */
 function normalizeDomain(host) {
   let h = String(host || '').trim();
   if (h.includes('://')) h = h.split('://')[1];
+  h = h.split('/')[0];
   if (h.includes(':')) h = h.split(':')[0];
   h = h.toLowerCase();
   if (h.startsWith('www.')) h = h.slice(4);
@@ -753,6 +771,7 @@ module.exports = {
   getTenantBySlug,
   getTenantByDatabaseName,
   insertTenant,
+  createTenantBundle,
   updateTenant,
   setTenantStatus,
   deleteTenant,

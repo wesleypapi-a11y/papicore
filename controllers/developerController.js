@@ -20,6 +20,7 @@ const {
   getTenantById,
   getTenantBySlug,
   insertTenant,
+  createTenantBundle,
   updateTenant,
   setTenantStatus,
   deleteTenant,
@@ -54,7 +55,8 @@ const {
   updateFinancialEntry,
   deleteFinancialEntry,
   listLogs,
-  logActivity
+  logActivity,
+  normalizeDomain
 } = require('../database/coreDatabase');
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
 const { createTenantDatabase } = require('../database/tenantDatabase');
@@ -83,6 +85,32 @@ function parseFeatures(value) {
 
 function pluckTenant(t, extra = {}) {
   return { ...t, ...extra };
+}
+
+/* Registra log sem nunca derrubar uma operação que já deu certo. */
+function safeLog(fn) {
+  try {
+    fn();
+  } catch (err) {
+    console.error('[papi-core] Falha ao registrar log de auditoria:', err.message);
+  }
+}
+
+/*
+ * Traduz falhas de integridade do banco central (ex.: UNIQUE) para mensagens
+ * claras, sem expor detalhes internos. Usado como rede de segurança após as
+ * pré-verificações do createTenant.
+ */
+function mapCreateTenantError(err) {
+  if (err && err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    const msg = String(err.message || '');
+    if (msg.includes('users.email')) return new AppError(409, 'Este e-mail já está cadastrado na plataforma.');
+    if (msg.includes('tenants.slug')) return new AppError(409, 'Este slug já está cadastrado.');
+    if (msg.includes('tenant_domains.domain')) return new AppError(409, 'Este domínio já está cadastrado.');
+    return new AppError(409, 'Conflito ao cadastrar a empresa. Verifique os dados.');
+  }
+  if (err instanceof AppError) return err;
+  return new AppError(500, 'Não foi possível criar a empresa.');
 }
 
 /* ---------- Autenticação ---------- */
@@ -217,6 +245,7 @@ function validateTenantInput(body, { existing } = {}) {
     adminName,
     adminEmail,
     adminPassword,
+    confirmPassword,
     domain
   } = body || {};
 
@@ -230,12 +259,12 @@ function validateTenantInput(body, { existing } = {}) {
     if (!finalSlug) throw new AppError(400, 'Informe o slug da empresa.');
     const dup = getTenantBySlug(finalSlug);
     if (dup && (!existing || dup.id !== existing.id)) {
-      throw new AppError(409, 'Já existe uma empresa com este slug.');
+      throw new AppError(409, 'Este slug já está cadastrado.');
     }
   }
 
   if (email !== undefined && email && !isValidEmail(email)) {
-    throw new AppError(400, 'E-mail inválido.');
+    throw new AppError(400, 'E-mail comercial inválido.');
   }
   if (phone !== undefined && phone && !isValidPhone(phone)) {
     throw new AppError(400, 'Telefone inválido.');
@@ -247,10 +276,21 @@ function validateTenantInput(body, { existing } = {}) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(expires_at)) throw new AppError(400, 'Data de vencimento inválida.');
   }
   if (adminEmail !== undefined && adminEmail && !isValidEmail(adminEmail)) {
-    throw new AppError(400, 'E-mail do administrador inválido.');
+    throw new AppError(400, 'E-mail de acesso ao painel inválido.');
   }
-  if (adminPassword !== undefined && adminPassword && String(adminPassword).length < 6) {
-    throw new AppError(400, 'A senha inicial deve ter pelo menos 6 caracteres.');
+  if (adminPassword !== undefined && adminPassword && String(adminPassword).length < 8) {
+    throw new AppError(400, 'A senha inicial deve ter pelo menos 8 caracteres.');
+  }
+  if (adminPassword !== undefined && confirmPassword !== undefined && String(confirmPassword) !== String(adminPassword)) {
+    throw new AppError(400, 'As senhas não coincidem.');
+  }
+
+  let finalDomain = '';
+  if (domain !== undefined) {
+    finalDomain = normalizeDomain(domain);
+    if (finalDomain && (!finalDomain.includes('.') || /\s/.test(finalDomain))) {
+      throw new AppError(400, 'Informe um domínio válido (ex: esteticaalpha.com.br).');
+    }
   }
 
   return {
@@ -265,27 +305,27 @@ function validateTenantInput(body, { existing } = {}) {
     adminName: adminName !== undefined ? String(adminName).trim() : undefined,
     adminEmail: adminEmail !== undefined ? String(adminEmail).trim().toLowerCase() : undefined,
     adminPassword,
-    domain: domain !== undefined ? String(domain || '').trim().toLowerCase() : undefined
+    domain: domain !== undefined ? finalDomain : undefined
   };
 }
 
 function createTenant(req, res) {
   const body = validateTenantInput(req.body);
-  const db = getCoreDb();
+  getCoreDb();
 
   if (!body.name) throw new AppError(400, 'Informe o nome da empresa.');
   if (!body.slug) throw new AppError(400, 'Informe o slug da empresa.');
   if (!body.adminName || !body.adminEmail || !body.adminPassword) {
-    throw new AppError(400, 'Informe nome, e-mail e senha inicial do administrador.');
+    throw new AppError(400, 'Informe nome, e-mail de acesso e senha inicial do administrador.');
   }
   if (getTenantBySlug(body.slug)) {
-    throw new AppError(409, 'Já existe uma empresa com este slug.');
+    throw new AppError(409, 'Este slug já está cadastrado.');
   }
   if (getUserByEmail(body.adminEmail)) {
-    throw new AppError(409, 'Já existe um usuário com este e-mail.');
+    throw new AppError(409, 'Este e-mail já está cadastrado na plataforma.');
   }
-  if (body.domain && (!body.domain.includes('.') || /\s/.test(body.domain))) {
-    throw new AppError(400, 'Informe um domínio válido (ex: esteticaalpha.com.br).');
+  if (body.domain && getDomainRow(body.domain)) {
+    throw new AppError(409, 'Este domínio já está cadastrado.');
   }
 
   const id = nextTenantId();
@@ -294,44 +334,56 @@ function createTenant(req, res) {
     throw new AppError(409, 'O banco desta empresa já existe. Verifique os dados.');
   }
 
-  /* 1-7: cria o banco com todas as tabelas e dados padrão */
-  const tenantDb = createTenantDatabase(databaseName, {
+  /* 1. Cria o banco SQLite exclusivo da empresa (arquivo + tabelas + dados padrão). */
+  createTenantDatabase(databaseName, {
     companyName: body.name,
     phone: body.phone || body.adminEmail,
     whatsapp: body.phone,
     fullCatalog: false
   });
 
-  /* registra a empresa no banco central */
-  const tenant = insertTenant({
-    name: body.name,
-    slug: body.slug,
-    database_name: databaseName,
-    document: body.document,
-    email: body.email,
-    phone: body.phone,
-    plan: body.plan,
-    status: 'ACTIVE',
-    expires_at: null
-  });
-
-  /* 8-9: cria o administrador e vincula à empresa */
-  insertUser({
-    tenant_id: tenant.id,
-    name: body.adminName,
-    email: body.adminEmail,
-    password_hash: bcrypt.hashSync(body.adminPassword, 10),
-    role: 'owner',
-    active: 1
-  });
-
-  if (body.domain) {
-    insertDomain(tenant.id, body.domain, true);
-    logActivity(req.user.id, tenant.id, 'DOMAIN_ADDED', `Domínio ${body.domain} adicionado`);
+  /* 2. Registra tenant + owner + domínio de forma atômica no banco central.
+        Se qualquer passo falhar, remove o banco recém-criado e não deixa
+        registros órfãos (rollback + limpeza do arquivo). */
+  let bundle;
+  try {
+    bundle = createTenantBundle({
+      tenant: {
+        name: body.name,
+        slug: body.slug,
+        database_name: databaseName,
+        document: body.document,
+        email: body.email,
+        phone: body.phone,
+        plan: body.plan,
+        status: body.status,
+        expires_at: body.expires_at
+      },
+      user: {
+        name: body.adminName,
+        email: body.adminEmail,
+        password_hash: bcrypt.hashSync(body.adminPassword, 10),
+        role: 'owner',
+        active: 1
+      },
+      domain: body.domain || null
+    });
+  } catch (err) {
+    try {
+      deleteTenantDatabase(databaseName);
+    } catch (cleanupErr) {
+      console.error('[papi-core] Erro ao remover banco órfão', databaseName, cleanupErr.message);
+    }
+    throw mapCreateTenantError(err);
   }
 
-  logActivity(req.user.id, tenant.id, 'TENANT_CREATED', `Empresa "${body.name}" criada (banco ${databaseName})`);
-  return res.status(201).json(tenantWithStats(getTenantById(tenant.id)));
+  safeLog(() => logActivity(req.user.id, bundle.tenant.id, 'TENANT_CREATED', `Empresa "${body.name}" criada (banco ${databaseName})`));
+  safeLog(() => logActivity(req.user.id, bundle.tenant.id, 'TENANT_OWNER_CREATED', `Administrador ${body.adminEmail} vinculado como proprietário`));
+  if (body.domain) {
+    safeLog(() => logActivity(req.user.id, bundle.tenant.id, 'TENANT_DOMAIN_CREATED', `Domínio principal ${body.domain} vinculado`));
+  }
+
+  return res.status(201).json(tenantWithStats(getTenantById(bundle.tenant.id)));
 }
 
 function updateTenantHandler(req, res) {
@@ -350,10 +402,19 @@ function updateTenantHandler(req, res) {
   if ((data.adminName !== undefined || data.adminEmail !== undefined) && !data.adminPassword) {
     const owner = getTenantOwner(existing.id);
     if (owner) {
-      updateUser(owner.id, {
-        name: data.adminName !== undefined ? data.adminName : undefined,
-        email: data.adminEmail !== undefined ? data.adminEmail : undefined
-      });
+      const ownerFields = {};
+      if (data.adminName !== undefined) ownerFields.name = data.adminName;
+      if (data.adminEmail !== undefined) {
+        if (String(data.adminEmail).toLowerCase() !== String(owner.email).toLowerCase()) {
+          const dup = getUserByEmail(data.adminEmail);
+          if (dup && dup.id !== owner.id) {
+            throw new AppError(409, 'Este e-mail já está cadastrado na plataforma.');
+          }
+        }
+        ownerFields.email = data.adminEmail;
+      }
+      updateUser(owner.id, ownerFields);
+      logActivity(req.user.id, tenant.id, 'TENANT_OWNER_UPDATED', 'Dados do administrador atualizados');
     }
   }
 
@@ -392,14 +453,60 @@ function resetTenantPassword(req, res) {
   if (!owner) throw new AppError(400, 'Esta empresa não possui administrador vinculado.');
 
   const newPassword = req.body && req.body.new_password;
+  const confirmPassword = req.body && req.body.confirm_password;
   if (!newPassword || String(newPassword).length < 8) throw new AppError(400, 'Informe uma nova senha com pelo menos 8 caracteres.');
+  if (confirmPassword !== undefined && String(confirmPassword) !== String(newPassword)) {
+    throw new AppError(400, 'As senhas não coincidem.');
+  }
   setUserPassword(owner.id, bcrypt.hashSync(newPassword, 10));
 
-  logActivity(req.user.id, tenant.id, 'PASSWORD_RESET', `Senha do administrador "${owner.email}" redefinida`);
+  logActivity(req.user.id, tenant.id, 'TENANT_OWNER_PASSWORD_RESET', `Senha do administrador "${owner.email}" redefinida`);
   return res.json({
     success: true,
     admin_email: owner.email
   });
+}
+
+/* ---------- Administrador principal da empresa ---------- */
+
+function updateTenantOwner(req, res) {
+  const tenant = getTenantById(req.params.id);
+  if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
+
+  const owner = getTenantOwner(tenant.id);
+  if (!owner) throw new AppError(400, 'Esta empresa não possui administrador vinculado.');
+
+  const { name, email, active } = req.body || {};
+  const fields = {};
+  if (name !== undefined) {
+    if (String(name).trim().length < 2) throw new AppError(400, 'Informe o nome do administrador.');
+    fields.name = String(name).trim();
+  }
+  if (email !== undefined) {
+    if (!isValidEmail(email)) throw new AppError(400, 'E-mail de acesso ao painel inválido.');
+    const norm = String(email).trim().toLowerCase();
+    if (norm !== String(owner.email).toLowerCase()) {
+      const dup = getUserByEmail(norm);
+      if (dup && dup.id !== owner.id) {
+        throw new AppError(409, 'Este e-mail já está cadastrado na plataforma.');
+      }
+    }
+    fields.email = norm;
+  }
+  if (active !== undefined) fields.active = active ? 1 : 0;
+
+  let updated = owner;
+  if (Object.keys(fields).length) updated = updateUser(owner.id, fields);
+
+  if (active !== undefined) {
+    logActivity(req.user.id, tenant.id, 'TENANT_OWNER_STATUS_CHANGED', `Administrador "${updated.email}" ${active ? 'ativado' : 'desativado'}`);
+  }
+  if (name !== undefined || email !== undefined) {
+    logActivity(req.user.id, tenant.id, 'TENANT_OWNER_UPDATED', 'Dados do administrador atualizados');
+  }
+
+  const { password_hash, ...safe } = updated;
+  return res.json(safe);
 }
 
 function impersonate(req, res) {
@@ -637,9 +744,20 @@ function updateUserHandler(req, res) {
   if (!user) throw new AppError(404, 'Usuário não encontrado.');
   if (user.role === 'developer') throw new AppError(400, 'Usuários desenvolvedor não podem ser alterados aqui.');
 
-  const { name, role, active, password } = req.body || {};
+  const { name, role, active, email, password } = req.body || {};
   const fields = {};
   if (name !== undefined) fields.name = String(name).trim();
+  if (email !== undefined) {
+    if (!isValidEmail(email)) throw new AppError(400, 'E-mail inválido.');
+    const norm = String(email).trim().toLowerCase();
+    if (norm !== String(user.email).toLowerCase()) {
+      const dup = getUserByEmail(norm);
+      if (dup && dup.id !== user.id) {
+        throw new AppError(409, 'Este e-mail já está cadastrado na plataforma.');
+      }
+    }
+    fields.email = norm;
+  }
   if (role !== undefined) {
     if (!['owner', 'admin', 'employee'].includes(role)) throw new AppError(400, 'Papel inválido.');
     fields.role = role;
@@ -862,6 +980,7 @@ module.exports = {
   suspendTenant,
   reactivateTenant,
   resetTenantPassword,
+  updateTenantOwner,
   impersonate,
   backupTenant,
   listBackupsHandler,

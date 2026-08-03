@@ -62,6 +62,7 @@ router.patch('/tenants/:id/status', developerController.setTenantStatusHandler);
 router.post('/tenants/:id/suspend', developerController.suspendTenant);
 router.post('/tenants/:id/reactivate', developerController.reactivateTenant);
 router.post('/tenants/:id/reset-password', developerController.resetTenantPassword);
+router.patch('/tenants/:id/owner', developerController.updateTenantOwner);
 router.post('/tenants/:id/impersonate', developerController.impersonate);
 router.post('/tenants/:id/backup', developerController.backupTenant);
 router.get('/tenants/:id/backup', developerController.backupTenant);
