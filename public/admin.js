@@ -38,6 +38,44 @@
     return isLongAppointment(a) ? 'Horário a confirmar' : (a.start_time || '—');
   }
 
+  /* Botões de ação compactos (somente ícones), padrão reaproveitado em todas
+     as tabelas do admin (agendamentos, serviços, unidades, formas de atendimento).
+     Ícones SVG inline (padrão do projeto — sem biblioteca externa). */
+  const ACTION_ICONS = {
+    accept: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>',
+    complete: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg>',
+    reject: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>',
+    cancel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>',
+    edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+    detail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+    delete: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+  };
+  const ACTION_LABELS = {
+    accept: 'Aceitar agendamento',
+    complete: 'Concluir agendamento',
+    reject: 'Recusar agendamento',
+    cancel: 'Cancelar agendamento',
+    edit: 'Editar agendamento',
+    detail: 'Ver detalhes',
+    delete: 'Excluir agendamento'
+  };
+  const ACTION_CLASSES = {
+    accept: 'action-btn-success',
+    complete: 'action-btn-success',
+    reject: 'action-btn-warn',
+    cancel: 'action-btn-warn',
+    edit: 'action-btn-edit',
+    detail: 'action-btn-neutral',
+    delete: 'action-btn-danger'
+  };
+  function actionButton(action, id, opts) {
+    opts = opts || {};
+    const icon = opts.icon || action;
+    const cls = opts.cls || ACTION_CLASSES[icon];
+    const label = opts.label || ACTION_LABELS[action] || ACTION_LABELS[icon];
+    return `<button type="button" class="action-btn ${cls}" data-action="${action}" data-id="${id}" title="${label}" aria-label="${label}">${ACTION_ICONS[icon]}</button>`;
+  }
+
   let state = {
     token: localStorage.getItem(TOKEN_KEY) || '',
     user: null,
@@ -810,18 +848,18 @@
     const rows = data.map((a) => {
       const actions = [];
       if (a.status === 'pending') {
-        actions.push(`<button class="btn btn-sm btn-success" data-action="accept" data-id="${a.id}">Aceitar</button>`);
-        actions.push(`<button class="btn btn-sm btn-danger" data-action="reject" data-id="${a.id}">Recusar</button>`);
+        actions.push(actionButton('accept', a.id));
+        actions.push(actionButton('reject', a.id));
       }
       if (a.status === 'confirmed') {
-        actions.push(`<button class="btn btn-sm btn-success" data-action="complete" data-id="${a.id}">Concluir</button>`);
-        actions.push(`<button class="btn btn-sm btn-outline" data-action="cancel" data-id="${a.id}">Cancelar</button>`);
+        actions.push(actionButton('complete', a.id));
+        actions.push(actionButton('cancel', a.id));
       }
       if (a.status === 'pending' || a.status === 'confirmed') {
-        actions.push(`<button class="btn btn-sm btn-outline" data-action="edit" data-id="${a.id}">Editar</button>`);
+        actions.push(actionButton('edit', a.id));
       }
-      actions.push(`<button class="btn btn-sm btn-outline" data-action="detail" data-id="${a.id}">Detalhes</button>`);
-      actions.push(`<button class="btn btn-sm btn-danger" data-action="delete" data-id="${a.id}">Excluir</button>`);
+      actions.push(actionButton('detail', a.id));
+      actions.push(actionButton('delete', a.id));
       return `
         <tr>
           <td><strong>${escapeHtml(a.appointment_code)}</strong></td>
@@ -830,7 +868,7 @@
           <td>${escapeHtml(a.service_name || '—')}<br /><span class="muted">${escapeHtml(a.modality_name || '')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</span></td>
           <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}<br />${a.payment_method ? `<span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
           <td>${badge(a.status)}</td>
-          <td><div class="row-actions">${actions.join('')}</div></td>
+          <td><div class="appointment-actions">${actions.join('')}</div></td>
         </tr>`;
     }).join('');
 
@@ -842,7 +880,7 @@
       <div class="tabs">${tabs}</div>
       <div class="panel">
         ${data.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Código</th><th>Cliente</th><th>Data</th><th>Serviço</th><th>Total</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Código</th><th>Cliente</th><th>Data</th><th>Serviço</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>` : '<div class="empty-state">Nenhum agendamento neste filtro.</div>'}
       </div>
@@ -1365,7 +1403,7 @@
         <td>${n} serviço(s)</td>
         <td>${c.display_order}</td>
         <td>${c.active ? badge('confirmed') : badge('cancelled')}</td>
-        <td><button class="btn btn-sm btn-outline" data-action="editCategory" data-id="${c.id}">Editar</button></td>
+        <td><div class="appointment-actions">${actionButton('editCategory', c.id, { icon: 'edit', label: 'Editar categoria' })}</div></td>
       </tr>`;
     }).join('');
 
@@ -1386,10 +1424,10 @@
         <td>${fmtDur(s.duration_minutes)}${s.pickup_extra_minutes ? `<br/><span class="muted">picape +${fmtDur(s.pickup_extra_minutes)}</span>` : ''}</td>
         <td><span class="muted">${flags.join(' · ') || '—'}</span></td>
         <td>${s.active ? badge('confirmed') : badge('cancelled')}</td>
-        <td><div class="row-actions">
-          <button class="btn btn-sm btn-outline" data-action="editService" data-id="${s.id}">Editar</button>
-          <button class="btn btn-sm ${s.active ? 'btn-outline' : 'btn-success'}" data-action="toggleService" data-id="${s.id}">${s.active ? 'Desativar' : 'Ativar'}</button>
-          <button class="btn btn-sm btn-danger" data-action="deleteService" data-id="${s.id}">Excluir</button>
+        <td><div class="appointment-actions">
+          ${actionButton('editService', s.id, { icon: 'edit', label: 'Editar serviço' })}
+          ${actionButton('toggleService', s.id, { icon: s.active ? 'cancel' : 'accept', label: s.active ? 'Desativar serviço' : 'Ativar serviço' })}
+          ${actionButton('deleteService', s.id, { icon: 'delete', label: 'Excluir serviço' })}
         </div></td>
       </tr>`;
     }).join('');
@@ -1405,14 +1443,14 @@
       <div class="panel">
         <h3 class="review-section-title">Categorias</h3>
         ${state.categories.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Categoria</th><th>Serviços</th><th>Ordem</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Categoria</th><th>Serviços</th><th>Ordem</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>${catRows}</tbody>
         </table></div>` : '<div class="empty-state">Nenhuma categoria.</div>'}
       </div>
       <div class="panel">
         <h3 class="review-section-title">Serviços</h3>
         ${state.services.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Serviço</th><th>Preço</th><th>Duração</th><th>Disponibilidade</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Serviço</th><th>Preço</th><th>Duração</th><th>Disponibilidade</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>${serviceRows}</tbody>
         </table></div>` : '<div class="empty-state">Nenhum serviço cadastrado.</div>'}
       </div>
@@ -1641,10 +1679,10 @@
         <td>${escapeHtml(u.opening_time)} às ${escapeHtml(u.closing_time)}</td>
         <td>${u.capacity || 1}</td>
         <td>${u.active ? badge('confirmed') : badge('cancelled')}</td>
-        <td><div class="row-actions">
-          <button class="btn btn-sm btn-outline" data-action="editUnit" data-id="${u.id}">Editar</button>
-          ${u.active ? `<button class="btn btn-sm btn-outline" data-action="toggleUnit" data-id="${u.id}">Desativar</button>` : `<button class="btn btn-sm btn-success" data-action="toggleUnit" data-id="${u.id}">Ativar</button>`}
-          <button class="btn btn-sm btn-danger" data-action="deleteUnit" data-id="${u.id}">Excluir</button>
+        <td><div class="appointment-actions">
+          ${actionButton('editUnit', u.id, { icon: 'edit', label: 'Editar unidade' })}
+          ${actionButton('toggleUnit', u.id, { icon: u.active ? 'cancel' : 'accept', label: u.active ? 'Desativar unidade' : 'Ativar unidade' })}
+          ${actionButton('deleteUnit', u.id, { icon: 'delete', label: 'Excluir unidade' })}
         </div></td>
       </tr>`).join('');
 
@@ -1655,7 +1693,7 @@
       </div>
       <div class="panel">
         ${state.units.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Unidade</th><th>Telefone</th><th>Horário</th><th>Capacidade</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Unidade</th><th>Telefone</th><th>Horário</th><th>Capacidade</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>` : '<div class="empty-state">Nenhuma unidade cadastrada.</div>'}
       </div>
@@ -1883,7 +1921,7 @@
         <td><strong>${escapeHtml(m.name)}</strong><br /><span class="muted">${escapeHtml(m.description || '')}</span></td>
         <td>${m.fee > 0 ? money(m.fee) : 'Sem taxa'}</td>
         <td>${m.active ? badge('confirmed') : badge('cancelled')}</td>
-        <td><button class="btn btn-sm btn-outline" data-action="editModality" data-id="${m.id}">Editar</button></td>
+        <td><div class="appointment-actions">${actionButton('editModality', m.id, { icon: 'edit', label: 'Editar modalidade' })}</div></td>
       </tr>`).join('');
 
     el.innerHTML = `
@@ -1892,7 +1930,7 @@
       </div>
       <div class="panel">
         <div class="table-wrap"><table>
-          <thead><tr><th>Modalidade</th><th>Taxa</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Modalidade</th><th>Taxa</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
       </div>
@@ -1977,7 +2015,6 @@
           <div class="field">${fieldHtml('setName', 'Nome da empresa', s.company_name, 'text')}</div>
           <div class="field">${fieldHtml('setPhone', 'Telefone', s.phone, 'text', '(00) 00000-0000')}</div>
           <div class="field">${fieldHtml('setWhatsapp', 'WhatsApp', s.whatsapp, 'text', '(00) 00000-0000')}</div>
-          <div class="field">${fieldHtml('setLogoUrl', 'URL da logo', s.logo_url, 'url', 'https://dominio-do-cliente.com.br/logo.png')}</div>
           <div class="field">${fieldHtml('setCapacity', 'Capacidade simultânea (padrão)', s.capacity || 1, 'number')}</div>
         </div>
         <h3 class="review-section-title">Horário de funcionamento</h3>
@@ -2004,7 +2041,6 @@
         company_name: $('setName').value,
         phone: $('setPhone').value || null,
         whatsapp: $('setWhatsapp').value || null,
-        logo_url: $('setLogoUrl').value || null,
         default_opening_time: $('setOpen').value,
         default_closing_time: $('setClose').value,
         lunch_start: $('setLunchStart').value,
@@ -2027,8 +2063,13 @@
 
   /* ---------- Configurações > Aparência ---------- */
 
+  /* Usa a rota pública (sem auth) para a prévia: <img src> não consegue
+     enviar o header Authorization exigido por /api/admin/branding/*, e como
+     o admin roda no próprio domínio do tenant, a rota pública já resolve
+     para a mesma empresa do usuário logado — mesmo arquivo, sem precisar de
+     fetch + blob URL. */
   function brandingAssetUrl(kind, ts) {
-    return `/api/admin/branding/${kind}?v=${encodeURIComponent(ts || '')}`;
+    return `/api/branding/${kind}?v=${encodeURIComponent(ts || '')}`;
   }
 
   function themeCardHtml(theme, isSelected, isSaved) {
