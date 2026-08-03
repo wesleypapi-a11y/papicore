@@ -17,11 +17,16 @@
  *   GET /api/branding/logo     -> arquivo
  *   GET /api/branding/favicon  -> arquivo
  *
- * Logo da tela de login do painel do desenvolvedor (não é de nenhum tenant):
- *   GET    /api/developer/login-logo               -> arquivo (público, sem auth)
- *   GET    /api/developer/settings/login-logo       -> metadados (developer)
- *   POST   /api/developer/settings/login-logo       -> upload (developer)
- *   DELETE /api/developer/settings/login-logo       -> remover (developer)
+ * Logo e favicon da tela de login do painel do desenvolvedor (não são de
+ * nenhum tenant):
+ *   GET    /api/developer/login-logo                -> arquivo (público, sem auth)
+ *   GET    /api/developer/login-favicon             -> arquivo (público, sem auth)
+ *   GET    /api/developer/settings/login-logo        -> metadados (developer)
+ *   POST   /api/developer/settings/login-logo        -> upload (developer)
+ *   DELETE /api/developer/settings/login-logo        -> remover (developer)
+ *   GET    /api/developer/settings/login-favicon     -> metadados (developer)
+ *   POST   /api/developer/settings/login-favicon     -> upload (developer)
+ *   DELETE /api/developer/settings/login-favicon     -> remover (developer)
  */
 
 const path = require('path');
@@ -58,9 +63,14 @@ const DEFAULT_ASSET = {
   favicon: path.join(__dirname, '..', 'public', 'assets', 'favicon.png')
 };
 
-/* Chave interna do único asset de plataforma suportado hoje: a logo da tela
-   de login do painel do desenvolvedor (papicore.com.br/desenvolvedor). */
+/* Chaves internas dos assets de plataforma (tela de login do painel do
+   desenvolvedor em papicore.com.br/desenvolvedor). */
 const LOGIN_LOGO_KIND = 'login_logo';
+const LOGIN_FAVICON_KIND = 'login_favicon';
+const LOGIN_ASSET_KINDS = {
+  logo: LOGIN_LOGO_KIND,
+  favicon: LOGIN_FAVICON_KIND
+};
 
 function brandingPayload(tenantId) {
   const row = getTenantBranding(tenantId);
@@ -249,75 +259,107 @@ function publicAsset(kind) {
   };
 }
 
-/* --- Logo da tela de login do desenvolvedor (asset único da plataforma) --- */
+/* --- Logo/favicon da tela de login do desenvolvedor (assets da plataforma) --- */
 
-function loginLogoPayload() {
-  const hasLogo = Boolean(storedPlatformFilePath(LOGIN_LOGO_KIND));
-  return {
-    has_logo: hasLogo,
-    logo_url: hasLogo ? `/api/developer/login-logo?v=${Date.now()}` : null
+function loginAssetKind(kind) {
+  const internal = LOGIN_ASSET_KINDS[kind];
+  if (!internal) throw new Error('Tipo de asset da plataforma inválido.');
+  return internal;
+}
+
+function loginAssetPayload(kind) {
+  const has = Boolean(storedPlatformFilePath(loginAssetKind(kind)));
+  return kind === 'favicon'
+    ? { has_favicon: has, favicon_url: has ? `/api/developer/login-favicon?v=${Date.now()}` : null }
+    : { has_logo: has, logo_url: has ? `/api/developer/login-logo?v=${Date.now()}` : null };
+}
+
+function getLoginAssetHandler(kind) {
+  return (req, res) => res.json(loginAssetPayload(kind));
+}
+
+function uploadLoginAsset(kind) {
+  const limit = kind === 'logo' ? LOGO_LIMIT : FAVICON_LIMIT;
+  const internal = loginAssetKind(kind);
+  return (req, res, next) => {
+    const upload = multer({
+      storage: multer.diskStorage({
+        destination(req, file, cb) {
+          try {
+            cb(null, platformAssetsDir());
+          } catch (err) {
+            cb(err);
+          }
+        },
+        filename(req, file, cb) {
+          const ext = extensionFor(kind, file.mimetype);
+          cb(null, internal + ext);
+        }
+      }),
+      limits: { fileSize: limit },
+      fileFilter(req, file, cb) {
+        if (!isAllowedMime(kind, file.mimetype)) {
+          return cb(new AppError(400, kind === 'logo'
+            ? 'Formato inválido. Use PNG, JPG ou WEBP.'
+            : 'Formato inválido. Use PNG ou ICO.'));
+        }
+        cb(null, true);
+      }
+    }).single('file');
+
+    upload(req, res, (err) => {
+      if (err) return next(err);
+      if (!req.file) return next(new AppError(400, 'Envie um arquivo.'));
+
+      const savedPath = req.file.path;
+      const sniffed = sniffMime(savedPath);
+      if (!sniffed || !extensionFor(kind, sniffed)) {
+        unlinkIfExists(savedPath);
+        return next(new AppError(400, kind === 'logo'
+          ? 'O arquivo enviado não é uma imagem válida (PNG, JPG ou WEBP).'
+          : 'O arquivo enviado não é um favicon válido (PNG ou ICO).'));
+      }
+
+      /* Remove uma versão anterior com extensão diferente (o multer já
+         sobrescreveu quando a extensão é igual). */
+      const old = storedPlatformFilePath(internal);
+      if (old && path.resolve(old) !== path.resolve(savedPath)) unlinkIfExists(old);
+
+      logActivity(
+        req.user.id,
+        null,
+        kind === 'logo' ? 'PLATFORM_LOGIN_LOGO_UPDATED' : 'PLATFORM_LOGIN_FAVICON_UPDATED',
+        kind === 'logo'
+          ? 'Logo da tela de login do desenvolvedor atualizada'
+          : 'Favicon da tela de login do desenvolvedor atualizado'
+      );
+      return res.status(201).json({ success: true, ...loginAssetPayload(kind) });
+    });
   };
 }
 
-function getLoginLogoHandler(req, res) {
-  return res.json(loginLogoPayload());
+function removeLoginAsset(kind) {
+  return (req, res) => {
+    removePlatformAssetFile(loginAssetKind(kind));
+    logActivity(
+      req.user.id,
+      null,
+      kind === 'logo' ? 'PLATFORM_LOGIN_LOGO_REMOVED' : 'PLATFORM_LOGIN_FAVICON_REMOVED',
+      kind === 'logo'
+        ? 'Logo da tela de login do desenvolvedor removida'
+        : 'Favicon da tela de login do desenvolvedor removido'
+    );
+    return res.json({ success: true, ...loginAssetPayload(kind) });
+  };
 }
 
-function uploadLoginLogo(req, res, next) {
-  const upload = multer({
-    storage: multer.diskStorage({
-      destination(req, file, cb) {
-        try {
-          cb(null, platformAssetsDir());
-        } catch (err) {
-          cb(err);
-        }
-      },
-      filename(req, file, cb) {
-        const ext = extensionFor('logo', file.mimetype);
-        cb(null, LOGIN_LOGO_KIND + ext);
-      }
-    }),
-    limits: { fileSize: LOGO_LIMIT },
-    fileFilter(req, file, cb) {
-      if (!isAllowedMime('logo', file.mimetype)) {
-        return cb(new AppError(400, 'Formato inválido. Use PNG, JPG ou WEBP.'));
-      }
-      cb(null, true);
-    }
-  }).single('file');
-
-  upload(req, res, (err) => {
-    if (err) return next(err);
-    if (!req.file) return next(new AppError(400, 'Envie um arquivo.'));
-
-    const savedPath = req.file.path;
-    const sniffed = sniffMime(savedPath);
-    if (!sniffed || !extensionFor('logo', sniffed)) {
-      unlinkIfExists(savedPath);
-      return next(new AppError(400, 'O arquivo enviado não é uma imagem válida (PNG, JPG ou WEBP).'));
-    }
-
-    /* Remove uma versão anterior com extensão diferente (o multer já
-       sobrescreveu quando a extensão é igual). */
-    const old = storedPlatformFilePath(LOGIN_LOGO_KIND);
-    if (old && path.resolve(old) !== path.resolve(savedPath)) unlinkIfExists(old);
-
-    logActivity(req.user.id, null, 'PLATFORM_LOGIN_LOGO_UPDATED', 'Logo da tela de login do desenvolvedor atualizada');
-    return res.status(201).json({ success: true, ...loginLogoPayload() });
-  });
-}
-
-function removeLoginLogo(req, res) {
-  removePlatformAssetFile(LOGIN_LOGO_KIND);
-  logActivity(req.user.id, null, 'PLATFORM_LOGIN_LOGO_REMOVED', 'Logo da tela de login do desenvolvedor removida');
-  return res.json({ success: true, ...loginLogoPayload() });
-}
-
-function serveLoginLogo(req, res) {
-  const file = storedPlatformFilePath(LOGIN_LOGO_KIND);
-  res.set('Cache-Control', 'no-cache');
-  return res.sendFile(file || DEFAULT_ASSET.logo);
+function serveLoginAsset(kind) {
+  return (req, res) => {
+    const file = storedPlatformFilePath(loginAssetKind(kind));
+    res.set('Cache-Control', 'no-cache');
+    const fallback = kind === 'favicon' ? DEFAULT_ASSET.favicon : DEFAULT_ASSET.logo;
+    return res.sendFile(file || fallback);
+  };
 }
 
 module.exports = {
@@ -331,8 +373,12 @@ module.exports = {
   publicBranding,
   publicLogo: publicAsset('logo'),
   publicFavicon: publicAsset('favicon'),
-  getLoginLogoHandler,
-  uploadLoginLogo,
-  removeLoginLogo,
-  serveLoginLogo
+  getLoginLogoHandler: getLoginAssetHandler('logo'),
+  uploadLoginLogo: uploadLoginAsset('logo'),
+  removeLoginLogo: removeLoginAsset('logo'),
+  serveLoginLogo: serveLoginAsset('logo'),
+  getLoginFaviconHandler: getLoginAssetHandler('favicon'),
+  uploadLoginFavicon: uploadLoginAsset('favicon'),
+  removeLoginFavicon: removeLoginAsset('favicon'),
+  serveLoginFavicon: serveLoginAsset('favicon')
 };
