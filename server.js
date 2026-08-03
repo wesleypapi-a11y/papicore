@@ -23,7 +23,7 @@ const cors = require('cors');
 const { initCore } = require('./database/coreDatabase');
 const { requireAuth } = require('./middlewares/auth');
 const tenantMiddleware = require('./middlewares/tenantMiddleware');
-const { resolveTenantByHost } = require('./middlewares/domainTenantMiddleware');
+const { resolveTenantByHost, normalizeDomain } = require('./middlewares/domainTenantMiddleware');
 const errorHandler = require('./middlewares/errorHandler');
 
 /*
@@ -62,6 +62,11 @@ const developerRoutes = require('./routes/developerRoutes');
 
 const app = express();
 
+/* O Render termina o TLS no proxy e repassa X-Forwarded-For/Proto/Host.
+   Com trust proxy, req.protocol, req.hostname e req.ip refletem o cliente
+   original (o login do desenvolvedor usa req.ip no rate limit). */
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
 app.disable('x-powered-by');
@@ -71,6 +76,22 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
+});
+
+/* Domínio institucional da plataforma (process.env.PLATFORM_DOMAIN): a raiz
+   deste domínio redireciona para /desenvolvedor em vez de abrir a página
+   pública de agendamento (que pertence aos tenants). O host é normalizado
+   (remove porta, minúsculas, remove www). Registrada ANTES do express.static —
+   que entrega o index.html genérico na raiz — e antes de qualquer middleware
+   que resolva tenant para a página inicial. */
+const platformDomain = normalizeDomain(process.env.PLATFORM_DOMAIN || '');
+
+app.get('/', (req, res, next) => {
+  const currentHost = normalizeDomain(req.hostname || req.headers.host);
+  if (platformDomain && currentHost === platformDomain) {
+    return res.redirect('/desenvolvedor');
+  }
+  return next();
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
