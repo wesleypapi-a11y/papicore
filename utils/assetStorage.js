@@ -91,6 +91,33 @@ function removeTenantAssets(tenantId) {
   return false;
 }
 
+/*
+ * Assets da própria plataforma (não pertencem a nenhum tenant) — ex.: a logo
+ * exibida na tela de login do painel do desenvolvedor. Ficam em
+ * ASSETS_DIR/platform/, separados dos diretórios tenant_XXXX.
+ */
+function platformAssetsDir() {
+  const dir = path.join(ASSETS_DIR, 'platform');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function storedPlatformFilePath(kind) {
+  const dir = path.join(ASSETS_DIR, 'platform');
+  if (!fs.existsSync(dir)) return null;
+  const match = fs.readdirSync(dir).find((file) => file.startsWith(kind + '.'));
+  return match ? path.join(dir, match) : null;
+}
+
+function removePlatformAssetFile(kind) {
+  const file = storedPlatformFilePath(kind);
+  if (file) {
+    fs.unlinkSync(file);
+    return true;
+  }
+  return false;
+}
+
 /* Remove um arquivo se existir, sem lançar erro (limpeza de órfãos). */
 function unlinkIfExists(filePath) {
   try {
@@ -139,5 +166,8 @@ module.exports = {
   removeAssetFile,
   removeTenantAssets,
   unlinkIfExists,
-  sniffMime
+  sniffMime,
+  platformAssetsDir,
+  storedPlatformFilePath,
+  removePlatformAssetFile
 };

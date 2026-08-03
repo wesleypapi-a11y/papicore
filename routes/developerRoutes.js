@@ -33,6 +33,10 @@ router.post('/login', developerLoginRateLimit, developerController.login);
 router.get('/me', requireDeveloper, developerController.me);
 router.post('/change-password', requireDeveloper, developerController.changePassword);
 
+/* Logo da tela de login do desenvolvedor: pública, pois é exibida antes de
+   qualquer autenticação (fallback automático para a logo padrão). */
+router.get('/login-logo', brandingController.serveLoginLogo);
+
 router.use(requireDeveloper);
 
 router.get('/dashboard', developerController.dashboard);
@@ -40,6 +44,9 @@ router.get('/backups', developerController.listBackupsHandler);
 
 /* Configurações da plataforma */
 router.get('/settings', developerController.platformSettings);
+router.get('/settings/login-logo', brandingController.getLoginLogoHandler);
+router.post('/settings/login-logo', brandingController.uploadLoginLogo);
+router.delete('/settings/login-logo', brandingController.removeLoginLogo);
 
 /* Empresas */
 router.get('/tenants', developerController.listTenantsHandler);

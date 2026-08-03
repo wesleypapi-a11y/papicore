@@ -16,6 +16,12 @@
  *   GET /api/branding          -> JSON com URLs e fallbacks
  *   GET /api/branding/logo     -> arquivo
  *   GET /api/branding/favicon  -> arquivo
+ *
+ * Logo da tela de login do painel do desenvolvedor (não é de nenhum tenant):
+ *   GET    /api/developer/login-logo               -> arquivo (público, sem auth)
+ *   GET    /api/developer/settings/login-logo       -> metadados (developer)
+ *   POST   /api/developer/settings/login-logo       -> upload (developer)
+ *   DELETE /api/developer/settings/login-logo       -> remover (developer)
  */
 
 const path = require('path');
@@ -37,7 +43,10 @@ const {
   storedFilePath,
   removeAssetFile,
   unlinkIfExists,
-  sniffMime
+  sniffMime,
+  platformAssetsDir,
+  storedPlatformFilePath,
+  removePlatformAssetFile
 } = require('../utils/assetStorage');
 
 const LOGO_LIMIT = 3 * 1024 * 1024;  /* 3 MB */
@@ -48,6 +57,10 @@ const DEFAULT_ASSET = {
   logo: path.join(__dirname, '..', 'public', 'assets', 'logo.png'),
   favicon: path.join(__dirname, '..', 'public', 'assets', 'favicon.png')
 };
+
+/* Chave interna do único asset de plataforma suportado hoje: a logo da tela
+   de login do painel do desenvolvedor (papicore.com.br/desenvolvedor). */
+const LOGIN_LOGO_KIND = 'login_logo';
 
 function brandingPayload(tenantId) {
   const row = getTenantBranding(tenantId);
@@ -236,6 +249,77 @@ function publicAsset(kind) {
   };
 }
 
+/* --- Logo da tela de login do desenvolvedor (asset único da plataforma) --- */
+
+function loginLogoPayload() {
+  const hasLogo = Boolean(storedPlatformFilePath(LOGIN_LOGO_KIND));
+  return {
+    has_logo: hasLogo,
+    logo_url: hasLogo ? `/api/developer/login-logo?v=${Date.now()}` : null
+  };
+}
+
+function getLoginLogoHandler(req, res) {
+  return res.json(loginLogoPayload());
+}
+
+function uploadLoginLogo(req, res, next) {
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination(req, file, cb) {
+        try {
+          cb(null, platformAssetsDir());
+        } catch (err) {
+          cb(err);
+        }
+      },
+      filename(req, file, cb) {
+        const ext = extensionFor('logo', file.mimetype);
+        cb(null, LOGIN_LOGO_KIND + ext);
+      }
+    }),
+    limits: { fileSize: LOGO_LIMIT },
+    fileFilter(req, file, cb) {
+      if (!isAllowedMime('logo', file.mimetype)) {
+        return cb(new AppError(400, 'Formato inválido. Use PNG, JPG ou WEBP.'));
+      }
+      cb(null, true);
+    }
+  }).single('file');
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    if (!req.file) return next(new AppError(400, 'Envie um arquivo.'));
+
+    const savedPath = req.file.path;
+    const sniffed = sniffMime(savedPath);
+    if (!sniffed || !extensionFor('logo', sniffed)) {
+      unlinkIfExists(savedPath);
+      return next(new AppError(400, 'O arquivo enviado não é uma imagem válida (PNG, JPG ou WEBP).'));
+    }
+
+    /* Remove uma versão anterior com extensão diferente (o multer já
+       sobrescreveu quando a extensão é igual). */
+    const old = storedPlatformFilePath(LOGIN_LOGO_KIND);
+    if (old && path.resolve(old) !== path.resolve(savedPath)) unlinkIfExists(old);
+
+    logActivity(req.user.id, null, 'PLATFORM_LOGIN_LOGO_UPDATED', 'Logo da tela de login do desenvolvedor atualizada');
+    return res.status(201).json({ success: true, ...loginLogoPayload() });
+  });
+}
+
+function removeLoginLogo(req, res) {
+  removePlatformAssetFile(LOGIN_LOGO_KIND);
+  logActivity(req.user.id, null, 'PLATFORM_LOGIN_LOGO_REMOVED', 'Logo da tela de login do desenvolvedor removida');
+  return res.json({ success: true, ...loginLogoPayload() });
+}
+
+function serveLoginLogo(req, res) {
+  const file = storedPlatformFilePath(LOGIN_LOGO_KIND);
+  res.set('Cache-Control', 'no-cache');
+  return res.sendFile(file || DEFAULT_ASSET.logo);
+}
+
 module.exports = {
   getBrandingHandler,
   uploadLogo: uploadAsset('logo'),
@@ -246,5 +330,9 @@ module.exports = {
   serveFavicon: serveAsset('favicon'),
   publicBranding,
   publicLogo: publicAsset('logo'),
-  publicFavicon: publicAsset('favicon')
+  publicFavicon: publicAsset('favicon'),
+  getLoginLogoHandler,
+  uploadLoginLogo,
+  removeLoginLogo,
+  serveLoginLogo
 };
