@@ -69,7 +69,7 @@ router.get('/tenants/:id/backup', developerController.backupTenant);
 router.delete('/tenants/:id', developerController.deleteTenantHandler);
 
 /* Identidade visual por empresa */
-router.get('/tenants/:id/branding', brandingController.getBrandingHandler);
+router.get('/tenants/:id/branding', brandingController.getDeveloperBranding);
 router.get('/tenants/:id/branding/logo', brandingController.serveLogo);
 router.get('/tenants/:id/branding/favicon', brandingController.serveFavicon);
 router.post('/tenants/:id/branding/logo', brandingController.uploadLogo);

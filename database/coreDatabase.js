@@ -141,12 +141,31 @@ function getCoreDb() {
   return db;
 }
 
+/* Migração idempotente: adiciona colunas novas em bancos já existentes sem
+   recriar a tabela nem afetar dados de nenhum tenant. */
+function ensureColumn(table, column, ddl) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+
+function migrateBrandingThemeColumns() {
+  ensureColumn('tenant_branding', 'theme_key', 'TEXT');
+  ensureColumn('tenant_branding', 'background_color', 'TEXT');
+  ensureColumn('tenant_branding', 'surface_color', 'TEXT');
+  ensureColumn('tenant_branding', 'text_color', 'TEXT');
+  ensureColumn('tenant_branding', 'muted_color', 'TEXT');
+  ensureColumn('tenant_branding', 'border_color', 'TEXT');
+  ensureColumn('tenant_branding', 'success_color', 'TEXT');
+  ensureColumn('tenant_branding', 'danger_color', 'TEXT');
+}
+
 function openCore() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   db = new Database(CORE_FILE);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(CORE_DDL);
+  migrateBrandingThemeColumns();
 }
 
 function seedCore() {
@@ -696,13 +715,19 @@ function getTenantBranding(tenantId) {
  * Cria ou atualiza a linha de branding da empresa. Os caminhos de logo e
  * favicon são sempre relativos a DATA_DIR (ex: assets/tenant_0001/logo.png).
  */
+const BRANDING_FIELDS = [
+  'logo_path', 'favicon_path', 'browser_title', 'theme_key',
+  'primary_color', 'secondary_color', 'accent_color',
+  'background_color', 'surface_color', 'text_color', 'muted_color',
+  'border_color', 'success_color', 'danger_color'
+];
+
 function upsertTenantBranding(tenantId, fields = {}) {
-  const allowed = ['logo_path', 'favicon_path', 'primary_color', 'secondary_color', 'accent_color', 'browser_title'];
   const existing = getTenantBranding(tenantId);
   if (existing) {
     const sets = [];
     const params = [];
-    for (const key of allowed) {
+    for (const key of BRANDING_FIELDS) {
       if (fields[key] !== undefined) {
         sets.push(`${key} = ?`);
         params.push(fields[key] === null ? null : fields[key]);
@@ -714,17 +739,11 @@ function upsertTenantBranding(tenantId, fields = {}) {
     db.prepare(`UPDATE tenant_branding SET ${sets.join(', ')} WHERE tenant_id = ?`).run(...params);
     return getTenantBranding(tenantId);
   }
-  db.prepare(
-    `INSERT INTO tenant_branding (tenant_id, logo_path, favicon_path, primary_color, secondary_color, accent_color, browser_title)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(
+  const columns = ['tenant_id', ...BRANDING_FIELDS];
+  const placeholders = columns.map(() => '?').join(', ');
+  db.prepare(`INSERT INTO tenant_branding (${columns.join(', ')}) VALUES (${placeholders})`).run(
     tenantId,
-    fields.logo_path ?? null,
-    fields.favicon_path ?? null,
-    fields.primary_color ?? null,
-    fields.secondary_color ?? null,
-    fields.accent_color ?? null,
-    fields.browser_title ?? null
+    ...BRANDING_FIELDS.map((key) => fields[key] ?? null)
   );
   return getTenantBranding(tenantId);
 }

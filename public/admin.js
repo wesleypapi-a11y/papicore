@@ -151,6 +151,21 @@
     return data;
   }
 
+  /* Upload de arquivo (logo/favicon da aba Aparência) — igual a api(), mas
+     sem Content-Type manual: o browser define o boundary do multipart. */
+  async function apiForm(path, formData, opts = {}) {
+    const headers = {};
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    const res = await fetch(path, { method: 'POST', headers, body: formData, ...opts });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      logout();
+      throw new Error('Sessão expirada. Faça login novamente.');
+    }
+    if (!res.ok) throw new Error(data && data.error ? data.error : 'Erro na requisição.');
+    return data;
+  }
+
   /* ---------- auth ---------- */
 
   async function login(email, password) {
@@ -1925,17 +1940,39 @@
   /* ---------- settings ---------- */
 
   async function renderSettings() {
-    const s = await api('/api/admin/settings');
     const el = $('view-settings');
-    const days = s.working_days || [];
-
+    const tab = state.settingsTab || 'geral';
     el.innerHTML = `
       <div class="admin-header">
-        <div><h1>Configurações</h1><div class="sub">Dados gerais e funcionamento do agendamento</div></div>
-        <button class="btn btn-primary" id="settingsSave">Salvar configurações</button>
+        <div><h1>Configurações</h1><div class="sub">Dados gerais, funcionamento e identidade visual</div></div>
       </div>
+      <div class="tabs">
+        <button type="button" class="tab ${tab === 'geral' ? 'active' : ''}" data-settings-tab="geral">Geral</button>
+        <button type="button" class="tab ${tab === 'aparencia' ? 'active' : ''}" data-settings-tab="aparencia">Aparência</button>
+      </div>
+      <div id="settingsTabBody"></div>
+    `;
+    el.querySelectorAll('[data-settings-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (state.settingsTab === btn.dataset.settingsTab) return;
+        state.settingsTab = btn.dataset.settingsTab;
+        renderSettings();
+      });
+    });
+    if (tab === 'aparencia') await renderAppearanceTab($('settingsTabBody'));
+    else await renderGeneralTab($('settingsTabBody'));
+  }
+
+  async function renderGeneralTab(container) {
+    const s = await api('/api/admin/settings');
+    const days = s.working_days || [];
+
+    container.innerHTML = `
       <div class="panel">
-        <h3 class="review-section-title">Empresa e contato</h3>
+        <div class="admin-header" style="margin-bottom:18px;">
+          <h3 class="review-section-title" style="border:0;margin:0;padding:0;">Empresa e contato</h3>
+          <button class="btn btn-primary" id="settingsSave">Salvar configurações</button>
+        </div>
         <div class="form-grid">
           <div class="field">${fieldHtml('setName', 'Nome da empresa', s.company_name, 'text')}</div>
           <div class="field">${fieldHtml('setPhone', 'Telefone', s.phone, 'text', '(00) 00000-0000')}</div>
@@ -1986,6 +2023,167 @@
       }
       hideLoader();
     });
+  }
+
+  /* ---------- Configurações > Aparência ---------- */
+
+  function brandingAssetUrl(kind, ts) {
+    return `/api/admin/branding/${kind}?v=${encodeURIComponent(ts || '')}`;
+  }
+
+  function themeCardHtml(theme, isSelected, isSaved) {
+    const c = theme.colors;
+    const dots = [c.primary, c.secondary, c.accent, c.background, c.surface, c.success].map(
+      (hex) => `<span class="theme-dot" style="background:${escapeHtml(hex)}"></span>`
+    ).join('');
+    return `
+      <button type="button" class="theme-card ${isSelected ? 'selected' : ''}" data-theme-key="${escapeHtml(theme.key)}"
+        role="radio" aria-checked="${isSelected ? 'true' : 'false'}">
+        ${isSaved ? '<span class="theme-current">Tema atual</span>' : ''}
+        <div class="theme-preview" style="background:${escapeHtml(c.background)};border-color:${escapeHtml(c.border)};">
+          <span class="theme-preview-btn" style="background:${escapeHtml(c.primary)};color:${escapeHtml(c.text)};">Agendar</span>
+          <span class="theme-preview-card" style="background:${escapeHtml(c.surface)};border-color:${escapeHtml(c.border)};"></span>
+        </div>
+        <div class="theme-dots">${dots}</div>
+        <div class="theme-name">${escapeHtml(theme.name)}${isSelected ? ' <span class="theme-selected-mark">✓ Selecionado</span>' : ''}</div>
+        <div class="theme-desc">${escapeHtml(theme.description)}</div>
+      </button>
+    `;
+  }
+
+  async function renderAppearanceTab(container) {
+    container.innerHTML = '<div class="panel"><p class="sub">Carregando…</p></div>';
+    let data;
+    try {
+      data = await api('/api/admin/branding');
+    } catch (e) {
+      container.innerHTML = `<div class="panel"><p class="error">${escapeHtml(e.message)}</p></div>`;
+      return;
+    }
+
+    const savedThemeKey = data.branding.theme_key;
+    const savedColors = data.branding.colors;
+    let selectedThemeKey = savedThemeKey;
+
+    function paint() {
+      const b = data.branding;
+      const hasLogo = b.has_logo, hasFav = b.has_favicon, ts = b.updated_at;
+      container.innerHTML = `
+        <div class="panel">
+          <h3 class="review-section-title">Logo e favicon</h3>
+          <div class="branding-grid">
+            <div class="branding-card">
+              <div class="branding-preview"><img data-preview="logo" src="${hasLogo ? escapeHtml(brandingAssetUrl('logo', ts)) : '/assets/logo.png'}" alt="Logo atual" /></div>
+              <p class="sub">PNG, JPG ou WEBP (máx 3 MB)</p>
+              <div class="branding-actions">
+                ${hasLogo ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove-logo">Remover</button>' : ''}
+                <label class="btn btn-ghost btn-sm branding-upload">${hasLogo ? 'Substituir' : 'Enviar logo'}<input type="file" data-brand-file="logo" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" hidden /></label>
+              </div>
+            </div>
+            <div class="branding-card">
+              <div class="branding-preview"><img data-preview="favicon" src="${hasFav ? escapeHtml(brandingAssetUrl('favicon', ts)) : '/assets/favicon.png'}" alt="Favicon atual" /></div>
+              <p class="sub">PNG ou ICO (máx 1 MB)</p>
+              <div class="branding-actions">
+                ${hasFav ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove-favicon">Remover</button>' : ''}
+                <label class="btn btn-ghost btn-sm branding-upload">${hasFav ? 'Substituir' : 'Enviar favicon'}<input type="file" data-brand-file="favicon" accept=".png,.ico,image/png,image/x-icon,image/vnd.microsoft.icon" hidden /></label>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="admin-header" style="margin-bottom:14px;">
+            <h3 class="review-section-title" style="border:0;margin:0;padding:0;">Tema de cores</h3>
+            <div class="row-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="themeCancel" ${selectedThemeKey === savedThemeKey ? 'hidden' : ''}>Cancelar</button>
+              <button type="button" class="btn btn-primary" id="themeSave" ${selectedThemeKey === savedThemeKey ? 'disabled' : ''}>Salvar aparência</button>
+            </div>
+          </div>
+          <div class="theme-grid" id="themeGrid" role="radiogroup" aria-label="Tema de cores">
+            ${themes.map((t) => themeCardHtml(t, t.key === selectedThemeKey, t.key === savedThemeKey)).join('')}
+          </div>
+        </div>
+      `;
+
+      const box = container.querySelector('.branding-grid').closest('.panel');
+      box.onclick = async (e) => {
+        const btn = e.target.closest('[data-brand-action]');
+        if (!btn) return;
+        const kind = btn.dataset.brandAction === 'remove-logo' ? 'logo' : 'favicon';
+        try {
+          showLoader();
+          const res = await api(`/api/admin/branding/${kind}`, { method: 'DELETE' });
+          data.branding = res.branding;
+          toast(kind === 'logo' ? 'Logo removida.' : 'Favicon removido.', 'success');
+          paint();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+        hideLoader();
+      };
+      box.querySelectorAll('[data-brand-file]').forEach((input) => {
+        input.onchange = async () => {
+          const file = input.files[0];
+          if (!file) return;
+          const kind = input.dataset.brandFile;
+          const fd = new FormData();
+          fd.append('file', file);
+          try {
+            showLoader();
+            const res = await apiForm(`/api/admin/branding/${kind}`, fd);
+            data.branding = res.branding;
+            toast(kind === 'logo' ? 'Logo enviada.' : 'Favicon enviado.', 'success');
+            paint();
+          } catch (err) {
+            toast(err.message, 'error');
+            input.value = '';
+          }
+          hideLoader();
+        };
+      });
+
+      $('themeGrid').addEventListener('click', (e) => {
+        const card = e.target.closest('[data-theme-key]');
+        if (!card) return;
+        selectedThemeKey = card.dataset.themeKey;
+        const preset = themes.find((t) => t.key === selectedThemeKey);
+        if (preset && window.applyTenantTheme) window.applyTenantTheme(preset.colors);
+        paint();
+      });
+
+      const cancelBtn = $('themeCancel');
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+          selectedThemeKey = savedThemeKey;
+          if (window.applyTenantTheme) window.applyTenantTheme(savedColors);
+          paint();
+        });
+      }
+
+      const saveBtn = $('themeSave');
+      if (saveBtn && !saveBtn.disabled) {
+        saveBtn.addEventListener('click', async () => {
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Salvando…';
+          try {
+            const res = await api('/api/admin/branding/theme', {
+              method: 'PUT',
+              body: JSON.stringify({ theme_key: selectedThemeKey })
+            });
+            data.branding = res.branding;
+            if (window.applyTenantTheme) window.applyTenantTheme(res.branding.colors);
+            toast('Aparência salva.', 'success');
+            renderAppearanceTab(container);
+          } catch (err) {
+            toast(err.message, 'error');
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Salvar aparência';
+          }
+        });
+      }
+    }
+
+    const themes = data.available_themes;
+    paint();
   }
 
   /* ---------- init ---------- */
