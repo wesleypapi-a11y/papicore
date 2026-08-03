@@ -29,6 +29,7 @@ const {
   tenantFilePath,
   deleteTenantDatabase
 } = require('./tenantDatabase');
+const { removeTenantAssets } = require('../utils/assetStorage');
 
 const DATA_DIR =
   process.env.DATA_DIR ||
@@ -110,6 +111,19 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   action TEXT NOT NULL,
   details TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS tenant_branding (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+  logo_path TEXT,
+  favicon_path TEXT,
+  primary_color TEXT,
+  secondary_color TEXT,
+  accent_color TEXT,
+  browser_title TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 `;
 
@@ -342,6 +356,11 @@ function deleteTenant(id) {
   if (!tenant) return false;
   deleteTenantDatabase(tenant.database_name);
   db.prepare('DELETE FROM tenants WHERE id = ?').run(id);
+  try {
+    removeTenantAssets(id);
+  } catch (err) {
+    console.error('[papi-core] Erro ao remover assets da empresa', id, err.message);
+  }
   return true;
 }
 
@@ -640,6 +659,62 @@ function listLogs(limit = 100) {
   return db.prepare('SELECT * FROM activity_logs ORDER BY id DESC LIMIT ?').all(limit);
 }
 
+/* ---------- Identidade visual ---------- */
+
+function getTenantBranding(tenantId) {
+  return db.prepare('SELECT * FROM tenant_branding WHERE tenant_id = ?').get(tenantId) || null;
+}
+
+/*
+ * Cria ou atualiza a linha de branding da empresa. Os caminhos de logo e
+ * favicon são sempre relativos a DATA_DIR (ex: assets/tenant_0001/logo.png).
+ */
+function upsertTenantBranding(tenantId, fields = {}) {
+  const allowed = ['logo_path', 'favicon_path', 'primary_color', 'secondary_color', 'accent_color', 'browser_title'];
+  const existing = getTenantBranding(tenantId);
+  if (existing) {
+    const sets = [];
+    const params = [];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        sets.push(`${key} = ?`);
+        params.push(fields[key] === null ? null : fields[key]);
+      }
+    }
+    if (!sets.length) return existing;
+    sets.push("updated_at = datetime('now', 'localtime')");
+    params.push(tenantId);
+    db.prepare(`UPDATE tenant_branding SET ${sets.join(', ')} WHERE tenant_id = ?`).run(...params);
+    return getTenantBranding(tenantId);
+  }
+  db.prepare(
+    `INSERT INTO tenant_branding (tenant_id, logo_path, favicon_path, primary_color, secondary_color, accent_color, browser_title)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    tenantId,
+    fields.logo_path ?? null,
+    fields.favicon_path ?? null,
+    fields.primary_color ?? null,
+    fields.secondary_color ?? null,
+    fields.accent_color ?? null,
+    fields.browser_title ?? null
+  );
+  return getTenantBranding(tenantId);
+}
+
+function deleteTenantBranding(tenantId) {
+  db.prepare('DELETE FROM tenant_branding WHERE tenant_id = ?').run(tenantId);
+  return true;
+}
+
+function updateTenantLogo(tenantId, assetPath) {
+  return upsertTenantBranding(tenantId, { logo_path: assetPath || null });
+}
+
+function updateTenantFavicon(tenantId, assetPath) {
+  return upsertTenantBranding(tenantId, { favicon_path: assetPath || null });
+}
+
 /* ---------- Utilitários ---------- */
 
 function countTenantAppointments(databaseName) {
@@ -712,5 +787,11 @@ module.exports = {
   deleteFinancialEntry,
   /* logs */
   logActivity,
-  listLogs
+  listLogs,
+  /* identidade visual */
+  getTenantBranding,
+  upsertTenantBranding,
+  deleteTenantBranding,
+  updateTenantLogo,
+  updateTenantFavicon
 };

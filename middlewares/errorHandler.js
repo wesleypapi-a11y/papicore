@@ -3,6 +3,13 @@ function errorHandler(err, req, res, next) {
     return res.status(400).json({ error: 'JSON inválido no corpo da requisição.' });
   }
 
+  if (err && err.name === 'MulterError') {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'O arquivo excede o tamanho permitido.'
+      : 'Falha no envio do arquivo.';
+    return res.status(400).json({ error: message });
+  }
+
   if (err && err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
     return res.status(409).json({
       error: 'Já existe um agendamento para esta unidade, data e horário.'

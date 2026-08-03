@@ -12,6 +12,7 @@
 
 const express = require('express');
 const developerController = require('../controllers/developerController');
+const brandingController = require('../controllers/brandingController');
 const { requireDeveloper } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -53,6 +54,15 @@ router.post('/tenants/:id/impersonate', developerController.impersonate);
 router.post('/tenants/:id/backup', developerController.backupTenant);
 router.get('/tenants/:id/backup', developerController.backupTenant);
 router.delete('/tenants/:id', developerController.deleteTenantHandler);
+
+/* Identidade visual por empresa */
+router.get('/tenants/:id/branding', brandingController.getBrandingHandler);
+router.get('/tenants/:id/branding/logo', brandingController.serveLogo);
+router.get('/tenants/:id/branding/favicon', brandingController.serveFavicon);
+router.post('/tenants/:id/branding/logo', brandingController.uploadLogo);
+router.post('/tenants/:id/branding/favicon', brandingController.uploadFavicon);
+router.delete('/tenants/:id/branding/logo', brandingController.removeLogo);
+router.delete('/tenants/:id/branding/favicon', brandingController.removeFavicon);
 
 /* Domínios por empresa */
 router.get('/tenants/:id/domains', developerController.listDomainsHandler);

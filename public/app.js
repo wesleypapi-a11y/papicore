@@ -175,6 +175,10 @@
     renderCalendar();
     goToStep(state.currentStep || 1, true);
     bindGlobal();
+
+    /* Por último: aplica a logo/favicon enviados pelo desenvolvedor, se
+       houver, sobrepondo os padrões já definidos acima. */
+    if (window.loadTenantBranding) window.loadTenantBranding();
   }
 
   function renderProgress() {

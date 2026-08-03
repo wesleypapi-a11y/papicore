@@ -1968,6 +1968,10 @@
   async function init() {
     bindGlobals();
 
+    /* Logo, favicon e título dinâmicos (identidade visual do tenant do
+       domínio atual), aplicados na tela de login e no painel. */
+    if (window.loadTenantBranding) window.loadTenantBranding();
+
     /* decora tabelas com data-label para o layout em cartões no mobile */
     function decorateTables() {
       document.querySelectorAll('#panelView table').forEach((table) => {

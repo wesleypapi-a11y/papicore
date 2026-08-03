@@ -8,11 +8,17 @@
 
 const express = require('express');
 const agendamentoController = require('../controllers/agendamentoController');
+const brandingController = require('../controllers/brandingController');
 const { domainTenantMiddleware } = require('../middlewares/domainTenantMiddleware');
 
 const router = express.Router();
 
 router.use(domainTenantMiddleware);
+
+/* Identidade visual pública (logo/favicon por domínio) */
+router.get('/branding', brandingController.publicBranding);
+router.get('/branding/logo', brandingController.publicLogo);
+router.get('/branding/favicon', brandingController.publicFavicon);
 
 router.get('/settings', agendamentoController.getPublicSettings);
 router.get('/modalities', agendamentoController.listModalities);

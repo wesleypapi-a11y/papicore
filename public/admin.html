@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0e1015" />
   <title>Painel Administrativo — Torque Detail</title>
-  <link rel="icon" href="/Logo/favicon.jpg" />
+  <meta name="tenant-title-suffix" content="Administração" />
+  <link id="pageFavicon" rel="icon" href="/Logo/favicon.jpg" />
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -17,7 +18,7 @@
   <div id="loginView" class="login-wrap hidden">
     <div class="login-card">
       <div class="brand">
-        <img src="/assets/logo.png" alt="Torque Detail" class="brand-logo" />
+        <img data-tenant-logo src="/assets/logo.png" alt="Torque Detail" class="brand-logo" />
         <span class="brand-name">Torque Detail</span>
       </div>
       <h1>Painel administrativo</h1>
@@ -54,7 +55,7 @@
       <div id="sidebarBackdrop" class="admin-backdrop"></div>
       <aside id="sidebar" class="admin-sidebar">
         <div class="brand">
-          <img src="/assets/logo.png" alt="Torque Detail" class="brand-logo" />
+          <img data-tenant-logo src="/assets/logo.png" alt="Torque Detail" class="brand-logo" />
           <span class="brand-name">Torque Detail</span>
         </div>
         <nav class="admin-nav">
@@ -119,6 +120,7 @@
       sync();
     })();
   </script>
+  <script src="/js/branding.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>
