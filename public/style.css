@@ -875,6 +875,7 @@ body.booking-app {
   box-shadow: var(--shadow);
 }
 .qr-image svg { display: block; width: 240px; height: 240px; }
+.qr-image img { display: block; width: 240px; height: 240px; object-fit: contain; }
 
 /* ---------- success ---------- */
 
@@ -1596,6 +1597,7 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .modal-actions { flex-direction: column; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .qr-image svg { width: 200px; height: 200px; }
+  .qr-image img { width: 200px; height: 200px; }
   .view-switch button { padding: 6px 9px; }
   .header-right { gap: 8px; }
 }

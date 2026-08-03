@@ -2,11 +2,12 @@
  * assetStorage.js
  *
  * Armazenamento dos assets de identidade visual por empresa (tenant):
- * logo e favicon.
+ * logo, favicon e o QR Code do Pix (pagamento).
  *
  * Estrutura no disco (relativa a DATA_DIR):
  *   assets/tenant_XXXX/logo.<png|jpg|webp>
  *   assets/tenant_XXXX/favicon.<png|ico>
+ *   assets/tenant_XXXX/pix_qr.<png|jpg|webp>
  *
  * DATA_DIR é resolvido aqui, em um único ponto, seguindo o mesmo padrão de
  * database/tenantDatabase.js: process.env.DATA_DIR (Render) ou ./data (dev).
@@ -36,19 +37,28 @@ const FAVICON_MIME_EXT = {
   'image/vnd.microsoft.icon': '.ico'
 };
 
+/* QR Code do Pix aceita os mesmos formatos da logo (PNG, JPG ou WEBP). */
+const PIX_QR_MIME_EXT = LOGO_MIME_EXT;
+
+const KIND_MIME_EXT = {
+  logo: LOGO_MIME_EXT,
+  favicon: FAVICON_MIME_EXT,
+  pix_qr: PIX_QR_MIME_EXT
+};
+
 function kindName(kind) {
-  if (kind !== 'logo' && kind !== 'favicon') throw new Error('Tipo de asset inválido.');
+  if (!Object.prototype.hasOwnProperty.call(KIND_MIME_EXT, kind)) {
+    throw new Error('Tipo de asset inválido.');
+  }
   return kind;
 }
 
 function isAllowedMime(kind, mimeType) {
-  const table = kind === 'logo' ? LOGO_MIME_EXT : FAVICON_MIME_EXT;
-  return Object.prototype.hasOwnProperty.call(table, mimeType);
+  return Object.prototype.hasOwnProperty.call(KIND_MIME_EXT[kind], mimeType);
 }
 
 function extensionFor(kind, mimeType) {
-  const table = kind === 'logo' ? LOGO_MIME_EXT : FAVICON_MIME_EXT;
-  return table[mimeType] || null;
+  return KIND_MIME_EXT[kind][mimeType] || null;
 }
 
 function tenantFolderName(tenantId) {

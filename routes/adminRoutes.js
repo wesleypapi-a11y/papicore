@@ -16,6 +16,7 @@ const serviceController = require('../controllers/serviceController');
 const modalityController = require('../controllers/modalityController');
 const financialController = require('../controllers/financialController');
 const brandingController = require('../controllers/brandingController');
+const pixController = require('../controllers/pixController');
 
 const router = express.Router();
 
@@ -58,6 +59,8 @@ router.delete('/blocked-schedules/:id', blockedScheduleController.remove);
 
 router.get('/settings', settingsController.get);
 router.put('/settings', settingsController.update);
+router.post('/settings/pix-qr', pixController.uploadPixQr);
+router.delete('/settings/pix-qr', pixController.removePixQr);
 
 /* Aba Aparência (Configurações > Aparência): logo, favicon e tema de cores
    do próprio tenant. O tenant nunca vem da URL/body — sempre de req.tenant,

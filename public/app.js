@@ -902,34 +902,54 @@
         }, 1200);
       });
     } else if (method === 'pix') {
-      const code = buildPixCode(total);
+      const effectiveCode = (state.settings.pix_code || '').trim() || buildPixCode(total);
+      const holder = (state.settings.pix_company_name || '').trim();
       detail.innerHTML = `
         <div class="pix-box">
           <p class="payment-note">Copie o código abaixo e pague pelo aplicativo do seu banco (Pix). Total: <strong>${money(total)}</strong>.</p>
-          <div class="pix-code-wrap">
-            <input type="text" class="pix-code-input" id="pixCodeInput" value="${escapeHtml(code)}" readonly />
-            <button type="button" class="btn btn-primary" id="pixCopyBtn">Copiar código</button>
-          </div>
+          ${holder ? `<p class="payment-note">Recebedor: <strong>${escapeHtml(holder)}</strong></p>` : ''}
+          ${pixCopyRowHtml(effectiveCode)}
         </div>`;
-      const copyBtn = $('pixCopyBtn');
-      copyBtn.addEventListener('click', () => {
-        const input = $('pixCodeInput');
-        input.select();
-        input.setSelectionRange(0, input.value.length);
-        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
-        if (navigator.clipboard) navigator.clipboard.writeText(input.value).catch(() => {});
-        copyBtn.textContent = 'Código copiado!';
-        setTimeout(() => { copyBtn.textContent = 'Copiar código'; }, 2000);
-      });
+      bindPixCopy();
     } else if (method === 'qrcode') {
-      const code = buildPixCode(total);
+      const realCode = (state.settings.pix_code || '').trim();
+      const code = realCode || buildPixCode(total);
+      const holder = (state.settings.pix_company_name || '').trim();
+      const realQr = state.settings.pix_qr_url;
       detail.innerHTML = `
         <div class="qr-box">
           <p class="payment-note">Escaneie o QR Code abaixo com o aplicativo do seu banco (Pix). Total: <strong>${money(total)}</strong>.</p>
-          <div class="qr-image">${fakeQrSvg(code)}</div>
-          <p class="payment-note muted">QR Code ilustrativo (fictício) — nenhuma cobrança real é gerada.</p>
+          <div class="qr-image">${realQr
+            ? `<img src="${escapeHtml(realQr)}" alt="QR Code Pix" width="240" height="240" />`
+            : fakeQrSvg(code)}</div>
+          ${holder ? `<p class="payment-note">Recebedor: <strong>${escapeHtml(holder)}</strong></p>` : ''}
+          ${realCode ? pixCopyRowHtml(realCode) : ''}
+          ${realQr ? '' : '<p class="payment-note muted">QR Code ilustrativo (fictício) — nenhuma cobrança real é gerada.</p>'}
         </div>`;
+      bindPixCopy();
     }
+  }
+
+  function pixCopyRowHtml(code) {
+    return `
+      <div class="pix-code-wrap">
+        <input type="text" class="pix-code-input" id="pixCodeInput" value="${escapeHtml(code)}" readonly />
+        <button type="button" class="btn btn-primary" id="pixCopyBtn">Copiar código</button>
+      </div>`;
+  }
+
+  function bindPixCopy() {
+    const copyBtn = $('pixCopyBtn');
+    if (!copyBtn) return;
+    copyBtn.addEventListener('click', () => {
+      const input = $('pixCodeInput');
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+      try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+      if (navigator.clipboard) navigator.clipboard.writeText(input.value).catch(() => {});
+      copyBtn.textContent = 'Código copiado!';
+      setTimeout(() => { copyBtn.textContent = 'Copiar código'; }, 2000);
+    });
   }
 
   function maskCardNumber(input) {
@@ -964,7 +984,7 @@
   function buildPixCode(total) {
     const s = state.settings;
     const phone = digits(s.phone || s.whatsapp || '') || '34999999999';
-    const name = (s.company_name || 'TORQUE DETAIL')
+    const name = (s.pix_company_name || s.company_name || 'TORQUE DETAIL')
       .replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, 25) || 'TORQUE DETAIL';
     const city = 'UBERLANDIA';
     const amt = (Number(total) || 0).toFixed(2);

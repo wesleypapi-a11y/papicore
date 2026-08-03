@@ -9,6 +9,7 @@
 const express = require('express');
 const agendamentoController = require('../controllers/agendamentoController');
 const brandingController = require('../controllers/brandingController');
+const pixController = require('../controllers/pixController');
 const { domainTenantMiddleware } = require('../middlewares/domainTenantMiddleware');
 
 const router = express.Router();
@@ -19,6 +20,9 @@ router.use(domainTenantMiddleware);
 router.get('/branding', brandingController.publicBranding);
 router.get('/branding/logo', brandingController.publicLogo);
 router.get('/branding/favicon', brandingController.publicFavicon);
+
+/* Pagamento via Pix: imagem do QR Code final configurada no admin */
+router.get('/payment/pix-qr', pixController.publicPixQr);
 
 router.get('/settings', agendamentoController.getPublicSettings);
 router.get('/modalities', agendamentoController.listModalities);

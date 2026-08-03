@@ -2033,8 +2033,21 @@
         <h3 class="review-section-title">Mensagem de sucesso</h3>
         <div class="field"><label for="setMsg">Mensagem exibida ao cliente após enviar a solicitação</label>
           <textarea id="setMsg" rows="3">${escapeHtml(s.confirmation_message || '')}</textarea></div>
+        <h3 class="review-section-title">Pagamento — Pix</h3>
+        <p class="sub" style="margin-top:0;">Dados exibidos ao cliente no passo de pagamento do agendamento.</p>
+        <div class="form-grid">
+          <div class="field span-2">
+            <label>QR Code do Pix</label>
+            <div class="branding-grid" id="pixQrBox"></div>
+            <p class="sub">Imagem do QR Code final que o cliente escaneia (PNG, JPG ou WEBP, máx 3 MB).</p>
+          </div>
+          <div class="field">${fieldHtml('setPixCompany', 'Nome do recebedor (empresa)', s.pix_company_name, 'text', 'Ex: Torque Detail')}</div>
+          <div class="field"><label for="setPixCode">Chave Pix — copia e cola</label>
+            <textarea id="setPixCode" rows="4" placeholder="Cole aqui o código Pix completo (copia e cola)">${escapeHtml(s.pix_code || '')}</textarea></div>
+        </div>
       </div>
     `;
+    bindPixQrCard(s);
     $('settingsSave').addEventListener('click', async () => {
       const days = [...document.querySelectorAll('.setDay:checked')].map((c) => Number(c.dataset.day));
       const body = {
@@ -2048,7 +2061,9 @@
         default_interval: Number($('setInterval').value),
         working_days: days,
         capacity: Number($('setCapacity').value),
-        confirmation_message: $('setMsg').value
+        confirmation_message: $('setMsg').value,
+        pix_company_name: $('setPixCompany').value || null,
+        pix_code: $('setPixCode').value || null
       };
       try {
         showLoader();
@@ -2059,6 +2074,70 @@
       }
       hideLoader();
     });
+  }
+
+  /* QR Code do Pix (Configurações > Geral): cartão de prévia + upload/remoção.
+     Atualiza apenas o cartão após cada operação, sem perder os textos digitados
+     (chave/nome). A prévia usa a rota pública /api/payment/pix-qr — como o admin
+     roda no próprio domínio do tenant, a rota pública resolve para a mesma
+     empresa do usuário logado, sem precisar de auth no <img> (mesmo padrão da
+     logo na aba Aparência). */
+  function pixQrCardHtml(hasQr, url) {
+    return `
+      <div class="branding-card">
+        <div class="branding-preview">${hasQr
+          ? `<img src="${escapeHtml(url)}" alt="QR Code Pix" />`
+          : '<span class="sub">Nenhum QR Code enviado</span>'}</div>
+        <p class="sub">PNG, JPG ou WEBP (máx 3 MB)</p>
+        <div class="branding-actions">
+          ${hasQr ? '<button type="button" class="btn btn-outline btn-sm" data-pixqr-action="remove">Remover</button>' : ''}
+          <label class="btn btn-ghost btn-sm branding-upload">${hasQr ? 'Substituir' : 'Enviar QR Code'}<input type="file" data-pixqr-file accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" hidden /></label>
+        </div>
+      </div>`;
+  }
+
+  function bindPixQrCard(s) {
+    const box = $('pixQrBox');
+    if (!box) return;
+    const hasQr = Boolean(s.pix_qr_path);
+    const url = hasQr ? `/api/payment/pix-qr?v=${encodeURIComponent(s.updated_at || '')}` : null;
+    box.innerHTML = pixQrCardHtml(hasQr, url);
+
+    box.onclick = async (e) => {
+      const btn = e.target.closest('[data-pixqr-action="remove"]');
+      if (!btn) return;
+      try {
+        showLoader();
+        const res = await api('/api/admin/settings/pix-qr', { method: 'DELETE' });
+        box.innerHTML = pixQrCardHtml(res.has_pix_qr, res.pix_qr_url);
+        toast('QR Code Pix removido.', 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      hideLoader();
+    };
+
+    /* Delegado no container: sobrevive à troca de innerHTML do cartão. */
+    box.onchange = async (e) => {
+      const input = e.target.closest('[data-pixqr-file]');
+      if (!input || !input.files.length) return;
+      const label = box.querySelector('.branding-upload');
+      const original = label.textContent;
+      label.textContent = 'Enviando…';
+      label.classList.add('disabled');
+      const fd = new FormData();
+      fd.append('file', input.files[0]);
+      try {
+        showLoader();
+        const res = await apiForm('/api/admin/settings/pix-qr', fd);
+        box.innerHTML = pixQrCardHtml(res.has_pix_qr, res.pix_qr_url);
+        toast('QR Code Pix enviado.', 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+        input.value = '';
+      }
+      hideLoader();
+    };
   }
 
   /* ---------- Configurações > Aparência ---------- */

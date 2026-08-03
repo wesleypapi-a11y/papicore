@@ -435,6 +435,12 @@ function upgradeSchema(db) {
   ensureColumn(db, 'company_settings', 'lunch_start', "TEXT NOT NULL DEFAULT '12:00'");
   ensureColumn(db, 'company_settings', 'lunch_end', "TEXT NOT NULL DEFAULT '13:00'");
 
+  /* Pagamento via Pix: chave copia e cola e nome do recebedor. A imagem do
+     QR Code fica como asset do tenant (assets/tenant_XXXX/pix_qr.*), sem
+     coluna no banco — a presença do arquivo em disco é a fonte da verdade. */
+  ensureColumn(db, 'company_settings', 'pix_code', 'TEXT');
+  ensureColumn(db, 'company_settings', 'pix_company_name', 'TEXT');
+
   ensureColumn(db, 'services', 'pickup_extra_minutes', 'INTEGER NOT NULL DEFAULT 60');
   ensureColumn(db, 'appointments', 'end_date', 'TEXT');
   ensureColumn(db, 'appointments', 'booked_duration_minutes', 'INTEGER NOT NULL DEFAULT 60');

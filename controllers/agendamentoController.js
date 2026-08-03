@@ -1,4 +1,5 @@
 const { getDb } = require('../database/tenantDatabase');
+const { storedFilePath } = require('../utils/assetStorage');
 const {
   getAvailability,
   getUnit,
@@ -19,6 +20,12 @@ function getPublicSettings(req, res) {
   const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
   if (!s) return res.json({});
 
+  const ts = encodeURIComponent(s.updated_at || '');
+
+  /* QR Code do Pix: a presença do arquivo em disco é a fonte da verdade. */
+  const tenantId = req.tenantFromDomain ? req.tenantFromDomain.id : null;
+  const hasPixQr = tenantId ? Boolean(storedFilePath(tenantId, 'pix_qr')) : false;
+
   return res.json({
     company_name: s.company_name,
     phone: s.phone,
@@ -31,7 +38,10 @@ function getPublicSettings(req, res) {
     lunch_start: s.lunch_start,
     lunch_end: s.lunch_end,
     working_days: parseWorkingDays(s.working_days),
-    confirmation_message: s.confirmation_message
+    confirmation_message: s.confirmation_message,
+    pix_code: s.pix_code || null,
+    pix_company_name: s.pix_company_name || null,
+    pix_qr_url: hasPixQr ? `/api/payment/pix-qr?v=${ts}` : null
   });
 }
 

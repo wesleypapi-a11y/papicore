@@ -1,4 +1,9 @@
+const path = require('path');
 const { getDb } = require('../database/tenantDatabase');
+const {
+  ASSETS_DIR,
+  storedFilePath
+} = require('../utils/assetStorage');
 const {
   AppError,
   isValidTime,
@@ -11,6 +16,13 @@ function get(req, res) {
   const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
   if (!s) throw new AppError(404, 'Configurações não encontradas.');
   s.working_days = parseWorkingDays(s.working_days);
+
+  /* QR Code do Pix: o arquivo em disco é a fonte da verdade (mesmo padrão do
+     serve público). A URL usa o updated_at como cache-buster. */
+  const tenantId = req.tenant ? req.tenant.id : null;
+  const stored = tenantId ? storedFilePath(tenantId, 'pix_qr') : null;
+  s.pix_qr_path = stored ? path.relative(ASSETS_DIR, stored).split(path.sep).join('/') : null;
+  s.pix_qr_url = stored ? `/api/payment/pix-qr?v=${encodeURIComponent(s.updated_at || '')}` : null;
   return res.json(s);
 }
 
@@ -29,7 +41,9 @@ function update(req, res) {
     lunch_end,
     working_days,
     confirmation_message,
-    capacity
+    capacity,
+    pix_code,
+    pix_company_name
   } = data;
 
   if (!company_name || String(company_name).trim().length < 2) {
@@ -47,6 +61,16 @@ function update(req, res) {
   }
   if (phone && !isValidPhone(phone)) throw new AppError(400, 'Telefone inválido.');
   if (whatsapp && !isValidPhone(whatsapp)) throw new AppError(400, 'WhatsApp inválido.');
+
+  /* Pagamento via Pix (opcional). */
+  const pixCode = pix_code == null ? null : String(pix_code).trim();
+  if (pixCode !== null && pixCode.length > 2000) {
+    throw new AppError(400, 'O código Pix (copia e cola) é muito longo (máximo 2000 caracteres).');
+  }
+  const pixCompanyName = pix_company_name == null ? null : String(pix_company_name).trim();
+  if (pixCompanyName !== null && pixCompanyName.length > 120) {
+    throw new AppError(400, 'O nome do recebedor deve ter no máximo 120 caracteres.');
+  }
 
   const current = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
   const existingLunchStart = (current && current.lunch_start) || '12:00';
@@ -75,8 +99,9 @@ function update(req, res) {
   db.prepare(
     `INSERT INTO company_settings
        (id, company_name, phone, whatsapp, logo_url, default_opening_time, default_closing_time,
-        default_interval, lunch_start, lunch_end, working_days, confirmation_message, capacity)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        default_interval, lunch_start, lunch_end, working_days, confirmation_message, capacity,
+        pix_code, pix_company_name)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        company_name = excluded.company_name,
        phone = excluded.phone,
@@ -90,6 +115,8 @@ function update(req, res) {
        working_days = excluded.working_days,
        confirmation_message = excluded.confirmation_message,
        capacity = excluded.capacity,
+       pix_code = excluded.pix_code,
+       pix_company_name = excluded.pix_company_name,
        updated_at = datetime('now', 'localtime')`
   ).run(
     String(company_name).trim(),
@@ -103,7 +130,9 @@ function update(req, res) {
     finalLunchEnd,
     JSON.stringify(days),
     confirmation_message ? String(confirmation_message).trim() : '',
-    cap
+    cap,
+    pixCode,
+    pixCompanyName
   );
 
   const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
