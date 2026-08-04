@@ -95,6 +95,9 @@
     if (branding.has_favicon && branding.favicon_url) {
       const link = document.getElementById('pageFavicon');
       if (link) link.href = branding.favicon_url;
+      /* Ícone do app instalado no celular (iOS usa o apple-touch-icon). */
+      const touch = document.getElementById('appleTouchIcon');
+      if (touch) touch.href = branding.favicon_url;
     }
 
     applyTenantTheme(branding.colors);

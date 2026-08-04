@@ -371,6 +371,53 @@ function publicAsset(kind) {
   };
 }
 
+/*
+ * Manifest PWA por empresa (GET /api/branding/manifest): quando o tenant
+ * envia um favicon no admin, ele vira o ícone do app instalado no celular
+ * (Android usa o manifest; iOS usa o apple-touch-icon apontado para o mesmo
+ * arquivo). Sem favicon próprio, cai para os ícones padrão da plataforma.
+ */
+function publicManifest(req, res) {
+  const t = req.tenantFromDomain;
+  if (!t) throw new AppError(404, 'Domínio não cadastrado.');
+
+  const b = brandingPayload(t.id);
+  const theme = b.colors || getDefaultThemePreset().colors;
+  const ts = encodeURIComponent(b.updated_at || '');
+
+  let icons;
+  if (b.has_favicon) {
+    const file = storedFilePath(t.id, 'favicon');
+    const isIco = file && /\.ico$/i.test(file);
+    icons = [{
+      src: `/api/branding/favicon?v=${ts}`,
+      sizes: 'any',
+      type: isIco ? 'image/x-icon' : 'image/png',
+      purpose: 'any'
+    }];
+  } else {
+    icons = [
+      { src: '/images/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/images/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' }
+    ];
+  }
+
+  return res
+    .set('Content-Type', 'application/manifest+json; charset=utf-8')
+    .json({
+      name: t.name,
+      short_name: String(t.name || 'PapiCore').slice(0, 12),
+      description: `Agendamento online — ${t.name}.`,
+      start_url: '/',
+      scope: '/',
+      display: 'standalone',
+      background_color: theme.background || '#ffffff',
+      theme_color: theme.primary || '#ffffff',
+      lang: 'pt-BR',
+      icons
+    });
+}
+
 /* --- Logo/favicon da tela de login do desenvolvedor (assets da plataforma) --- */
 
 function loginAssetKind(kind) {
@@ -507,6 +554,7 @@ module.exports = {
   publicBranding,
   publicLogo: publicAsset('logo'),
   publicFavicon: publicAsset('favicon'),
+  publicManifest,
 
   /* --- Login do painel do desenvolvedor (assets da plataforma) --- */
   getLoginLogoHandler: getLoginAssetHandler('logo'),

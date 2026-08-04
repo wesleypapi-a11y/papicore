@@ -421,6 +421,15 @@
       const img = document.getElementById(id);
       if (img && info && info.has && info.url) img.src = info.url;
     });
+
+    /* Logo aparece em mais de um lugar (cabeçalho e rodapé, em todas as
+       páginas que carregam este script) — atualiza todas as ocorrências.
+       O favicon/ícone de PWA não precisa de nada aqui: o upload regrava os
+       arquivos estáticos que <link rel="icon"> e o manifest já apontam. */
+    const logoInfo = images.logo;
+    if (logoInfo && logoInfo.has && logoInfo.url) {
+      $$('.l-brand-mark').forEach((img) => { img.src = logoInfo.url; });
+    }
   }
 
   async function loadSiteContent() {

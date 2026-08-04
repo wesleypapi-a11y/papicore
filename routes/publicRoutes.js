@@ -20,6 +20,7 @@ router.use(domainTenantMiddleware);
 router.get('/branding', brandingController.publicBranding);
 router.get('/branding/logo', brandingController.publicLogo);
 router.get('/branding/favicon', brandingController.publicFavicon);
+router.get('/branding/manifest', brandingController.publicManifest);
 
 /* Pagamento via Pix: imagem do QR Code final configurada no admin */
 router.get('/payment/pix-qr', pixController.publicPixQr);

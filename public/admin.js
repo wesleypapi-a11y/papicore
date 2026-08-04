@@ -2251,7 +2251,7 @@
             </div>
             <div class="branding-card">
               <div class="branding-preview"><img data-preview="favicon" src="${hasFav ? escapeHtml(brandingAssetUrl('favicon', ts)) : '/assets/favicon.png'}" alt="Favicon atual" /></div>
-              <p class="sub">PNG ou ICO (máx 1 MB)</p>
+              <p class="sub">PNG ou ICO (máx 1 MB) — também vira o ícone do app no celular, use uma imagem quadrada (ex.: 512×512)</p>
               <div class="branding-actions">
                 ${hasFav ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove-favicon">Remover</button>' : ''}
                 <label class="btn btn-ghost btn-sm branding-upload">${hasFav ? 'Substituir' : 'Enviar favicon'}<input type="file" data-brand-file="favicon" accept=".png,.ico,image/png,image/x-icon,image/vnd.microsoft.icon" hidden /></label>

@@ -19,7 +19,9 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const multer = require('multer');
+const Jimp = require('jimp');
 
 const { AppError, isValidEmail, isValidPhone, normalizePhone } = require('../utils/helpers');
 const { getSiteContent, upsertSiteContent, logActivity } = require('../database/coreDatabase');
@@ -30,6 +32,39 @@ const {
   unlinkIfExists,
   sniffMime
 } = require('../utils/assetStorage');
+
+/* Favicon/ícones de PWA: caminhos fixos, referenciados por <link> no HTML e
+   pelo manifest.webmanifest — por isso, ao contrário dos outros slots, o
+   upload deste slot não é só salvo/servido: ele REGRAVA estes arquivos
+   estáticos, gerando cada tamanho a partir da imagem enviada. */
+const ICONS_DIR = path.join(__dirname, '..', 'public', 'images', 'icons');
+const FAVICON_SIZES = [16, 32, 48]; // fundo transparente preservado
+const APP_ICON_SIZES = [
+  { file: 'apple-touch-icon-180.png', size: 180, padding: 0.16 },
+  { file: 'icon-192.png', size: 192, padding: 0.14 },
+  { file: 'icon-512.png', size: 512, padding: 0.14 }
+];
+
+async function regenerateFaviconFiles(sourcePath) {
+  const source = await Jimp.read(sourcePath);
+  fs.mkdirSync(ICONS_DIR, { recursive: true });
+
+  for (const size of FAVICON_SIZES) {
+    await source.clone().contain(size, size).writeAsync(path.join(ICONS_DIR, `favicon-${size}.png`));
+  }
+
+  for (const { file, size, padding } of APP_ICON_SIZES) {
+    const pad = Math.round(size * padding);
+    const inner = size - pad * 2;
+    const resized = source.clone().contain(inner, inner);
+    /* iOS/Android não lidam bem com transparência em ícone de app instalado
+       (preenchem com preto ou recortam de forma estranha) — fundo branco
+       sólido, igual ao ícone atual da plataforma. */
+    const canvas = new Jimp(size, size, 0xffffffff);
+    canvas.composite(resized, Math.round((size - resized.bitmap.width) / 2), Math.round((size - resized.bitmap.height) / 2));
+    await canvas.writeAsync(path.join(ICONS_DIR, file));
+  }
+}
 
 const IMAGE_LIMIT = 4 * 1024 * 1024; /* 4 MB */
 
@@ -43,6 +78,8 @@ const IMAGE_MIME_EXT = {
    rótulo exibido no Painel do Desenvolvedor. Prefixo "site_" evita colidir
    com login_logo/login_favicon, que moram na mesma pasta. */
 const IMAGE_SLOTS = {
+  logo: { assetKind: 'site_logo', label: 'Logo (cabeçalho e rodapé)' },
+  favicon: { assetKind: 'site_favicon', label: 'Favicon / ícone do app (PWA)' },
   hero: { assetKind: 'site_hero', label: 'Mockup do hero' },
   demo_agenda: { assetKind: 'site_demo_agenda', label: 'Demonstração — Agenda' },
   demo_servicos: { assetKind: 'site_demo_servicos', label: 'Demonstração — Serviços' },
@@ -157,7 +194,7 @@ function uploadSiteImage(req, res, next) {
     }
   }).single('file');
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     if (!req.file) return next(new AppError(400, 'Envie um arquivo.'));
 
@@ -172,6 +209,18 @@ function uploadSiteImage(req, res, next) {
        multer já sobrescreveu). */
     const old = storedPlatformFilePath(info.assetKind);
     if (old && path.resolve(old) !== path.resolve(savedPath)) unlinkIfExists(old);
+
+    /* O favicon/ícone de PWA é lido pelo navegador em caminhos fixos
+       (<link rel="icon">, manifest.webmanifest) — regrava esses arquivos a
+       partir da imagem enviada, em todos os tamanhos usados pelo site. */
+    if (slot === 'favicon') {
+      try {
+        await regenerateFaviconFiles(savedPath);
+      } catch (genErr) {
+        console.error('[siteContent] Falha ao gerar favicon/ícones:', genErr.message);
+        return next(new AppError(400, 'Não foi possível processar essa imagem como favicon. Tente outro arquivo.'));
+      }
+    }
 
     logActivity(req.user.id, null, 'SITE_IMAGE_UPDATED', `Imagem "${info.label}" do site institucional atualizada`);
     return res.status(201).json({ success: true, images: imagesPayload('/api/developer/site-content') });
