@@ -10,6 +10,7 @@
 
 const express = require('express');
 const commercialController = require('../controllers/commercialController');
+const siteContentController = require('../controllers/siteContentController');
 
 const router = express.Router();
 
@@ -30,5 +31,10 @@ function contactRateLimit(req, res, next) {
 
 router.get('/plans', commercialController.listPublicPlans);
 router.post('/contact', contactRateLimit, commercialController.submitLead);
+
+/* Vídeo, contato e imagens da landing page, configurados pelo Painel do
+   Desenvolvedor (aba "Site"). */
+router.get('/site-content', siteContentController.getPublicSiteContent);
+router.get('/site-content/images/:slot', siteContentController.serveSiteImage);
 
 module.exports = router;

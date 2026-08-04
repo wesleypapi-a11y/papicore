@@ -120,14 +120,14 @@
     return { type: 'video', src: url };
   }
 
-  function initVideo() {
+  function initVideo(videoUrlRaw) {
     const playBtn = $('#videoPlayBtn');
     const caption = $('#videoCaption');
     const frame = $('#videoFrame');
     const cover = $('#videoCover');
     if (!playBtn) return;
 
-    const videoUrl = (typeof PAPICORE_DEMO_VIDEO_URL === 'string' ? PAPICORE_DEMO_VIDEO_URL : '').trim();
+    const videoUrl = String(videoUrlRaw || '').trim();
 
     if (!videoUrl) {
       playBtn.setAttribute('aria-disabled', 'true');
@@ -362,8 +362,8 @@
     return `https://wa.me/${withCountry}?text=${encodeURIComponent(message)}`;
   }
 
-  function initFooterContact() {
-    const contact = typeof PAPICORE_CONTACT === 'object' && PAPICORE_CONTACT ? PAPICORE_CONTACT : {};
+  function initFooterContact(contact) {
+    contact = contact || {};
     const col = $('#footerContact');
     if (!col) return;
 
@@ -390,17 +390,56 @@
     if (el) el.textContent = String(new Date().getFullYear());
   }
 
+  /* ---------- Conteúdo do site (vídeo, contato e imagens) ---------- */
+  /* Configurado pelo Painel do Desenvolvedor (aba "Site") — nunca fixo em
+     código. Se a imagem de um slot não tiver sido enviada pelo painel, o
+     <img> mantém o caminho estático padrão do HTML (/images/xxx.webp, com
+     fallback elegante em CSS caso o arquivo também não exista ali). */
+
+  const IMAGE_SLOT_TO_ID = {
+    hero: 'heroMockupImg',
+    demo_agenda: 'demoAgendaImg',
+    demo_servicos: 'demoServicosImg',
+    demo_unidades: 'demoUnidadesImg',
+    demo_financeiro: 'demoFinanceiroImg',
+    demo_painel: 'demoPainelImg'
+  };
+
+  function applySiteImages(images) {
+    if (!images) return;
+    Object.entries(IMAGE_SLOT_TO_ID).forEach(([slot, id]) => {
+      const info = images[slot];
+      const img = document.getElementById(id);
+      if (img && info && info.has && info.url) img.src = info.url;
+    });
+  }
+
+  async function loadSiteContent() {
+    const empty = { demo_video_url: '', contact_whatsapp: '', contact_email: '', contact_instagram: '', images: {} };
+    try {
+      const res = await fetch('/api/public/site-content');
+      if (!res.ok) return empty;
+      const data = await res.json();
+      return { ...empty, ...data };
+    } catch {
+      return empty;
+    }
+  }
+
   /* ---------- Boot ---------- */
 
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', async () => {
     initReveal();
     initMobileNav();
     initFaqAccordion();
     initDemoTabs();
-    initVideo();
     initContactModal();
-    initFooterContact();
     initFooterYear();
     loadPlans();
+
+    const site = await loadSiteContent();
+    initVideo(site.demo_video_url);
+    initFooterContact({ whatsapp: site.contact_whatsapp, email: site.contact_email, instagram: site.contact_instagram });
+    applySiteImages(site.images);
   });
 })();

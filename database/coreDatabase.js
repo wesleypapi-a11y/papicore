@@ -214,6 +214,22 @@ CREATE TABLE IF NOT EXISTS restore_runs (
 );
 `;
 
+/* Conteúdo editável do site institucional (papicore.com.br): vídeo
+   demonstrativo e dados de contato comercial. Linha única (id = 1). As
+   imagens (mockup do hero + galeria de demonstração) NÃO ficam aqui — são
+   arquivos em disco geridos por utils/assetStorage.js (platformAssetsDir),
+   o mesmo mecanismo já usado para a logo/favicon da tela de login. */
+const SITE_CONTENT_DDL = `
+CREATE TABLE IF NOT EXISTS site_content (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  demo_video_url TEXT,
+  contact_whatsapp TEXT,
+  contact_email TEXT,
+  contact_instagram TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
 /* Leads comerciais captados pelo site institucional (papicore.com.br). Nunca
    pertencem a um tenant — vivem só no banco central e são visíveis apenas no
    Painel do Desenvolvedor (rota GET /api/developer/leads). */
@@ -278,6 +294,7 @@ function openCore() {
   db.exec(MAINTENANCE_DDL);
   db.exec(RESTORE_RUNS_DDL);
   db.exec(COMMERCIAL_LEADS_DDL);
+  db.exec(SITE_CONTENT_DDL);
   migrateBrandingThemeColumns();
   runMigrations();
 }
@@ -1337,6 +1354,30 @@ function updateLeadStatus(id, status) {
   return getLeadById(id);
 }
 
+/* ---------- Conteúdo do site institucional ---------- */
+
+function getSiteContent() {
+  return db.prepare('SELECT * FROM site_content WHERE id = 1').get() || {
+    id: 1, demo_video_url: null, contact_whatsapp: null, contact_email: null, contact_instagram: null, updated_at: null
+  };
+}
+
+const SITE_CONTENT_FIELDS = ['demo_video_url', 'contact_whatsapp', 'contact_email', 'contact_instagram'];
+
+function upsertSiteContent(fields = {}) {
+  const values = { id: 1 };
+  for (const key of SITE_CONTENT_FIELDS) values[key] = fields[key] !== undefined ? fields[key] : null;
+  const existing = db.prepare('SELECT 1 FROM site_content WHERE id = 1').get();
+  if (existing) {
+    const sets = SITE_CONTENT_FIELDS.map((key) => `${key} = @${key}`);
+    db.prepare(`UPDATE site_content SET ${sets.join(', ')}, updated_at = datetime('now', 'localtime') WHERE id = 1`).run(values);
+  } else {
+    const columns = ['id', ...SITE_CONTENT_FIELDS];
+    db.prepare(`INSERT INTO site_content (${columns.join(', ')}) VALUES (${columns.map((c) => `@${c}`).join(', ')})`).run(values);
+  }
+  return getSiteContent();
+}
+
 /* ---------- Identidade visual ---------- */
 
 function getTenantBranding(tenantId) {
@@ -1513,6 +1554,9 @@ module.exports = {
   listLeads,
   findRecentLeadByWhatsapp,
   updateLeadStatus,
+  /* conteúdo do site institucional */
+  getSiteContent,
+  upsertSiteContent,
   /* identidade visual */
   getTenantBranding,
   upsertTenantBranding,

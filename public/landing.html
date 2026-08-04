@@ -51,7 +51,6 @@
       <a href="#planos">Planos</a>
       <a href="#faq">Perguntas frequentes</a>
       <div class="l-nav-actions">
-        <a class="l-btn l-btn-ghost" href="/desenvolvedor">Entrar</a>
         <a class="l-btn l-btn-primary" href="#demonstracao">Conhecer o PapiCore</a>
       </div>
     </nav>
@@ -97,7 +96,7 @@
                 <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
               </div>
             </div>
-            <img class="img-swap-img" src="/images/papicore-dashboard-placeholder.webp" alt="" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
+            <img id="heroMockupImg" class="img-swap-img" src="/images/papicore-dashboard-placeholder.webp" alt="" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
           </div>
           <div class="l-mockup-phone">
             <div class="l-mockup-phone-bar"></div>
@@ -171,7 +170,7 @@
           <div role="tabpanel" id="panel-agenda" aria-labelledby="tab-agenda" class="l-tabpanel">
             <div class="media-frame img-swap">
               <div class="media-placeholder" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M3 10h18M8 2v4M16 2v4"/></svg></div>
-              <img src="/images/demo-agenda.webp" alt="Tela da agenda do PapiCore, com horários organizados por unidade" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
+              <img id="demoAgendaImg" src="/images/demo-agenda.webp" alt="Tela da agenda do PapiCore, com horários organizados por unidade" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
             </div>
             <h3>Agenda</h3>
             <p>Acompanhe os agendamentos do dia, da semana e do mês em uma visão única e organizada.</p>
@@ -179,7 +178,7 @@
           <div role="tabpanel" id="panel-servicos" aria-labelledby="tab-servicos" class="l-tabpanel" hidden>
             <div class="media-frame img-swap">
               <div class="media-placeholder" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.1-3.1a4 4 0 0 1-4.9 4.9L8.7 18.3a2 2 0 0 1-2.8-2.8L13.1 8a4 4 0 0 1 4.9-4.9Z"/></svg></div>
-              <img src="/images/demo-servicos.webp" alt="Tela de cadastro de serviços do PapiCore, com valores e duração" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
+              <img id="demoServicosImg" src="/images/demo-servicos.webp" alt="Tela de cadastro de serviços do PapiCore, com valores e duração" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
             </div>
             <h3>Serviços</h3>
             <p>Cadastre e edite serviços, valores, duração e categorias de veículos em poucos cliques.</p>
@@ -187,7 +186,7 @@
           <div role="tabpanel" id="panel-unidades" aria-labelledby="tab-unidades" class="l-tabpanel" hidden>
             <div class="media-frame img-swap">
               <div class="media-placeholder" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 21V9l9-6 9 6v12"/><path d="M9 21v-8h6v8"/></svg></div>
-              <img src="/images/demo-unidades.webp" alt="Tela de gestão de unidades do PapiCore" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
+              <img id="demoUnidadesImg" src="/images/demo-unidades.webp" alt="Tela de gestão de unidades do PapiCore" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
             </div>
             <h3>Unidades</h3>
             <p>Gerencie uma ou várias unidades da empresa a partir do mesmo painel.</p>
@@ -195,7 +194,7 @@
           <div role="tabpanel" id="panel-financeiro" aria-labelledby="tab-financeiro" class="l-tabpanel" hidden>
             <div class="media-frame img-swap">
               <div class="media-placeholder" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg></div>
-              <img src="/images/demo-financeiro.webp" alt="Tela do financeiro do PapiCore, com entradas e saídas do mês" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
+              <img id="demoFinanceiroImg" src="/images/demo-financeiro.webp" alt="Tela do financeiro do PapiCore, com entradas e saídas do mês" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
             </div>
             <h3>Financeiro</h3>
             <p>Acompanhe entradas, saídas e o resultado do mês sem depender de planilhas soltas.</p>
@@ -203,7 +202,7 @@
           <div role="tabpanel" id="panel-painel" aria-labelledby="tab-painel" class="l-tabpanel" hidden>
             <div class="media-frame img-swap">
               <div class="media-placeholder" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></div>
-              <img src="/images/demo-painel.webp" alt="Painel administrativo do PapiCore" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
+              <img id="demoPainelImg" src="/images/demo-painel.webp" alt="Painel administrativo do PapiCore" loading="lazy" onload="this.classList.add('is-loaded')" onerror="this.remove()" />
             </div>
             <h3>Painel administrativo</h3>
             <p>Toda a operação da empresa reunida em um painel único, pensado para o dia a dia.</p>
@@ -467,7 +466,6 @@
       <a href="#como-funciona">Como funciona</a>
       <a href="#planos">Planos</a>
       <a href="#faq">Perguntas frequentes</a>
-      <a href="/desenvolvedor">Entrar</a>
     </nav>
 
     <nav class="l-footer-col" aria-label="Institucional">
@@ -483,6 +481,7 @@
   </div>
   <div class="l-container l-footer-bottom">
     <p id="footerCopyright">© <span id="footerYear">2026</span> PapiCore. Todos os direitos reservados.</p>
+    <a href="/desenvolvedor" class="l-dev-corner" aria-label="Acesso do desenvolvedor">desenvolvedor</a>
   </div>
 </footer>
 
@@ -558,19 +557,9 @@
   </div>
 </dialog>
 
-<script>
-  /* Configuração central de contato comercial. Preencha estes valores
-     quando o WhatsApp/e-mail/Instagram oficiais estiverem definidos —
-     nenhum outro arquivo deve duplicar esses dados. */
-  const PAPICORE_CONTACT = {
-    whatsapp: '',
-    email: '',
-    instagram: ''
-  };
-  /* URL do vídeo demonstrativo (YouTube, Vimeo ou arquivo local .mp4).
-     Vazio = mostra a capa com "Vídeo demonstrativo em breve". */
-  const PAPICORE_DEMO_VIDEO_URL = '';
-</script>
+<!-- Vídeo demonstrativo, WhatsApp/e-mail/Instagram e as imagens desta página
+     são configurados pelo Painel do Desenvolvedor (aba "Site") e carregados
+     em tempo real por /js/landing.js via GET /api/public/site-content. -->
 <script src="/js/landing.js" defer></script>
 
 <script type="application/ld+json">

@@ -541,7 +541,8 @@ main section[id], #contato { scroll-margin-top: calc(var(--l-header-h) + 12px); 
 .l-footer-col a { color: var(--l-text-soft); text-decoration: none; font-size: 14px; }
 .l-footer-col a:hover { color: #fff; }
 .l-footer-col .muted { color: var(--l-text-muted); font-size: 13.5px; margin: 0; }
-.l-footer-bottom { border-top: 1px solid var(--l-border-soft); padding: 20px 0; text-align: center; color: var(--l-text-muted); font-size: 13px; }
+.l-footer-bottom { border-top: 1px solid var(--l-border-soft); padding: 20px 0; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; color: var(--l-text-muted); font-size: 13px; }
+.l-footer-bottom #footerCopyright { margin: 0 auto 0 0; }
 
 /* ---------- Modal de contato ---------- */
 
@@ -610,6 +611,26 @@ main section[id], #contato { scroll-margin-top: calc(var(--l-header-h) + 12px); 
 .l-legal-wrap li { margin-bottom: 6px; }
 .l-legal-back { display: inline-flex; align-items: center; gap: 6px; color: var(--l-primary); text-decoration: none; font-size: 14px; font-weight: 600; margin-bottom: 26px; }
 .l-legal-back:hover { text-decoration: underline; }
+
+/* ---------- Acesso do desenvolvedor ----------
+   Discreto, no canto inferior direito do rodapé (não fixo na tela: um link
+   fixo sempre visível ficaria sobreposto a botões em telas pequenas,
+   dependendo da rolagem — testado e confirmado durante o desenvolvimento). */
+
+.l-dev-corner {
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--l-text-muted);
+  text-decoration: none;
+  opacity: 0.6;
+  padding: 4px 2px;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.l-dev-corner:hover, .l-dev-corner:focus-visible {
+  opacity: 1;
+  color: var(--l-text-soft);
+  text-decoration: underline;
+}
 
 /* ---------- Responsivo ---------- */
 

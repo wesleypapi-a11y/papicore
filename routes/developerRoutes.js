@@ -13,6 +13,7 @@
 const express = require('express');
 const developerController = require('../controllers/developerController');
 const brandingController = require('../controllers/brandingController');
+const siteContentController = require('../controllers/siteContentController');
 const { requireDeveloper } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -121,6 +122,13 @@ router.delete('/financial/:id', developerController.deleteFinancialEntryHandler)
 /* Leads comerciais (site institucional papicore.com.br) */
 router.get('/leads', developerController.listLeadsHandler);
 router.patch('/leads/:id/status', developerController.updateLeadStatusHandler);
+
+/* Conteúdo do site institucional: vídeo, contato e imagens da landing page.
+   Salvo aqui, aparece automaticamente no site (GET /api/public/site-content). */
+router.get('/site-content', siteContentController.getDeveloperSiteContent);
+router.put('/site-content', siteContentController.updateSiteContent);
+router.post('/site-content/images/:slot', siteContentController.uploadSiteImage);
+router.delete('/site-content/images/:slot', siteContentController.removeSiteImage);
 
 /* Logs */
 router.get('/logs', developerController.logsHandler);

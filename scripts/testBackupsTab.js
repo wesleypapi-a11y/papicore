@@ -18,7 +18,7 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'desenvol
 
 function extractFunction(name) {
   const prefix = name === 'backups' ? 'async function ' : 'function ';
-  const re = new RegExp('^  (' + prefix + name + '\\(\\)\\{.*)$', 'm');
+  const re = new RegExp('^  (' + prefix + name + '\\([^)]*\\)\\{.*)$', 'm');
   const m = SRC.match(re);
   if (!m) throw new Error('função ' + name + ' não encontrada em desenvolvedor.js');
   return m[1];
@@ -119,7 +119,7 @@ function buildSandbox() {
   const toasts = [];
   const calls = [];
   const state = { token: 't', user: null, view: 'backups', tenants: [], plans: [], backups: undefined, restores: [] };
-  const shared = { tenantsResponse: [], backupsResponse: [], restoresResponse: [], storageResponse: { disk: null, backups_size_bytes: 0 } };
+  const shared = { tenantsResponse: [], backupsResponse: [], restoresResponse: [], storageResponse: { disk: null, backups_size_bytes: 0 }, failKeys: [] };
   let formData = {};
 
   const handlers = {
@@ -133,6 +133,7 @@ function buildSandbox() {
   async function api(url, opt = {}) {
     const key = (opt.method || 'GET') + ' ' + url;
     calls.push(key);
+    if (shared.failKeys.includes(key)) throw new Error('erro servidor simulado');
     if (!handlers[key]) throw new Error('endpoint inesperado: ' + key);
     return handlers[key]();
   }
@@ -348,8 +349,9 @@ async function main() {
   {
     const { sandbox, doc, toasts, shared } = buildSandbox();
     shared.tenantsResponse = [t1];
-    shared.backupsResponse = (() => { throw new Error('erro servidor'); })();
+    shared.backupsResponse = [backupRun('b1', t1)];
     shared.restoresResponse = [];
+    shared.failKeys = ['GET /api/developer/backups'];
     const ctx = loadBackups(sandbox);
     await vm.runInContext('backups()', ctx);
     await tick();
@@ -363,7 +365,7 @@ async function main() {
     shared.tenantsResponse = [t1];
     shared.backupsResponse = [];
     shared.restoresResponse = [];
-    shared.storageResponse = (() => { throw new Error('erro storage'); })();
+    shared.failKeys = ['GET /api/developer/backups/storage'];
     const ctx = loadBackups(sandbox);
     await vm.runInContext('backups()', ctx);
     await tick();
@@ -374,9 +376,10 @@ async function main() {
   /* 16. erro ao carregar empresas → toast específico e aba não quebra */
   {
     const { sandbox, doc, toasts, shared } = buildSandbox();
-    shared.tenantsResponse = (() => { throw new Error('erro tenants'); })();
+    shared.tenantsResponse = [t1];
     shared.backupsResponse = [];
     shared.restoresResponse = [];
+    shared.failKeys = ['GET /api/developer/tenants'];
     const ctx = loadBackups(sandbox);
     await vm.runInContext('backups()', ctx);
     await tick();
