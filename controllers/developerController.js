@@ -8,9 +8,6 @@
  * logs, backups e impersonação. Usa o banco central (papi_core.db).
  */
 
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -46,9 +43,7 @@ const {
   deleteUser,
   getTenantOwner,
   listPlans,
-  insertPlan,
-  updatePlan,
-  deletePlan,
+  getPlanBySlug,
   listFinancialEntries,
   getFinancialEntry,
   insertFinancialEntry,
@@ -56,31 +51,23 @@ const {
   deleteFinancialEntry,
   listLogs,
   logActivity,
-  normalizeDomain
+  normalizeDomain,
+  listLeads,
+  updateLeadStatus
 } = require('../database/coreDatabase');
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
 const { createTenantDatabase } = require('../database/tenantDatabase');
 const { deleteTenantDatabase } = require('../database/tenantDatabase');
-const { AppError, isValidEmail, isValidPhone, todayStr, slugify } = require('../utils/helpers');
+const { AppError, isValidEmail, isValidPhone, todayStr, slugify, LEAD_STATUSES } = require('../utils/helpers');
 const { signToken } = require('./authController');
+const backupService = require('../services/backupService');
+const restoreService = require('../services/restoreService');
+const planService = require('../services/planService');
 
 const VALID_STATUSES = ['ACTIVE', 'SUSPENDED', 'TRIAL', 'ARCHIVED'];
-const BACKUPS_DIR = path.join(__dirname, '..', 'data', 'backups');
 
 function auditDetails(req, message) {
   return JSON.stringify({ message, ip: req.ip || null, user_agent: String(req.headers['user-agent'] || '').slice(0, 300) });
-}
-
-function parseFeatures(value) {
-  if (Array.isArray(value)) return value.map((i) => String(i).trim()).filter(Boolean);
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed;
-    } catch { /* ignore */ }
-    return value.split('\n').map((i) => i.trim()).filter(Boolean);
-  }
-  return [];
 }
 
 function pluckTenant(t, extra = {}) {
@@ -272,6 +259,13 @@ function validateTenantInput(body, { existing } = {}) {
   if (status !== undefined && !VALID_STATUSES.includes(status)) {
     throw new AppError(400, 'Status inválido (use ACTIVE, SUSPENDED ou TRIAL).');
   }
+  if (plan !== undefined && plan) {
+    const planUpper = String(plan).toUpperCase();
+    const exists = listPlans().some((p) => String(p.slug).toUpperCase() === planUpper);
+    if (!exists) {
+      throw new AppError(400, 'Plano inválido. Cadastre o plano no painel de Planos e Assinaturas antes de usá-lo.');
+    }
+  }
   if (expires_at !== undefined && expires_at) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(expires_at)) throw new AppError(400, 'Data de vencimento inválida.');
   }
@@ -397,6 +391,16 @@ function updateTenantHandler(req, res) {
   }
 
   const tenant = updateTenant(existing.id, fields);
+
+  /* Se o plano da empresa mudou, mantém a assinatura sincronizada (a
+     assinatura é a fonte de verdade de preço/limite; tenants.plan é espelho). */
+  if (fields.plan !== undefined) {
+    const plan = getPlanBySlug(fields.plan) ||
+      listPlans().find((p) => String(p.slug).toUpperCase() === String(fields.plan).toUpperCase());
+    if (plan) {
+      planService.updateTenantSubscription(existing.id, { plan_id: plan.id });
+    }
+  }
 
   /* se informou dados do administrador, atualiza o owner */
   if ((data.adminName !== undefined || data.adminEmail !== undefined) && !data.adminPassword) {
@@ -534,36 +538,97 @@ function impersonate(req, res) {
   });
 }
 
-function backupTenant(req, res) {
+/*
+ * Backup manual de uma empresa (POST /api/developer/tenants/:id/backup).
+ * Delega ao backupService, que gera o ZIP (banco consistente + integridade +
+ * hash SHA-256 + assets + manifest.json) e registra o histórico em backup_runs.
+ */
+function backupTenant(req, res, next) {
   const tenant = getTenantById(req.params.id);
   if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
 
-  const tenantDb = require('../database/tenantDatabase').openTenantDatabase(tenant.database_name);
-  fs.mkdirSync(BACKUPS_DIR, { recursive: true });
-  const backupName = `${tenant.database_name.replace('.db', '')}-${Date.now()}.db`;
-  const tmpFile = path.join(BACKUPS_DIR, backupName);
-  const escaped = tmpFile.replace(/'/g, "''");
-  tenantDb.exec(`VACUUM INTO '${escaped}'`);
-
-  logActivity(req.user.id, tenant.id, 'BACKUP', 'Backup do banco gerado');
-  if (req.method === 'GET') return res.download(tmpFile, `${tenant.database_name.replace('.db', '')}-backup-${todayStr()}.db`);
-  return res.status(201).json({ success: true, name: backupName, size: fs.statSync(tmpFile).size, created_at: new Date().toISOString() });
+  backupService.createTenantBackup({
+    tenantId: tenant.id,
+    backupType: 'TENANT_MANUAL',
+    userId: req.user.id
+  }).then((run) => res.status(201).json(run)).catch(next);
 }
 
+/* GET /api/developer/backups */
 function listBackupsHandler(req, res) {
-  if (!fs.existsSync(BACKUPS_DIR)) return res.json([]);
-  const tenants = listTenants();
-  const backups = fs.readdirSync(BACKUPS_DIR)
-    .filter((name) => /^tenant_\d{4}_[a-z0-9_-]+-\d+\.db$/.test(name))
-    .map((name) => {
-      const stat = fs.statSync(path.join(BACKUPS_DIR, name));
-      const tenant = tenants.find((item) => name.startsWith(item.database_name.replace('.db', '') + '-'));
-      return { name, size: stat.size, created_at: stat.birthtime.toISOString(), tenant: tenant ? { id: tenant.id, name: tenant.name } : null };
-    });
-  return res.json(backups.sort((a, b) => b.created_at.localeCompare(a.created_at)));
+  const tenantId = req.query.tenant_id ? Number(req.query.tenant_id) : undefined;
+  return res.json(backupService.listBackups({ tenantId }));
 }
 
-function deleteTenantHandler(req, res) {
+/* GET /api/developer/backups/:backupId */
+function getBackupHandler(req, res) {
+  return res.json(backupService.getBackup(req.params.backupId));
+}
+
+/* GET /api/developer/backups/storage */
+function storageInfoHandler(req, res) {
+  return res.json(backupService.getStorageInfo());
+}
+
+/* GET /api/developer/backups/:backupId/download */
+function downloadBackupHandler(req, res) {
+  const { run, filePath, filename } = backupService.resolveBackupFile(req.params.backupId);
+  logActivity(req.user.id, run.tenant_id, 'BACKUP_DOWNLOADED', `Download de ${run.filename || filename}`);
+  return res.download(filePath, filename);
+}
+
+/* DELETE /api/developer/backups/:backupId */
+function deleteBackupHandler(req, res) {
+  const run = backupService.deleteBackup(req.params.backupId, req.user.id);
+  return res.json(run);
+}
+
+/* ---------- Restauração de backups ---------- */
+
+/* POST /api/developer/backups/:backupId/restore */
+function restoreBackupHandler(req, res, next) {
+  const { run } = backupService.getBackup(req.params.backupId);
+  restoreService.restoreTenantBackup({
+    backupId: req.params.backupId,
+    tenantId: run.tenant_id,
+    userId: req.user.id
+  }).then((restoreRun) => res.status(201).json(restoreRun)).catch(next);
+}
+
+/* GET /api/developer/restores */
+function listRestoresHandler(req, res) {
+  const tenantId = req.query.tenant_id ? Number(req.query.tenant_id) : undefined;
+  return res.json(restoreService.listRestores({ tenantId }));
+}
+
+/* GET /api/developer/restores/:restoreId */
+function getRestoreHandler(req, res) {
+  return res.json(restoreService.getRestore(req.params.restoreId));
+}
+
+/*
+ * POST /api/developer/restores/:restoreId
+ * Nova tentativa de uma restauração que falhou: inicia uma nova execução a
+ * partir do MESMO backup da execução original.
+ */
+function retryRestoreHandler(req, res, next) {
+  const run = restoreService.getRestore(req.params.restoreId);
+  if (['RUNNING', 'ROLLBACK_RUNNING'].includes(run.status)) {
+    throw new AppError(409, 'Esta restauração ainda está em andamento.');
+  }
+  restoreService.restoreTenantBackup({
+    backupId: run.backup_id,
+    tenantId: run.tenant_id,
+    userId: req.user.id
+  }).then((newRun) => res.status(201).json({ restored_run: newRun, previous_run: run })).catch(next);
+}
+
+/* GET /api/developer/tenants/:tenantId/maintenance */
+function getMaintenanceHandler(req, res) {
+  return res.json(restoreService.getMaintenanceStatus(req.params.tenantId));
+}
+
+function deleteTenantHandler(req, res, next) {
   const tenant = getTenantById(req.params.id);
   if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
   if (tenant.slug === 'torque-detail') {
@@ -574,12 +639,30 @@ function deleteTenantHandler(req, res) {
   if (confirmation !== tenant.name && confirmation !== tenant.slug) {
     throw new AppError(400, 'Digite exatamente o nome ou slug da empresa para confirmar.');
   }
-  /* Exclusão definitiva: apaga o banco de dados exclusivo da empresa e a
-     linha em tenants — domínios, usuários e lançamentos financeiros somem
-     junto via ON DELETE CASCADE (foreign_keys ligado em openCore()). */
-  deleteTenant(tenant.id);
-  logActivity(req.user.id, null, 'TENANT_DELETED', `Empresa "${tenant.name}" excluída permanentemente`);
-  return res.json({ success: true });
+
+  /* Backup pré-exclusão: se falhar, a exclusão é CANCELADA. O backup gerado
+     permanece em disco mesmo após a exclusão (FK ON DELETE SET NULL). */
+  (async () => {
+    try {
+      await backupService.createTenantBackup({
+        tenantId: tenant.id,
+        backupType: 'TENANT_PRE_DELETE',
+        userId: req.user.id
+      });
+      logActivity(req.user.id, tenant.id, 'TENANT_PRE_DELETE_BACKUP_SUCCESS', `Backup pré-exclusão da empresa "${tenant.name}" gerado`);
+    } catch (backupErr) {
+      logActivity(req.user.id, tenant.id, 'TENANT_DELETE_BLOCKED_BY_BACKUP_FAILURE', `Exclusão de "${tenant.name}" bloqueada: backup pré-exclusão falhou (${backupErr.message})`);
+      if (backupErr instanceof AppError) throw backupErr;
+      throw new AppError(409, 'Não foi possível gerar o backup pré-exclusão. A exclusão foi cancelada.');
+    }
+
+    /* Exclusão definitiva: apaga o banco de dados exclusivo da empresa e a
+       linha em tenants — domínios, usuários e lançamentos financeiros somem
+       junto via ON DELETE CASCADE (foreign_keys ligado em openCore()). */
+    deleteTenant(tenant.id);
+    logActivity(req.user.id, null, 'TENANT_DELETED', `Empresa "${tenant.name}" excluída permanentemente`);
+    return res.json({ success: true });
+  })().catch(next);
 }
 
 /* ---------- Domínios ---------- */
@@ -784,61 +867,89 @@ function deleteUserHandler(req, res) {
   return res.json({ success: true });
 }
 
-/* ---------- Planos ---------- */
+/* ---------- Planos e Assinaturas ---------- */
 
 function listPlansHandler(req, res) {
-  const plans = listPlans().map((p) => ({ ...p, features: parseFeatures(p.features) }));
+  const plans = planService.getAllPlans().map((p) => {
+    const subscriptions = require('../database/coreDatabase').listSubscriptions().filter((s) => s.plan_id === p.id).length;
+    return { ...p, subscription_count: subscriptions };
+  });
   return res.json(plans);
 }
 
 function createPlan(req, res) {
-  const { name, slug, monthly_price, appointment_limit, features } = req.body || {};
-  if (!name || String(name).trim().length < 2) throw new AppError(400, 'Informe o nome do plano.');
-  if (listPlans().some((p) => p.slug === String(slug || slugify(name)).toUpperCase())) {
-    throw new AppError(409, 'Já existe um plano com este slug.');
-  }
-  const plan = insertPlan({ name, slug, monthly_price, appointment_limit, features });
-  logActivity(req.user.id, null, 'PLAN_CREATED', `Plano ${plan.slug} criado`);
-  return res.status(201).json({ ...plan, features: parseFeatures(plan.features) });
+  const plan = planService.createPlan(req.body || {});
+  logActivity(req.user.id, null, 'PLAN_CREATED', `Plano ${plan.slug} criado (${plan.name})`);
+  return res.status(201).json(plan);
 }
 
 function updatePlanHandler(req, res) {
-  const plans = listPlans();
-  const current = plans.find((p) => String(p.id) === String(req.params.id));
-  if (!current) throw new AppError(404, 'Plano não encontrado.');
+  const plan = planService.updatePlan(req.params.id, req.body || {});
+  logActivity(req.user.id, null, 'PLAN_UPDATED', `Plano ${plan.slug} atualizado (${plan.name})`);
+  return res.json(plan);
+}
 
-  const { name, slug, monthly_price, appointment_limit, features, active } = req.body || {};
-  const fields = {};
-  if (name !== undefined) fields.name = String(name).trim();
-  if (slug !== undefined) {
-    const newSlug = String(slug).toUpperCase();
-    if (plans.some((p) => p.slug === newSlug && String(p.id) !== String(req.params.id))) {
-      throw new AppError(409, 'Já existe um plano com este slug.');
-    }
-    fields.slug = newSlug;
-  }
-  if (monthly_price !== undefined) fields.monthly_price = Number(monthly_price) || 0;
-  if (appointment_limit !== undefined) fields.appointment_limit = appointment_limit === '' ? null : Number(appointment_limit);
-  if (features !== undefined) fields.features = features;
-  if (active !== undefined) fields.active = active ? 1 : 0;
-
-  const plan = updatePlan(current.id, fields);
-  logActivity(req.user.id, null, 'PLAN_UPDATED', `Plano ${plan.slug} atualizado`);
-  return res.json({ ...plan, features: parseFeatures(plan.features) });
+function setPlanStatusHandler(req, res) {
+  const { is_active } = req.body || {};
+  if (typeof is_active !== 'boolean') throw new AppError(400, 'Informe o novo status (is_active).');
+  const plan = planService.updatePlan(req.params.id, { is_active });
+  logActivity(req.user.id, null, 'PLAN_STATUS_CHANGED', `Plano ${plan.slug} ${is_active ? 'ativado' : 'inativado'}`);
+  return res.json(plan);
 }
 
 function deletePlanHandler(req, res) {
-  const plans = listPlans();
-  const current = plans.find((p) => String(p.id) === String(req.params.id));
-  if (!current) throw new AppError(404, 'Plano não encontrado.');
-
-  const inUse = listTenants().filter((t) => t.plan === current.slug).length;
-  if (inUse > 0) {
-    throw new AppError(409, `Este plano está em uso por ${inUse} empresa(s).`);
+  const result = planService.deletePlan(req.params.id);
+  if (result.deactivated) {
+    logActivity(req.user.id, null, 'PLAN_DEACTIVATED', `Plano ${result.plan.slug} em uso foi inativado`);
+    return res.json({ success: false, message: 'Plano em uso não pode ser excluído e foi inativado.', plan: result.plan });
   }
-  deletePlan(current.id);
-  logActivity(req.user.id, null, 'PLAN_DELETED', `Plano ${current.slug} excluído`);
-  return res.json({ success: true });
+  logActivity(req.user.id, null, 'PLAN_DELETED', `Plano ${result.plan.slug} excluído`);
+  return res.json({ success: true, plan: result.plan });
+}
+
+function listSubscriptionsHandler(req, res) {
+  const subscriptions = planService.getAllSubscriptions().map((s) => {
+    const tenant = getTenantById(s.tenant_id);
+    return {
+      ...s,
+      effective_monthly_price_cents: planService.getEffectiveMonthlyPrice(s),
+      units: tenant ? {
+        current: require('../database/coreDatabase').countTenantUnits(tenant.database_name),
+        max: s.plan_max_units
+      } : null
+    };
+  });
+  return res.json(subscriptions);
+}
+
+function getSubscriptionHandler(req, res) {
+  const tenant = getTenantById(req.params.id);
+  if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
+  const subscription = planService.getSubscriptionByTenantId(tenant.id);
+  const withPlan = planService.getSubscriptionWithPlan(subscription);
+  return res.json({
+    subscription: withPlan,
+    effective_monthly_price_cents: subscription ? planService.getEffectiveMonthlyPrice(subscription) : null,
+    units: {
+      current: require('../database/coreDatabase').countTenantUnits(tenant.database_name),
+      max: subscription ? planService.subscriptionMaxUnitsFor(tenant) : null
+    }
+  });
+}
+
+function updateSubscriptionHandler(req, res) {
+  const tenant = getTenantById(req.params.id);
+  if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
+  const subscription = planService.updateTenantSubscription(tenant.id, req.body || {});
+  logActivity(req.user.id, tenant.id, 'SUBSCRIPTION_UPDATED', `Assinatura de "${tenant.name}" atualizada`);
+  return res.json({
+    subscription,
+    effective_monthly_price_cents: planService.getEffectiveMonthlyPrice(subscription),
+    units: {
+      current: require('../database/coreDatabase').countTenantUnits(tenant.database_name),
+      max: planService.subscriptionMaxUnitsFor(tenant)
+    }
+  });
 }
 
 /* ---------- Financeiro ---------- */
@@ -967,6 +1078,25 @@ function platformSettings(req, res) {
   });
 }
 
+/* ---------- Leads comerciais (site institucional) ---------- */
+
+function listLeadsHandler(req, res) {
+  const { status } = req.query;
+  const leads = listLeads(status ? { status } : {});
+  return res.json(leads);
+}
+
+function updateLeadStatusHandler(req, res) {
+  const { status } = req.body || {};
+  if (!LEAD_STATUSES.includes(status)) {
+    throw new AppError(400, `Status inválido. Use um de: ${LEAD_STATUSES.join(', ')}.`);
+  }
+  const lead = updateLeadStatus(req.params.id, status);
+  if (!lead) throw new AppError(404, 'Lead não encontrado.');
+  logActivity(req.user.id, null, 'LEAD_STATUS_CHANGED', `Lead #${lead.id} (${lead.name}) marcado como "${status}"`);
+  return res.json(lead);
+}
+
 module.exports = {
   login,
   me,
@@ -984,6 +1114,15 @@ module.exports = {
   impersonate,
   backupTenant,
   listBackupsHandler,
+  getBackupHandler,
+  storageInfoHandler,
+  downloadBackupHandler,
+  deleteBackupHandler,
+  restoreBackupHandler,
+  listRestoresHandler,
+  getRestoreHandler,
+  retryRestoreHandler,
+  getMaintenanceHandler,
   deleteTenantHandler,
   listDomainsHandler,
   addDomain,
@@ -997,11 +1136,17 @@ module.exports = {
   listPlansHandler,
   createPlan,
   updatePlanHandler,
+  setPlanStatusHandler,
   deletePlanHandler,
+  listSubscriptionsHandler,
+  getSubscriptionHandler,
+  updateSubscriptionHandler,
   listFinancialHandler,
   createFinancialEntry,
   updateFinancialEntryHandler,
   deleteFinancialEntryHandler,
   logsHandler,
-  platformSettings
+  platformSettings,
+  listLeadsHandler,
+  updateLeadStatusHandler
 };

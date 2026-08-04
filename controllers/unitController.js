@@ -1,10 +1,44 @@
 const { getDb } = require('../database/tenantDatabase');
+const planService = require('../services/planService');
 const {
   AppError,
   isValidTime,
   isValidPhone,
   parseWorkingDays
 } = require('../utils/helpers');
+
+/*
+ * Informações do plano da empresa para o painel administrativo: plano,
+ * status da assinatura, preço efetivo e uso de unidades. A empresa só
+ * consulta — planos/assinaturas são geridos pelo painel do desenvolvedor.
+ */
+function getPlanInfo(req, res) {
+  const tenant = req.tenant;
+  const subscription = planService.getSubscriptionByTenantId(tenant.id);
+  const withPlan = planService.getSubscriptionWithPlan(subscription);
+  const currentUnits = subscription ? planService.getTenantUnitUsage(tenant).currentUnits : 0;
+  const maxUnits = subscription ? planService.subscriptionMaxUnitsFor(tenant) : null;
+  const effectivePrice = subscription ? planService.getEffectiveMonthlyPrice(subscription) : null;
+  return res.json({
+    tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+    plan: withPlan && withPlan.plan ? {
+      id: withPlan.plan.id,
+      name: withPlan.plan.name,
+      slug: withPlan.plan.slug,
+      max_units: withPlan.plan.max_units,
+      support_level: withPlan.plan.support_level
+    } : null,
+    subscription: subscription ? {
+      status: subscription.status,
+      custom_monthly_price_cents: subscription.custom_monthly_price_cents,
+      current_period_end: subscription.current_period_end,
+      next_due_date: subscription.next_due_date,
+      billing_day: subscription.billing_day
+    } : null,
+    effective_monthly_price_cents: effectivePrice,
+    units: { current: currentUnits, max: maxUnits }
+  });
+}
 
 function listAll(req, res) {
   const db = getDb();
@@ -170,4 +204,4 @@ function remove(req, res) {
   return res.json({ success: true });
 }
 
-module.exports = { listAll, getOne, create, update, remove };
+module.exports = { getPlanInfo, listAll, getOne, create, update, remove };

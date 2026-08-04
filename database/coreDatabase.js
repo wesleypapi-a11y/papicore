@@ -6,11 +6,13 @@
  * Este banco NÃO armazena agendamentos, clientes, serviços ou agenda de
  * nenhuma empresa. Ele controla apenas a plataforma:
  *
- *   - plans: planos disponíveis (FREE, STARTER, PRO, ENTERPRISE...);
- *   - tenants: empresas cadastradas (nome, slug, banco, plano, status...);
+ *   - plans: planos disponíveis (valores em centavos, limite de unidades);
+ *   - subscriptions: assinatura de cada empresa (plano, status, vencimentos);
+ *   - tenants: empresas cadastradas (nome, slug, banco, status...);
  *   - users: usuários da plataforma (developer + usuários das empresas);
  *   - tenant_domains: domínios próprios de cada empresa;
- *   - activity_logs: trilha de auditoria do painel do desenvolvedor.
+ *   - activity_logs: trilha de auditoria do painel do desenvolvedor;
+ *   - schema_migrations: controle de migrações idempotentes deste banco.
  *
  * Ao subir o servidor, este módulo também migra o banco legado
  * (data/app.db) para o banco da primeira empresa (tenant_0001_torque_detail.db),
@@ -22,7 +24,7 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
-const { slugify, todayStr } = require('../utils/helpers');
+const { slugify, todayStr, toDateStr, addDays, parseCurrencyToCents } = require('../utils/helpers');
 const {
   openTenantDatabase,
   createTenantDatabase,
@@ -38,18 +40,45 @@ const DATA_DIR =
 const CORE_FILE = path.join(DATA_DIR, 'papi_core.db');
 const LEGACY_FILE = path.join(DATA_DIR, 'app.db');
 
+const SUBSCRIPTIONS_DDL = `
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+  plan_id INTEGER NOT NULL REFERENCES plans(id),
+  custom_monthly_price_cents INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',
+  billing_day INTEGER,
+  started_at TEXT,
+  current_period_start TEXT,
+  current_period_end TEXT,
+  last_payment_at TEXT,
+  next_due_date TEXT,
+  suspended_at TEXT,
+  canceled_at TEXT,
+  notes TEXT,
+  external_customer_id TEXT,
+  external_subscription_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
 const CORE_DDL = `
 CREATE TABLE IF NOT EXISTS plans (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
-  monthly_price REAL NOT NULL DEFAULT 0,
-  appointment_limit INTEGER,
-  features TEXT,
-  active INTEGER NOT NULL DEFAULT 1,
+  description TEXT,
+  monthly_price_cents INTEGER NOT NULL DEFAULT 0,
+  max_units INTEGER,
+  support_level TEXT NOT NULL DEFAULT 'standard',
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+${SUBSCRIPTIONS_DDL}
 
 CREATE TABLE IF NOT EXISTS tenants (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,13 +154,94 @@ CREATE TABLE IF NOT EXISTS tenant_branding (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS backup_runs (
+  id TEXT PRIMARY KEY,
+  tenant_id INTEGER,
+  backup_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  filename TEXT,
+  relative_path TEXT,
+  size_bytes INTEGER,
+  sha256 TEXT,
+  database_count INTEGER DEFAULT 0,
+  asset_file_count INTEGER DEFAULT 0,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  error_message TEXT,
+  created_by_user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
 `;
 
+/* Modo de manutenção por empresa (usado durante restaurações). Idempotente. */
+const MAINTENANCE_DDL = `
+CREATE TABLE IF NOT EXISTS tenant_maintenance (
+  tenant_id INTEGER PRIMARY KEY,
+  active INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  started_at TEXT,
+  updated_at TEXT,
+  started_by_user_id INTEGER,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+`;
+
+/* Histórico de restaurações por empresa. Nunca guarda senha, token ou
+   caminho absoluto — apenas referências e status sanitizados. */
+const RESTORE_RUNS_DDL = `
+CREATE TABLE IF NOT EXISTS restore_runs (
+  id TEXT PRIMARY KEY,
+  tenant_id INTEGER NOT NULL,
+  backup_id TEXT NOT NULL,
+  pre_restore_backup_id TEXT,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  started_by_user_id INTEGER,
+  error_message TEXT,
+  rollback_status TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (backup_id) REFERENCES backup_runs(id),
+  FOREIGN KEY (pre_restore_backup_id) REFERENCES backup_runs(id)
+);
+`;
+
+/* Leads comerciais captados pelo site institucional (papicore.com.br). Nunca
+   pertencem a um tenant — vivem só no banco central e são visíveis apenas no
+   Painel do Desenvolvedor (rota GET /api/developer/leads). */
+const COMMERCIAL_LEADS_DDL = `
+CREATE TABLE IF NOT EXISTS commercial_leads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  company_name TEXT,
+  whatsapp TEXT NOT NULL,
+  city TEXT,
+  units_count INTEGER,
+  interested_plan TEXT,
+  message TEXT,
+  source TEXT NOT NULL DEFAULT 'website',
+  status TEXT NOT NULL DEFAULT 'new',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
+/* Planos iniciais da plataforma. Os valores ficam fixos aqui (migration/seed)
+   e NÃO são duplicados no front-end: depois da primeira criação, o painel do
+   desenvolvedor pode alterar preço, limite e status. max_units = null
+   significa unidades ilimitadas. */
 const SEED_PLANS = [
-  { id: 1, name: 'Gratuito', slug: 'FREE', monthly_price: 0, appointment_limit: 30, features: JSON.stringify(['Até 30 agendamentos/mês', '1 unidade', '1 domínio próprio']) },
-  { id: 2, name: 'Starter', slug: 'STARTER', monthly_price: 49.9, appointment_limit: 100, features: JSON.stringify(['Até 100 agendamentos/mês', '1 unidade', 'Domínios próprios', 'Suporte por e-mail']) },
-  { id: 3, name: 'Pro', slug: 'PRO', monthly_price: 99.9, appointment_limit: null, features: JSON.stringify(['Agendamentos ilimitados', 'Múltiplas unidades', 'Domínios próprios', 'Backup automático', 'Suporte prioritário']) },
-  { id: 4, name: 'Enterprise', slug: 'ENTERPRISE', monthly_price: 199.9, appointment_limit: null, features: JSON.stringify(['Agendamentos ilimitados', 'Múltiplas unidades', 'Domínios ilimitados', 'Backup automático', 'Onboarding dedicado']) }
+  { name: 'Starter', slug: 'STARTER', monthly_price_cents: 9790, max_units: 1, support_level: 'standard', display_order: 1, is_active: 1, description: 'Para quem está começando: 1 unidade e suporte padrão.' },
+  { name: 'Professional', slug: 'PROFESSIONAL', monthly_price_cents: 19790, max_units: 3, support_level: 'priority', display_order: 2, is_active: 1, description: 'Até 3 unidades e suporte prioritário.' },
+  { name: 'Enterprise', slug: 'ENTERPRISE', monthly_price_cents: 39790, max_units: null, support_level: 'priority', display_order: 3, is_active: 1, description: 'Unidades ilimitadas e suporte prioritário.' }
 ];
 
 let db = null;
@@ -165,17 +275,14 @@ function openCore() {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(CORE_DDL);
+  db.exec(MAINTENANCE_DDL);
+  db.exec(RESTORE_RUNS_DDL);
+  db.exec(COMMERCIAL_LEADS_DDL);
   migrateBrandingThemeColumns();
+  runMigrations();
 }
 
 function seedCore() {
-  const insertPlan = db.prepare(
-    'INSERT OR IGNORE INTO plans (id, name, slug, monthly_price, appointment_limit, features) VALUES (?, ?, ?, ?, ?, ?)'
-  );
-  for (const p of SEED_PLANS) {
-    insertPlan.run(p.id, p.name, p.slug, p.monthly_price, p.appointment_limit, p.features);
-  }
-
   /* Usuário desenvolvedor (role = developer, tenant_id = NULL) */
   const devEmail = String(process.env.DEVELOPER_EMAIL || '').trim().toLowerCase();
   const devPassword = String(process.env.DEVELOPER_PASSWORD || '');
@@ -198,7 +305,7 @@ function seedCore() {
   if (!db.prepare('SELECT id FROM tenants WHERE slug = ?').get('torque-detail')) {
     const info = db.prepare(
       `INSERT INTO tenants (name, slug, database_name, document, email, phone, plan, status)
-       VALUES ('Torque Detail', 'torque-detail', 'tenant_0001_torque_detail.db', '', ?, ?, 'PRO', 'ACTIVE')`
+       VALUES ('Torque Detail', 'torque-detail', 'tenant_0001_torque_detail.db', '', ?, ?, 'STARTER', 'ACTIVE')`
     ).run(process.env.ADMIN_EMAIL || 'admin@sistema.com', process.env.ADMIN_WHATSAPP || '');
     const tenantId = info.lastInsertRowid;
 
@@ -222,6 +329,7 @@ function seedCore() {
       tenantId,
       process.env.TORQUE_DETAIL_DOMAIN || 'torquedetail.com.br'
     );
+    ensureSubscriptionForTenant(tenantId, 'STARTER');
   }
 }
 
@@ -319,6 +427,154 @@ function initCore() {
   return db;
 }
 
+/* ---------- Migrações versionadas ---------- */
+
+function migrationApplied(name) {
+  return !!db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get(name);
+}
+
+function markMigrationApplied(name) {
+  db.prepare('INSERT INTO schema_migrations (name) VALUES (?)').run(name);
+}
+
+/* v1 — planos legados (monthly_price REAL, appointment_limit, features,
+   slugs maiúsculos) para o schema atual: valores em centavos inteiros,
+   limite de unidades, suporte, ordem e status. Os planos já existentes são
+   convertidos (preservando id/uso), os demais planos iniciais são criados.
+   Depois desta migração, "tenants.plan" continua sendo um espelho em texto
+   do slug do plano (usado pelo tenantMiddleware e pelo painel), mas a fonte
+   da verdade do preço/limite passa a ser "plans" + "subscriptions". */
+function migratePlansV1() {
+  const tx = db.transaction(() => {
+    const hasOld = db.prepare(
+      "SELECT 1 FROM pragma_table_info('plans') WHERE name = 'monthly_price'"
+    ).get();
+
+    if (hasOld) {
+      db.prepare('DROP TABLE IF EXISTS plans_v1_old').run();
+      /* legacy_alter_table evita que o RENAME atualize as FKs que apontam
+         para a tabela (ex.: subscriptions.plan_id), o que quebraria a
+         referência ao apagar a tabela antiga. Assim as FKs continuam
+         apontando para o nome "plans" (a nova tabela). */
+      db.pragma('legacy_alter_table = ON');
+      db.prepare('ALTER TABLE plans RENAME TO plans_v1_old').run();
+      db.pragma('legacy_alter_table = OFF');
+      db.exec(`
+        CREATE TABLE plans (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          slug TEXT NOT NULL UNIQUE,
+          description TEXT,
+          monthly_price_cents INTEGER NOT NULL DEFAULT 0,
+          max_units INTEGER,
+          support_level TEXT NOT NULL DEFAULT 'standard',
+          display_order INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+      `);
+      db.prepare(
+        `INSERT INTO plans (id, name, slug, description, monthly_price_cents, max_units, support_level, display_order, is_active, created_at, updated_at)
+         SELECT id, name, slug, NULL, CAST(ROUND(monthly_price * 100) AS INTEGER), appointment_limit, 'standard', 0, active, created_at, updated_at
+         FROM plans_v1_old`
+      ).run();
+      /* O "appointment_limit" legado era agendamentos/mês, não unidades.
+         Para os planos básicos isso faria o tenant ter dezenas de unidades,
+         então corrigimos para 1 unidade (sem tocar em preços). */
+      db.prepare(
+        "UPDATE plans SET max_units = 1, updated_at = datetime('now', 'localtime') WHERE slug IN ('FREE', 'STARTER')"
+      ).run();
+      db.prepare('DROP TABLE plans_v1_old').run();
+    }
+
+    const insertOrIgnore = db.prepare(
+      `INSERT OR IGNORE INTO plans (name, slug, description, monthly_price_cents, max_units, support_level, display_order, is_active)
+       VALUES (@name, @slug, @description, @monthly_price_cents, @max_units, @support_level, @display_order, @is_active)`
+    );
+    for (const p of SEED_PLANS) {
+      insertOrIgnore.run(p);
+    }
+  });
+  tx();
+}
+
+/* v2 — assinaturas: uma por empresa, espelhando o plano atual do tenant.
+   Empresas que ainda não têm assinatura recebem um registro "active"
+   apontando para o plano (pela primeira palavra do slug antigo: STARTER,
+   PROFESSIONAL, ENTERPRISE; desconhecido/ausente cai no primeiro plano
+   ativo). Roda uma única vez; depois disso as assinaturas só mudam pelo
+   painel do desenvolvedor. */
+function migrateSubscriptionsV2() {
+  /* Repara instalações que rodaram a primeira versão desta migração: o
+     rebuild de "plans" (RENAME + DROP) deixou a FK de subscriptions
+     apontando para "plans_v1_old", uma tabela que não existe mais. Como
+     essas linhas nunca conseguiram ser gravadas, recriar a tabela é seguro
+     e restaura a FK para "plans". */
+  const fkTargets = db.prepare('PRAGMA foreign_key_list(subscriptions)').all().map((f) => f.table);
+  if (!fkTargets.includes('plans')) {
+    db.prepare('DROP TABLE IF EXISTS subscriptions').run();
+    db.exec(SUBSCRIPTIONS_DDL);
+  }
+
+  const seed = (() => {
+    const plans = db.prepare('SELECT * FROM plans ORDER BY display_order ASC, id ASC').all();
+    const active = plans.filter((p) => p.is_active);
+    return (slug) => {
+      const upper = String(slug || '').toUpperCase();
+      const found = plans.find((p) => p.slug.toUpperCase() === upper) || active[0];
+      return found || plans[0];
+    };
+  })();
+
+  const tx = db.transaction(() => {
+    const tenants = db.prepare('SELECT id, plan FROM tenants').all();
+    const upsert = db.prepare(`
+      INSERT INTO subscriptions (tenant_id, plan_id, status, started_at, current_period_start, current_period_end, next_due_date, created_at, updated_at)
+      VALUES (@tenant_id, @plan_id, 'active', @started_at, @current_period_start, @current_period_end, @next_due_date, @started_at, @started_at)
+      ON CONFLICT(tenant_id) DO UPDATE SET
+        plan_id = excluded.plan_id,
+        updated_at = datetime('now', 'localtime')
+    `);
+    const today = todayStr();
+    const periodEnd = toDateStr(addDays(new Date(), 30));
+    for (const t of tenants) {
+      const plan = seed(t.plan);
+      upsert.run({
+        tenant_id: t.id,
+        plan_id: plan.id,
+        started_at: today,
+        current_period_start: today,
+        current_period_end: periodEnd,
+        next_due_date: periodEnd
+      });
+    }
+  });
+  tx();
+}
+
+/* v3 — colunas de integração de pagamento reservadas (gateway futuro).
+   Idempotente: roda a cada boot para bancos criados antes destas colunas. */
+function migrateSubscriptionsV3() {
+  ensureColumn('subscriptions', 'external_customer_id', 'TEXT');
+  ensureColumn('subscriptions', 'external_subscription_id', 'TEXT');
+}
+
+function runMigrations() {
+  if (!migrationApplied('plans_v1')) {
+    migratePlansV1();
+    markMigrationApplied('plans_v1');
+  }
+  if (!migrationApplied('subscriptions_v2')) {
+    migrateSubscriptionsV2();
+    markMigrationApplied('subscriptions_v2');
+  }
+  if (!migrationApplied('subscriptions_v3')) {
+    migrateSubscriptionsV3();
+    markMigrationApplied('subscriptions_v3');
+  }
+}
+
 /* ---------- Tenants ---------- */
 
 function listTenants() {
@@ -360,6 +616,7 @@ function createTenantBundle({ tenant, user, domain }) {
     const u = insertUser({ ...user, tenant_id: t.id });
     let d = null;
     if (domain) d = insertDomain(t.id, domain, true);
+    ensureSubscriptionForTenant(t.id, tenant.plan);
     return { tenant: t, user: u, domain: d };
   });
   return tx();
@@ -584,47 +841,189 @@ function countTenantUsers(tenantId) {
 /* ---------- Planos ---------- */
 
 function listPlans() {
-  return db.prepare('SELECT * FROM plans ORDER BY id ASC').all();
+  return db.prepare('SELECT * FROM plans ORDER BY display_order ASC, id ASC').all();
 }
 
-function getPlan(slug) {
+function getPlan(slugOrId) {
+  return db.prepare('SELECT * FROM plans WHERE slug = ? OR id = ?').get(slugOrId, slugOrId);
+}
+
+function getPlanById(id) {
+  return db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
+}
+
+function getPlanBySlug(slug) {
   return db.prepare('SELECT * FROM plans WHERE slug = ?').get(slug);
 }
 
 function insertPlan(data) {
   const info = db.prepare(
-    `INSERT INTO plans (name, slug, monthly_price, appointment_limit, features)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(
-    data.name,
-    String(data.slug || slugify(data.name)).toUpperCase(),
-    data.monthly_price ?? 0,
-    data.appointment_limit ?? null,
-    data.features ? JSON.stringify(data.features) : null
-  );
-  return db.prepare('SELECT * FROM plans WHERE id = ?').get(info.lastInsertRowid);
+    `INSERT INTO plans (name, slug, description, monthly_price_cents, max_units, support_level, display_order, is_active)
+     VALUES (@name, @slug, @description, @monthly_price_cents, @max_units, @support_level, @display_order, @is_active)`
+  ).run({
+    name: data.name,
+    slug: String(data.slug || slugify(data.name)),
+    description: data.description || null,
+    monthly_price_cents: Number(data.monthly_price_cents) || 0,
+    max_units: data.max_units === null || data.max_units === undefined ? null : Number(data.max_units),
+    support_level: data.support_level || 'standard',
+    display_order: Number(data.display_order) || 0,
+    is_active: data.is_active === undefined || data.is_active === null ? 1 : (data.is_active ? 1 : 0)
+  });
+  return getPlanById(info.lastInsertRowid);
 }
 
 function updatePlan(id, fields) {
-  const allowed = ['name', 'slug', 'monthly_price', 'appointment_limit', 'features', 'active'];
+  const allowed = ['name', 'slug', 'description', 'monthly_price_cents', 'max_units', 'support_level', 'display_order', 'is_active'];
   const sets = [];
   const params = [];
   for (const key of allowed) {
     if (fields[key] !== undefined) {
       sets.push(`${key} = ?`);
-      params.push(key === 'features' ? JSON.stringify(fields[key]) : fields[key]);
+      params.push(key === 'is_active' ? (fields[key] ? 1 : 0) : fields[key]);
     }
   }
-  if (!sets.length) return db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
+  if (!sets.length) return getPlanById(id);
   sets.push("updated_at = datetime('now', 'localtime')");
   params.push(id);
   db.prepare(`UPDATE plans SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-  return db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
+  return getPlanById(id);
 }
 
+/* Reordena os planos conforme a lista de ids (display_order = posição + 1). */
+function reorderPlans(orderedIds) {
+  const tx = db.transaction(() => {
+    orderedIds.forEach((id, index) => {
+      db.prepare('UPDATE plans SET display_order = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?').run(index + 1, id);
+    });
+  });
+  tx();
+  return listPlans();
+}
+
+/* Planos em uso não podem ser apagados: o banco mantém assinaturas apontando
+   para eles. A exclusão é feita via is_active = 0 (inativação) ou, no caso de
+   planos sem assinatura, exclusão física. */
 function deletePlan(id) {
+  const used = db.prepare('SELECT COUNT(*) AS total FROM subscriptions WHERE plan_id = ?').get(id).total;
+  if (used > 0) return { deleted: false, inUse: true };
   db.prepare('DELETE FROM plans WHERE id = ?').run(id);
+  return { deleted: true, inUse: false };
+}
+
+/* ---------- Assinaturas ---------- */
+
+function listSubscriptions() {
+  return db.prepare(
+    `SELECT s.*, t.name AS tenant_name, t.slug AS tenant_slug, p.name AS plan_name, p.slug AS plan_slug,
+            p.monthly_price_cents AS plan_monthly_price_cents, p.max_units AS plan_max_units,
+            p.support_level AS plan_support_level
+     FROM subscriptions s
+     JOIN tenants t ON t.id = s.tenant_id
+     LEFT JOIN plans p ON p.id = s.plan_id
+     ORDER BY t.id ASC`
+  ).all();
+}
+
+function getSubscriptionByTenantId(tenantId) {
+  return db.prepare('SELECT * FROM subscriptions WHERE tenant_id = ?').get(tenantId) || null;
+}
+
+function getSubscriptionById(id) {
+  return db.prepare(
+    `SELECT s.*, t.name AS tenant_name, t.slug AS tenant_slug, p.name AS plan_name, p.slug AS plan_slug,
+            p.monthly_price_cents AS plan_monthly_price_cents, p.max_units AS plan_max_units,
+            p.support_level AS plan_support_level
+     FROM subscriptions s
+     JOIN tenants t ON t.id = s.tenant_id
+     LEFT JOIN plans p ON p.id = s.plan_id
+     WHERE s.id = ?`
+  ).get(id) || null;
+}
+
+function upsertSubscription(tenantId, data) {
+  const existing = getSubscriptionByTenantId(tenantId);
+  const values = {
+    tenant_id: tenantId,
+    plan_id: data.plan_id,
+    custom_monthly_price_cents: data.custom_monthly_price_cents ?? null,
+    status: data.status || 'active',
+    billing_day: data.billing_day ?? null,
+    started_at: data.started_at ?? null,
+    current_period_start: data.current_period_start ?? null,
+    current_period_end: data.current_period_end ?? null,
+    last_payment_at: data.last_payment_at ?? null,
+    next_due_date: data.next_due_date ?? null,
+    suspended_at: data.suspended_at ?? null,
+    canceled_at: data.canceled_at ?? null,
+    notes: data.notes ?? null,
+    external_customer_id: data.external_customer_id ?? null,
+    external_subscription_id: data.external_subscription_id ?? null
+  };
+  if (existing) {
+    const sets = Object.keys(values).map((key) => `${key} = @${key}`);
+    db.prepare(
+      `UPDATE subscriptions SET ${sets.join(', ')}, updated_at = datetime('now', 'localtime') WHERE tenant_id = @tenant_id`
+    ).run(values);
+  } else {
+    const columns = Object.keys(values);
+    db.prepare(
+      `INSERT INTO subscriptions (${columns.join(', ')})
+       VALUES (${columns.map((key) => `@${key}`).join(', ')})`
+    ).run(values);
+  }
+  return getSubscriptionByTenantId(tenantId);
+}
+
+function updateSubscriptionById(id, fields) {
+  const allowed = [
+    'plan_id', 'custom_monthly_price_cents', 'status', 'billing_day',
+    'started_at', 'current_period_start', 'current_period_end',
+    'last_payment_at', 'next_due_date', 'suspended_at', 'canceled_at',
+    'notes', 'external_customer_id', 'external_subscription_id'
+  ];
+  const sets = [];
+  const params = [];
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  if (!sets.length) return getSubscriptionById(id);
+  sets.push("updated_at = datetime('now', 'localtime')");
+  params.push(id);
+  db.prepare(`UPDATE subscriptions SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getSubscriptionById(id);
+}
+
+function deleteSubscription(tenantId) {
+  db.prepare('DELETE FROM subscriptions WHERE tenant_id = ?').run(tenantId);
   return true;
+}
+
+/*
+ * Garante que a empresa tenha assinatura. Usada na criação de empresa e nos
+ * seeds: se já existe, não mexe; se não existe, cria "active" apontando para
+ * o plano pelo slug (com fallback para o primeiro plano ativo).
+ */
+function ensureSubscriptionForTenant(tenantId, planSlug) {
+  const existing = getSubscriptionByTenantId(tenantId);
+  if (existing) return existing;
+  const plan =
+    getPlanBySlug(planSlug) ||
+    db.prepare('SELECT * FROM plans WHERE is_active = 1 ORDER BY display_order ASC, id ASC LIMIT 1').get();
+  if (!plan) return null;
+  const today = todayStr();
+  const periodEnd = toDateStr(addDays(new Date(), 30));
+  return upsertSubscription(tenantId, {
+    plan_id: plan.id,
+    status: 'active',
+    started_at: today,
+    current_period_start: today,
+    current_period_end: periodEnd,
+    next_due_date: periodEnd
+  });
 }
 
 /* ---------- Financeiro ---------- */
@@ -705,6 +1104,239 @@ function listLogs(limit = 100) {
   return db.prepare('SELECT * FROM activity_logs ORDER BY id DESC LIMIT ?').all(limit);
 }
 
+/* ---------- Backups ---------- */
+
+const BACKUP_RUN_FIELDS = [
+  'tenant_id', 'backup_type', 'status', 'filename', 'relative_path',
+  'size_bytes', 'sha256', 'database_count', 'asset_file_count',
+  'started_at', 'completed_at', 'error_message', 'created_by_user_id'
+];
+
+function insertBackupRun(data) {
+  db.prepare(
+    `INSERT INTO backup_runs
+       (id, tenant_id, backup_type, status, filename, relative_path, size_bytes,
+        sha256, database_count, asset_file_count, started_at, completed_at,
+        error_message, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    data.id,
+    data.tenant_id ?? null,
+    data.backup_type,
+    data.status || 'RUNNING',
+    data.filename || null,
+    data.relative_path || null,
+    data.size_bytes ?? null,
+    data.sha256 || null,
+    data.database_count ?? 0,
+    data.asset_file_count ?? 0,
+    data.started_at,
+    data.completed_at || null,
+    data.error_message || null,
+    data.created_by_user_id ?? null
+  );
+  return getBackupRun(data.id);
+}
+
+function updateBackupRun(id, fields) {
+  const sets = [];
+  const params = [];
+  for (const key of BACKUP_RUN_FIELDS) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  if (!sets.length) return getBackupRun(id);
+  params.push(id);
+  db.prepare(`UPDATE backup_runs SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getBackupRun(id);
+}
+
+function getBackupRun(id) {
+  return db.prepare('SELECT * FROM backup_runs WHERE id = ?').get(id);
+}
+
+function listBackupRuns(filters = {}) {
+  const clauses = [];
+  const params = [];
+  if (filters.tenant_id) { clauses.push('tenant_id = ?'); params.push(filters.tenant_id); }
+  if (filters.status) { clauses.push('status = ?'); params.push(filters.status); }
+  if (filters.backup_type) { clauses.push('backup_type = ?'); params.push(filters.backup_type); }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return db.prepare(
+    `SELECT * FROM backup_runs ${where} ORDER BY started_at DESC, id DESC`
+  ).all(...params);
+}
+
+function deleteBackupRun(id) {
+  db.prepare('DELETE FROM backup_runs WHERE id = ?').run(id);
+  return true;
+}
+
+/* ---------- Modo de manutenção por tenant ---------- */
+
+/* Cache em memória (cache-aside) para não consultar o banco central a cada
+   requisição pública. Invalidado em setTenantMaintenance. */
+const maintenanceCache = new Map();
+
+function getTenantMaintenance(tenantId) {
+  const key = Number(tenantId);
+  if (maintenanceCache.has(key)) return maintenanceCache.get(key);
+  const row = db.prepare('SELECT * FROM tenant_maintenance WHERE tenant_id = ?').get(key) || null;
+  maintenanceCache.set(key, row);
+  return row;
+}
+
+function isTenantInMaintenance(tenantId) {
+  const row = getTenantMaintenance(tenantId);
+  return Boolean(row && Number(row.active) === 1);
+}
+
+/*
+ * Liga/desliga o modo de manutenção de uma empresa. Grava no banco central e
+ * sincroniza o cache em memória. Idempotente: repetir o mesmo estado não
+ * gera erro.
+ */
+function setTenantMaintenance(tenantId, { active, reason, started_by_user_id } = {}) {
+  const key = Number(tenantId);
+  const now = new Date().toISOString();
+  const value = active ? 1 : 0;
+  const existing = db.prepare('SELECT * FROM tenant_maintenance WHERE tenant_id = ?').get(key);
+  if (existing) {
+    db.prepare(
+      `UPDATE tenant_maintenance SET active = ?, reason = COALESCE(?, reason), updated_at = ?,
+         started_at = CASE WHEN ? = 1 AND started_at IS NULL THEN ? ELSE started_at END,
+         started_by_user_id = COALESCE(?, started_by_user_id)
+       WHERE tenant_id = ?`
+    ).run(value, reason || null, now, value, now, started_by_user_id ?? null, key);
+  } else {
+    db.prepare(
+      `INSERT INTO tenant_maintenance (tenant_id, active, reason, started_at, updated_at, started_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(key, value, reason || null, value ? now : null, now, started_by_user_id ?? null);
+  }
+  const row = db.prepare('SELECT * FROM tenant_maintenance WHERE tenant_id = ?').get(key) || null;
+  maintenanceCache.set(key, row);
+  return row;
+}
+
+function clearMaintenanceCache() {
+  maintenanceCache.clear();
+}
+
+/* ---------- Restaurações ---------- */
+
+const RESTORE_RUN_FIELDS = [
+  'tenant_id', 'backup_id', 'pre_restore_backup_id', 'status',
+  'started_at', 'completed_at', 'started_by_user_id',
+  'error_message', 'rollback_status'
+];
+
+function insertRestoreRun(data) {
+  db.prepare(
+    `INSERT INTO restore_runs
+       (id, tenant_id, backup_id, pre_restore_backup_id, status, started_at,
+        completed_at, started_by_user_id, error_message, rollback_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    data.id,
+    data.tenant_id,
+    data.backup_id,
+    data.pre_restore_backup_id || null,
+    data.status || 'RUNNING',
+    data.started_at,
+    data.completed_at || null,
+    data.started_by_user_id ?? null,
+    data.error_message || null,
+    data.rollback_status || null
+  );
+  return getRestoreRun(data.id);
+}
+
+function updateRestoreRun(id, fields) {
+  const sets = [];
+  const params = [];
+  for (const key of RESTORE_RUN_FIELDS) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  if (!sets.length) return getRestoreRun(id);
+  params.push(id);
+  db.prepare(`UPDATE restore_runs SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getRestoreRun(id);
+}
+
+function getRestoreRun(id) {
+  return db.prepare('SELECT * FROM restore_runs WHERE id = ?').get(id);
+}
+
+function listRestoreRuns(filters = {}) {
+  const clauses = [];
+  const params = [];
+  if (filters.tenant_id) { clauses.push('tenant_id = ?'); params.push(Number(filters.tenant_id)); }
+  if (filters.status) { clauses.push('status = ?'); params.push(filters.status); }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return db.prepare(
+    `SELECT * FROM restore_runs ${where} ORDER BY started_at DESC, id DESC`
+  ).all(...params);
+}
+
+/* ---------- Leads comerciais ---------- */
+
+function insertLead(data) {
+  const info = db.prepare(
+    `INSERT INTO commercial_leads
+       (name, company_name, whatsapp, city, units_count, interested_plan, message, source, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new')`
+  ).run(
+    data.name,
+    data.company_name || null,
+    data.whatsapp,
+    data.city || null,
+    data.units_count ?? null,
+    data.interested_plan || null,
+    data.message || null,
+    data.source || 'website'
+  );
+  return getLeadById(info.lastInsertRowid);
+}
+
+function getLeadById(id) {
+  return db.prepare('SELECT * FROM commercial_leads WHERE id = ?').get(id);
+}
+
+function listLeads(filters = {}) {
+  const clauses = [];
+  const params = [];
+  if (filters.status) { clauses.push('status = ?'); params.push(filters.status); }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return db.prepare(`SELECT * FROM commercial_leads ${where} ORDER BY id DESC`).all(...params);
+}
+
+/* Lead mais recente do mesmo WhatsApp nos últimos "windowSeconds" segundos.
+   Usada para evitar registrar duplicidade em clique duplo/reenvio do
+   formulário de contato. Janela calculada no próprio SQLite (mesmo fuso e
+   formato de created_at) para nunca divergir do valor gravado no insert. */
+function findRecentLeadByWhatsapp(whatsapp, windowSeconds) {
+  return db.prepare(
+    `SELECT * FROM commercial_leads
+     WHERE whatsapp = ? AND created_at >= datetime('now', 'localtime', ? || ' seconds')
+     ORDER BY id DESC LIMIT 1`
+  ).get(whatsapp, -Math.abs(windowSeconds));
+}
+
+function updateLeadStatus(id, status) {
+  const existing = getLeadById(id);
+  if (!existing) return null;
+  db.prepare(
+    "UPDATE commercial_leads SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?"
+  ).run(status, id);
+  return getLeadById(id);
+}
+
 /* ---------- Identidade visual ---------- */
 
 function getTenantBranding(tenantId) {
@@ -774,6 +1406,17 @@ function countTenantAppointments(databaseName) {
   }
 }
 
+function countTenantUnits(databaseName) {
+  try {
+    const tenantDb = openTenantDatabase(databaseName);
+    const row = tenantDb.prepare('SELECT COUNT(*) AS total FROM units').get();
+    return row ? row.total : 0;
+  } catch (err) {
+    console.error('[papi-core] Falha ao contar unidades de', databaseName, err.message);
+    return 0;
+  }
+}
+
 function isTenantExpired(tenant) {
   return Boolean(tenant && tenant.expires_at && tenant.expires_at < todayStr());
 }
@@ -797,6 +1440,7 @@ module.exports = {
   deleteTenantRecord,
   nextTenantId,
   countTenantAppointments,
+  countTenantUnits,
   isTenantExpired,
   /* domínios */
   listDomains,
@@ -824,9 +1468,20 @@ module.exports = {
   /* planos */
   listPlans,
   getPlan,
+  getPlanById,
+  getPlanBySlug,
   insertPlan,
   updatePlan,
+  reorderPlans,
   deletePlan,
+  /* assinaturas */
+  listSubscriptions,
+  getSubscriptionByTenantId,
+  getSubscriptionById,
+  upsertSubscription,
+  updateSubscriptionById,
+  deleteSubscription,
+  ensureSubscriptionForTenant,
   /* financeiro */
   listFinancialEntries,
   getFinancialEntry,
@@ -836,6 +1491,28 @@ module.exports = {
   /* logs */
   logActivity,
   listLogs,
+  /* backups */
+  insertBackupRun,
+  updateBackupRun,
+  getBackupRun,
+  listBackupRuns,
+  deleteBackupRun,
+  /* manutenção por tenant */
+  getTenantMaintenance,
+  isTenantInMaintenance,
+  setTenantMaintenance,
+  clearMaintenanceCache,
+  /* restaurações */
+  insertRestoreRun,
+  updateRestoreRun,
+  getRestoreRun,
+  listRestoreRuns,
+  /* leads comerciais */
+  insertLead,
+  getLeadById,
+  listLeads,
+  findRecentLeadByWhatsapp,
+  updateLeadStatus,
   /* identidade visual */
   getTenantBranding,
   upsertTenantBranding,

@@ -91,6 +91,12 @@ function closeTenantDatabase(databaseName) {
   }
 }
 
+/* Se o banco está aberto/cacheado neste processo (usado pela restauração
+   para confirmar que a conexão foi fechada antes de trocar o arquivo). */
+function isOpenTenantDatabase(databaseName) {
+  return openDbs.has(databaseName);
+}
+
 /* Remove o arquivo do banco (e artefatos WAL/SHM) do disco. */
 function deleteTenantDatabase(databaseName) {
   closeTenantDatabase(databaseName);
@@ -136,6 +142,7 @@ module.exports = {
   openTenantDatabase,
   createTenantDatabase,
   closeTenantDatabase,
+  isOpenTenantDatabase,
   deleteTenantDatabase,
   getTenantDb,
   getDb,

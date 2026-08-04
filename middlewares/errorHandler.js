@@ -38,7 +38,14 @@ function errorHandler(err, req, res, next) {
     console.error('[ERROR]', err);
   }
 
-  return res.status(status).json({ error: message });
+  const body = { error: message };
+  /* Campos extras intencionais (ex.: code, currentUnits, maxUnits, plan de
+     uma limitação de plano) são serializados sem expor stack trace. */
+  if (err && typeof err.extra === 'object' && err.extra) {
+    Object.assign(body, err.extra);
+  }
+
+  return res.status(status).json(body);
 }
 
 module.exports = errorHandler;

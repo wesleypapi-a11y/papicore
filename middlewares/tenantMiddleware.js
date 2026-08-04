@@ -14,7 +14,7 @@
  */
 
 const { AppError, todayStr } = require('../utils/helpers');
-const { getTenantById } = require('../database/coreDatabase');
+const { getTenantById, isTenantInMaintenance } = require('../database/coreDatabase');
 const { openTenantDatabase, runWithTenant } = require('../database/tenantDatabase');
 
 function tenantMiddleware(req, res, next) {
@@ -41,6 +41,9 @@ function tenantMiddleware(req, res, next) {
   }
   if (tenant.expires_at && tenant.expires_at < todayStr()) {
     return next(new AppError(403, 'A assinatura desta empresa expirou.'));
+  }
+  if (isTenantInMaintenance(tenant.id)) {
+    return next(new AppError(503, 'Sistema temporariamente em manutenção. Tente novamente em alguns instantes.'));
   }
 
   let db;

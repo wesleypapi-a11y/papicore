@@ -55,10 +55,15 @@ if (process.env.NODE_ENV === 'production' && !process.env.DATA_DIR) {
 /* Inicializa o banco central, migra o app.db legado e garante o tenant padrão. */
 initCore();
 
+/* Agenda a rotina automática de backups locais (produção + habilitação). */
+const { startBackupScheduler } = require('./services/backupScheduler');
+startBackupScheduler();
+
 const publicRoutes = require('./routes/publicRoutes');
 const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const developerRoutes = require('./routes/developerRoutes');
+const commercialRoutes = require('./routes/commercialRoutes');
 
 const app = express();
 
@@ -82,17 +87,30 @@ app.use((req, res, next) => {
 });
 
 /* Domínio institucional da plataforma (process.env.PLATFORM_DOMAIN): a raiz
-   deste domínio redireciona para /desenvolvedor em vez de abrir a página
+   deste domínio abre a landing page comercial do PapiCore em vez da página
    pública de agendamento (que pertence aos tenants). O host é normalizado
-   (remove porta, minúsculas, remove www). Registrada ANTES do express.static —
-   que entrega o index.html genérico na raiz — e antes de qualquer middleware
-   que resolva tenant para a página inicial. */
+   (remove porta, minúsculas, remove www), então papicore.com.br e
+   www.papicore.com.br caem no mesmo caso. Em desenvolvimento, localhost e
+   127.0.0.1 também abrem a landing page (não há domínio de plataforma real
+   para testar localmente) — o painel do desenvolvedor continua em
+   /desenvolvedor e um tenant específico pode ser visto em /agendar/:slug.
+   Registrada ANTES do express.static — que entrega o index.html do tenant
+   (booking) na raiz para qualquer outro host — e antes de qualquer
+   middleware que resolva tenant para a página inicial. Não afeta
+   /admin, /desenvolvedor, /api nem os domínios dos clientes (torquedetail.com.br
+   e demais), que continuam resolvendo normalmente pelo host. */
 const platformDomain = normalizeDomain(process.env.PLATFORM_DOMAIN || '');
 
+function isPlatformHost(host) {
+  const currentHost = normalizeDomain(host);
+  if (platformDomain && currentHost === platformDomain) return true;
+  if (process.env.NODE_ENV !== 'production' && ['localhost', '127.0.0.1', '::1'].includes(currentHost)) return true;
+  return false;
+}
+
 app.get('/', (req, res, next) => {
-  const currentHost = normalizeDomain(req.hostname || req.headers.host);
-  if (platformDomain && currentHost === platformDomain) {
-    return res.redirect('/desenvolvedor');
+  if (isPlatformHost(req.hostname || req.headers.host)) {
+    return res.sendFile(path.join(__dirname, 'public', 'landing.html'));
   }
   return next();
 });
@@ -112,6 +130,12 @@ app.use('/api/admin', requireAuth, tenantMiddleware, adminRoutes);
 /* O login do desenvolvedor precisa ficar acessível sem token; a proteção
    requireDeveloper é aplicada rota a rota dentro de developerRoutes.js. */
 app.use('/api/developer', developerRoutes);
+/* Site institucional (planos comerciais + formulário de contato): não
+   pertence a nenhum tenant, então precisa responder mesmo no domínio da
+   própria plataforma (sem empresa associada). Por isso é registrada antes de
+   publicRoutes, cujo domainTenantMiddleware bloquearia (404) qualquer
+   requisição vinda de um host sem tenant cadastrado — como papicore.com.br. */
+app.use('/api/public', commercialRoutes);
 
 /* Identifica a empresa pelo domínio da requisição em toda a API
    (usado no login para validar que o usuário pertence à empresa do domínio). */
@@ -130,6 +154,15 @@ app.get('/desenvolvedor', (req, res) => {
 
 app.get('/desenvolvedor/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'desenvolvedor.html'));
+});
+
+/* Páginas institucionais (site comercial) */
+app.get('/privacidade', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
+app.get('/termos', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'termos.html'));
 });
 
 /* Área pública por slug (futuro: /agendar/torque-detail). A resolução do banco

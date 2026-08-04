@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /desenvolvedor
+Disallow: /api/
+
+Sitemap: https://www.papicore.com.br/sitemap.xml

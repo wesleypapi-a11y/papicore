@@ -1,7 +1,13 @@
 class AppError extends Error {
-  constructor(status, message) {
+  /*
+   * Extra: campos adicionais serializados na resposta JSON do errorHandler
+   * (ex.: { code: 'PLAN_UNIT_LIMIT_REACHED', currentUnits, maxUnits, plan }).
+   * Nunca deve conter stack trace ou detalhes internos.
+   */
+  constructor(status, message, extra) {
     super(message);
     this.status = status;
+    if (extra && typeof extra === 'object') this.extra = extra;
   }
 }
 
@@ -33,6 +39,17 @@ const VEHICLE_CATEGORY_LABELS = {
   sedan: 'Sedan',
   suv: 'SUV',
   pickup: 'Picape'
+};
+
+const LEAD_STATUSES = ['new', 'contacted', 'demo_scheduled', 'proposal_sent', 'customer', 'lost'];
+
+const LEAD_STATUS_LABELS = {
+  new: 'Novo',
+  contacted: 'Contatado',
+  demo_scheduled: 'Demonstração marcada',
+  proposal_sent: 'Proposta enviada',
+  customer: 'Cliente',
+  lost: 'Perdido'
 };
 
 const REJECTION_REASONS = [
@@ -220,6 +237,36 @@ function nowDateTime() {
   return { date, time };
 }
 
+/*
+ * Converte um valor monetário digitado (BRL) para centavos inteiros.
+ * Aceita "97,90", "R$ 97,90", "97.90", "1.500,00", "1500" (inteiro em reais).
+ * Retorna null quando vazio, inválido ou negativo. Nunca usa float para
+ * armazenar dinheiro — o resultado é sempre um inteiro (cents).
+ */
+function parseCurrencyToCents(input) {
+  if (input === null || input === undefined) return null;
+  const s = String(input).trim().replace(/R\$\s?/i, '').trim();
+  if (!s) return null;
+  let normalized;
+  if (s.includes(',')) {
+    normalized = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes('.')) {
+    const parts = s.split('.');
+    normalized = `${parts.slice(0, -1).join('')}.${parts[parts.length - 1]}`;
+  } else {
+    normalized = s;
+  }
+  const value = Number(normalized);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Math.round(value * 100);
+}
+
+/* Formata centavos como moeda brasileira (R$ 97,90). */
+function formatCurrencyFromCents(cents) {
+  const value = (Number(cents) || 0) / 100;
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
 function startOfWeek(dateStr) {
   const d = new Date(`${dateStr}T00:00:00`);
   const dow = d.getDay();
@@ -242,6 +289,8 @@ module.exports = {
   PAYMENT_LABELS,
   VEHICLE_CATEGORIES,
   VEHICLE_CATEGORY_LABELS,
+  LEAD_STATUSES,
+  LEAD_STATUS_LABELS,
   REJECTION_REASONS,
   todayStr,
   slugify,
@@ -265,6 +314,8 @@ module.exports = {
   isValidPlate,
   formatPhone,
   formatMoney,
+  parseCurrencyToCents,
+  formatCurrencyFromCents,
   generateCode,
   nowDateTime,
   startOfWeek,

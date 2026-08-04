@@ -20,6 +20,8 @@ const pixController = require('../controllers/pixController');
 
 const router = express.Router();
 
+const { enforceUnitLimit } = require('../middlewares/planLimits');
+
 router.get('/me', authController.me);
 
 router.get('/dashboard', adminController.dashboard);
@@ -28,9 +30,10 @@ router.get('/agenda', adminController.agenda);
 router.get('/modalities', modalityController.list);
 router.put('/modalities/:id', modalityController.update);
 
+router.get('/plan', unitController.getPlanInfo);
 router.get('/units', unitController.listAll);
 router.get('/units/:id', unitController.getOne);
-router.post('/units', unitController.create);
+router.post('/units', enforceUnitLimit, unitController.create);
 router.put('/units/:id', unitController.update);
 router.delete('/units/:id', unitController.remove);
 

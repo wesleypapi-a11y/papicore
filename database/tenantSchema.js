@@ -190,10 +190,12 @@ CREATE TABLE IF NOT EXISTS financial_entries (
   service_id INTEGER REFERENCES services(id) ON DELETE SET NULL,
   service_name TEXT,
   amount REAL NOT NULL DEFAULT 0,
+  type TEXT NOT NULL DEFAULT 'entrada',
   entry_date TEXT NOT NULL,
   entry_time TEXT NOT NULL DEFAULT '00:00',
   payment_method TEXT,
   notes TEXT,
+  appointment_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -452,6 +454,12 @@ function upgradeSchema(db) {
   ensureColumn(db, 'appointments', 'services_json', 'TEXT');
   ensureColumn(db, 'appointments', 'payment_method', 'TEXT');
 
+  /* Financeiro: distinção entre entrada (receita) e saída (despesa). O campo
+     appointment_id vincula a entrada gerada automaticamente na conclusão de
+     um agendamento, evitando lançamentos duplicados. */
+  ensureColumn(db, 'financial_entries', 'type', "TEXT NOT NULL DEFAULT 'entrada'");
+  ensureColumn(db, 'financial_entries', 'appointment_id', 'INTEGER');
+
   /* appointments: rebuild quando schema antigo */
   if (!columnNames(db, 'appointments').includes('start_time')) {
     migrateAppointments(db);
@@ -493,6 +501,7 @@ function upgradeSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_financial_date ON financial_entries (entry_date);
     CREATE INDEX IF NOT EXISTS idx_financial_service ON financial_entries (service_id);
     CREATE INDEX IF NOT EXISTS idx_financial_customer ON financial_entries (customer_name);
+    CREATE INDEX IF NOT EXISTS idx_financial_type ON financial_entries (type);
   `);
 
   /* remove artefatos de migrações antigas que não tenham sido concluídas */

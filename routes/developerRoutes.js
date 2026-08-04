@@ -43,6 +43,17 @@ router.use(requireDeveloper);
 
 router.get('/dashboard', developerController.dashboard);
 router.get('/backups', developerController.listBackupsHandler);
+router.get('/backups/storage', developerController.storageInfoHandler);
+router.get('/backups/:backupId', developerController.getBackupHandler);
+router.get('/backups/:backupId/download', developerController.downloadBackupHandler);
+router.delete('/backups/:backupId', developerController.deleteBackupHandler);
+router.post('/backups/:backupId/restore', developerController.restoreBackupHandler);
+
+/* Restaurações e manutenção por empresa */
+router.get('/restores', developerController.listRestoresHandler);
+router.get('/restores/:restoreId', developerController.getRestoreHandler);
+router.post('/restores/:restoreId', developerController.retryRestoreHandler);
+router.get('/tenants/:tenantId/maintenance', developerController.getMaintenanceHandler);
 
 /* Configurações da plataforma */
 router.get('/settings', developerController.platformSettings);
@@ -65,7 +76,6 @@ router.post('/tenants/:id/reset-password', developerController.resetTenantPasswo
 router.patch('/tenants/:id/owner', developerController.updateTenantOwner);
 router.post('/tenants/:id/impersonate', developerController.impersonate);
 router.post('/tenants/:id/backup', developerController.backupTenant);
-router.get('/tenants/:id/backup', developerController.backupTenant);
 router.delete('/tenants/:id', developerController.deleteTenantHandler);
 
 /* Identidade visual por empresa */
@@ -95,12 +105,22 @@ router.get('/plans', developerController.listPlansHandler);
 router.post('/plans', developerController.createPlan);
 router.put('/plans/:id', developerController.updatePlanHandler);
 router.delete('/plans/:id', developerController.deletePlanHandler);
+router.put('/plans/:id/status', developerController.setPlanStatusHandler);
+
+/* Assinaturas */
+router.get('/subscriptions', developerController.listSubscriptionsHandler);
+router.get('/tenants/:id/subscription', developerController.getSubscriptionHandler);
+router.put('/tenants/:id/subscription', developerController.updateSubscriptionHandler);
 
 /* Financeiro */
 router.get('/financial', developerController.listFinancialHandler);
 router.post('/financial', developerController.createFinancialEntry);
 router.put('/financial/:id', developerController.updateFinancialEntryHandler);
 router.delete('/financial/:id', developerController.deleteFinancialEntryHandler);
+
+/* Leads comerciais (site institucional papicore.com.br) */
+router.get('/leads', developerController.listLeadsHandler);
+router.patch('/leads/:id/status', developerController.updateLeadStatusHandler);
 
 /* Logs */
 router.get('/logs', developerController.logsHandler);

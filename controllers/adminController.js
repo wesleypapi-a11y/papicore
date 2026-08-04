@@ -189,6 +189,12 @@ function updateAppointment(req, res) {
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(existing.id);
+
+  /* Conclusão pelo formulário de edição também gera a entrada automática. */
+  if (data.status === 'completed' && existing.status !== 'completed') {
+    registerEntryOnCompletion(db, appointment);
+  }
+
   return res.json(appointment);
 }
 
@@ -197,16 +203,65 @@ function updateStatus(req, res) {
   const { status } = req.body || {};
   if (!STATUSES.includes(status)) throw new AppError(400, 'Status inválido.');
 
-  const existing = db.prepare('SELECT id FROM appointments WHERE id = ?').get(req.params.id);
+  const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
 
   db.prepare("UPDATE appointments SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?")
     .run(status, req.params.id);
 
+  /* Ao concluir um serviço, registra automaticamente no Financeiro o valor do
+     agendamento como entrada (se ainda não houver lançamento vinculado). */
+  if (status === 'completed' && existing.status !== 'completed') {
+    registerEntryOnCompletion(db, existing);
+  }
+
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(req.params.id);
   return res.json(appointment);
+}
+
+/*
+ * Cria a entrada financeira automática ao concluir um agendamento.
+ * Vincula o lançamento ao appointment_id e ignora caso o valor seja zero
+ * (preço estimado sem valor definido) ou o lançamento já exista.
+ */
+function registerEntryOnCompletion(db, appointment) {
+  const linked = db
+    .prepare('SELECT id FROM financial_entries WHERE appointment_id = ? AND type = ?')
+    .get(appointment.id, 'entrada');
+  if (linked) return;
+
+  const amount = Number(appointment.total_price) > 0
+    ? Number(appointment.total_price)
+    : (Number(appointment.service_price) > 0 ? Number(appointment.service_price) : 0);
+  if (amount <= 0) return;
+
+  let serviceId = appointment.service_id;
+  if (serviceId) {
+    const svc = db.prepare('SELECT id FROM services WHERE id = ?').get(serviceId);
+    if (!svc) serviceId = null;
+  }
+
+  const now = new Date();
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  db.prepare(
+    `INSERT INTO financial_entries
+      (customer_name, service_id, service_name, amount, type, entry_date, entry_time, payment_method, notes, appointment_id)
+     VALUES (?, ?, ?, ?, 'entrada', ?, ?, ?, ?, ?)`
+  ).run(
+    appointment.customer_name,
+    serviceId,
+    appointment.service_name || null,
+    amount,
+    date,
+    time,
+    appointment.payment_method || null,
+    `Entrada automática — agendamento ${appointment.appointment_code}`,
+    appointment.id
+  );
 }
 
 function acceptAppointment(req, res) {

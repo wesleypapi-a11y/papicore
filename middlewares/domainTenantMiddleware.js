@@ -22,7 +22,7 @@
  */
 
 const { AppError } = require('../utils/helpers');
-const { getDomainRow, getTenantBySlug, normalizeDomain } = require('../database/coreDatabase');
+const { getDomainRow, getTenantBySlug, normalizeDomain, isTenantInMaintenance } = require('../database/coreDatabase');
 const { openTenantDatabase, runWithTenant } = require('../database/tenantDatabase');
 
 function isDevLocalhost(domain) {
@@ -91,6 +91,9 @@ function domainTenantMiddleware(req, res, next) {
     }
     if (t.status !== 'ACTIVE') {
       return next(new AppError(403, 'A empresa associada a este domínio está suspensa.'));
+    }
+    if (isTenantInMaintenance(t.id)) {
+      return next(new AppError(503, 'Sistema temporariamente em manutenção. Tente novamente em alguns instantes.'));
     }
 
     let db;

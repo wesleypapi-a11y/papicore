@@ -93,6 +93,7 @@
       from: '',
       to: '',
       service_id: 'all',
+      type: 'all',
       customer: '',
       min: '',
       max: ''
@@ -945,6 +946,7 @@
     if (f.from) params.set('from', f.from);
     if (f.to) params.set('to', f.to);
     if (f.service_id && f.service_id !== 'all') params.set('service_id', f.service_id);
+    if (f.type && f.type !== 'all') params.set('type', f.type);
     if (f.customer.trim()) params.set('customer', f.customer.trim());
     if (f.min !== '' && f.min != null) params.set('min', f.min);
     if (f.max !== '' && f.max != null) params.set('max', f.max);
@@ -995,12 +997,17 @@
       .map((s) => `<option value="${s.id}" ${String(s.id) === String(f.service_id) ? 'selected' : ''}>${escapeHtml(s.name)}</option>`)
       .join('');
 
+    const typeBadge = (t) => t === 'saida'
+      ? '<span class="badge badge-saida">Saída</span>'
+      : '<span class="badge badge-entrada">Entrada</span>';
+
     const rows = entries.map((e) => `
       <tr>
         <td>${toDateBR(e.entry_date)}<br /><span class="muted">${escapeHtml(e.entry_time)}</span></td>
+        <td>${typeBadge(e.type)}</td>
         <td><strong>${escapeHtml(e.customer_name)}</strong></td>
         <td>${escapeHtml(e.service_name || e.current_service_name || '—')}${e.payment_method ? `<br/><span class="muted">${escapeHtml(PAYMENT_LABELS[e.payment_method] || e.payment_method)}</span>` : ''}</td>
-        <td><strong>${money(e.amount)}</strong></td>
+        <td><strong style="color:${e.type === 'saida' ? 'var(--red)' : 'var(--green)'}">${e.type === 'saida' ? '−' : '+'} ${money(e.amount)}</strong></td>
         <td><div class="row-actions">
           <button class="btn btn-sm btn-outline" data-action="editEntry" data-id="${e.id}">Editar</button>
           <button class="btn btn-sm btn-danger" data-action="deleteEntry" data-id="${e.id}">Excluir</button>
@@ -1008,7 +1015,7 @@
       </tr>`).join('');
 
     const dayRows = summary.by_day.map((d) => `
-      <tr><td>${toDateBR(d.date)}</td><td>${d.count}</td><td><strong>${money(d.total)}</strong></td></tr>`).join('');
+      <tr><td>${toDateBR(d.date)}</td><td>${d.count}</td><td><strong style="color:var(--green)">${money(d.total)}</strong></td><td><strong style="color:var(--red)">${money(d.saida)}</strong></td><td><strong>${money(d.saldo)}</strong></td></tr>`).join('');
 
     const serviceRows = summary.by_service.map((s) => `
       <tr><td>${escapeHtml(s.service_name)}</td><td>${s.count}</td><td><strong>${money(s.total)}</strong></td></tr>`).join('');
@@ -1016,16 +1023,22 @@
     const clientRows = summary.by_client.slice(0, 10).map((c) => `
       <tr><td>${escapeHtml(c.customer_name)}</td><td>${c.count}</td><td><strong>${money(c.total)}</strong></td></tr>`).join('');
 
+    const t = summary.totals;
+    const plural = (n) => (n === 1 ? 'lançamento' : 'lançamentos');
+
     el.innerHTML = `
       <div class="admin-header">
-        <div><h1>Financeiro</h1><div class="sub">Entradas de caixa — dia, semana e mês</div></div>
-        <button class="btn btn-primary" id="btnNewEntry">+ Nova entrada</button>
+        <div><h1>Financeiro</h1><div class="sub">Entradas e saídas de caixa — dia, semana e mês</div></div>
+        <div class="header-actions">
+          <button class="btn btn-outline" id="btnNewOutcome">+ Cadastrar saída</button>
+          <button class="btn btn-primary" id="btnNewEntry">+ Nova entrada</button>
+        </div>
       </div>
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${money(summary.totals.day)}</div><div class="stat-label">Faturado hoje</div></div>
-        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${money(summary.totals.week)}</div><div class="stat-label">Faturado esta semana</div></div>
-        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${money(summary.totals.month)}</div><div class="stat-label">Faturado este mês</div></div>
-        <div class="stat-card"><div class="stat-value" style="color:var(--accent)">${money(summary.filtered.total)}</div><div class="stat-label">Total filtrado (${summary.filtered.count} entrada${summary.filtered.count === 1 ? '' : 's'})</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--green)">${money(t.day.entrada)}</div><div class="stat-label">Faturado hoje</div><div class="stat-sub">Semana ${money(t.week.entrada)} · Mês ${money(t.month.entrada)}</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--red)">${money(t.day.saida)}</div><div class="stat-label">Saídas hoje</div><div class="stat-sub">Semana ${money(t.week.saida)} · Mês ${money(t.month.saida)}</div></div>
+        <div class="stat-card"><div class="stat-value">${money(t.day.saldo)}</div><div class="stat-label">Saldo de hoje</div><div class="stat-sub">Entradas − saídas do dia</div></div>
+        <div class="stat-card"><div class="stat-value" style="color:var(--accent)">${money(summary.filtered.saldo)}</div><div class="stat-label">Saldo do período (${summary.filtered.count} ${plural(summary.filtered.count)})</div><div class="stat-sub">Entradas ${money(summary.filtered.entrada)} · Saídas ${money(summary.filtered.saida)}</div></div>
       </div>
       <div class="panel" style="margin-top:18px;">
         <h3 class="review-section-title">Filtros</h3>
@@ -1038,6 +1051,11 @@
           </select>
           <input type="date" id="finFrom" value="${escapeHtml(f.from || '')}" title="De" />
           <input type="date" id="finTo" value="${escapeHtml(f.to || '')}" title="Até" />
+          <select id="finType">
+            <option value="all">Entrada e saída</option>
+            <option value="entrada">Somente entradas</option>
+            <option value="saida">Somente saídas</option>
+          </select>
           <select id="finService"><option value="all">Todos os serviços</option>${serviceOpts}</select>
           <input type="text" id="finCustomer" value="${escapeHtml(f.customer)}" placeholder="Cliente..." />
           <input type="number" id="finMin" value="${escapeHtml(f.min)}" placeholder="Valor mín. (R$)" min="0" step="0.01" style="min-width:130px;" />
@@ -1047,17 +1065,17 @@
         </div>
       </div>
       <div class="panel">
-        <h3 class="review-section-title">Entradas</h3>
+        <h3 class="review-section-title">Lançamentos</h3>
         ${entries.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Data</th><th>Cliente</th><th>Serviço</th><th>Valor</th><th></th></tr></thead>
+          <thead><tr><th>Data</th><th>Tipo</th><th>Cliente</th><th>Serviço</th><th>Valor</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
-        </table></div>` : '<div class="empty-state">Nenhuma entrada neste filtro.</div>'}
+        </table></div>` : '<div class="empty-state">Nenhum lançamento neste filtro.</div>'}
       </div>
       <div class="grid-3">
         <div class="panel">
           <h3 class="review-section-title">Faturamento por dia</h3>
           ${summary.by_day.length ? `<div class="table-wrap"><table>
-            <thead><tr><th>Dia</th><th>Nº</th><th>Total</th></tr></thead>
+            <thead><tr><th>Dia</th><th>Nº</th><th>Entradas</th><th>Saídas</th><th>Saldo</th></tr></thead>
             <tbody>${dayRows}</tbody>
           </table></div>` : '<div class="empty-state">Sem dados.</div>'}
         </div>
@@ -1093,23 +1111,27 @@
     $('finTo').addEventListener('change', (e) => { f.to = e.target.value; f.period = 'custom'; $('finPeriod').value = 'custom'; });
     $('finApply').addEventListener('click', () => {
       f.service_id = $('finService').value;
+      f.type = $('finType').value;
       f.customer = $('finCustomer').value;
       f.min = $('finMin').value;
       f.max = $('finMax').value;
       renderFinances();
     });
     $('finClear').addEventListener('click', () => {
-      Object.assign(f, { period: 'month', from: '', to: '', service_id: 'all', customer: '', min: '', max: '' });
+      Object.assign(f, { period: 'month', from: '', to: '', service_id: 'all', type: 'all', customer: '', min: '', max: '' });
       renderFinances();
     });
-    $('btnNewEntry').addEventListener('click', () => openEntryModal());
+    $('btnNewEntry').addEventListener('click', () => openEntryModal(null, 'entrada'));
+    $('btnNewOutcome').addEventListener('click', () => openEntryModal(null, 'saida'));
     el.querySelectorAll('[data-action="editEntry"]').forEach((b) => b.addEventListener('click', () => openEntryModal(Number(b.dataset.id))));
     el.querySelectorAll('[data-action="deleteEntry"]').forEach((b) => b.addEventListener('click', () => deleteEntry(Number(b.dataset.id))));
   }
 
-  async function openEntryModal(id) {
+  async function openEntryModal(id, presetType) {
     await loadBase();
     const entry = id ? ((state.financeEntries || []).find((r) => r.id === id) || null) : null;
+    const type = entry ? (entry.type === 'saida' ? 'saida' : 'entrada') : (presetType === 'saida' ? 'saida' : 'entrada');
+    const isSaida = type === 'saida';
     const v = (field, def) => (entry && entry[field] != null ? entry[field] : def);
     const now = new Date();
     const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -1120,15 +1142,20 @@
       `<option value="${p}" ${entry && entry.payment_method === p ? 'selected' : ''}>${p ? PAYMENT_LABELS[p] : 'Sem forma de pagamento'}</option>`
     ).join('');
 
-    openModal(id ? 'Editar entrada' : 'Nova entrada', `
+    openModal(isSaida ? 'Cadastrar saída' : (id ? 'Editar entrada' : 'Nova entrada'), `
       <form id="entryForm" novalidate>
         <div class="form-grid">
-          <div class="field span-2">${fieldHtml('entryName', 'Nome do cliente', v('customer_name'), 'text', 'Cliente')}</div>
+          <div class="field span-2"><label for="entryType">Tipo de lançamento</label>
+            <select id="entryType">
+              <option value="entrada" ${type === 'entrada' ? 'selected' : ''}>Entrada (receita)</option>
+              <option value="saida" ${type === 'saida' ? 'selected' : ''}>Saída (despesa)</option>
+            </select></div>
+          <div class="field span-2">${fieldHtml('entryName', isSaida ? 'Nome / descrição' : 'Nome do cliente', v('customer_name', isSaida ? '' : null), 'text', isSaida ? 'Ex: Compra de produtos de limpeza' : 'Cliente')}</div>
           <div class="field"><label for="entryDate">Data</label><input type="date" id="entryDate" value="${escapeHtml(v('entry_date', todayStr()))}" /></div>
           <div class="field"><label for="entryTime">Horário</label><input type="time" id="entryTime" value="${escapeHtml(v('entry_time', nowTime))}" /></div>
-          <div class="field span-2"><label for="entryService">Serviço</label>
+          <div class="field span-2" id="entryServiceWrap"><label for="entryService">Serviço</label>
             <select id="entryService">${serviceOpts}</select></div>
-          <div class="field"><label for="entryAmount">Valor pago (R$)</label>
+          <div class="field"><label for="entryAmount">Valor (R$)</label>
             <input type="number" id="entryAmount" value="${escapeHtml(v('amount', ''))}" step="0.01" min="0" /></div>
           <div class="field"><label for="entryPayment">Forma de pagamento</label>
             <select id="entryPayment">${payOpts}</select></div>
@@ -1138,15 +1165,26 @@
       </form>
     `, `
       <button class="btn btn-ghost" data-close>Cancelar</button>
-      <button class="btn btn-primary" id="entrySave">${id ? 'Salvar' : 'Registrar entrada'}</button>
+      <button class="btn btn-primary" id="entrySave">${id ? 'Salvar' : (isSaida ? 'Registrar saída' : 'Registrar entrada')}</button>
     `);
 
+    $('entryServiceWrap').style.display = isSaida ? 'none' : '';
+
+    $('entryType').addEventListener('change', () => {
+      const nowIsSaida = $('entryType').value === 'saida';
+      const nameLabel = document.querySelector('label[for="entryName"]');
+      if (nameLabel) nameLabel.textContent = nowIsSaida ? 'Nome / descrição' : 'Nome do cliente';
+      $('entryServiceWrap').style.display = nowIsSaida ? 'none' : '';
+    });
+
     $('entrySave').addEventListener('click', async () => {
+      const isNowSaida = $('entryType').value === 'saida';
       const body = {
+        type: isNowSaida ? 'saida' : 'entrada',
         customer_name: $('entryName').value,
         entry_date: $('entryDate').value,
         entry_time: $('entryTime').value || null,
-        service_id: $('entryService').value ? Number($('entryService').value) : null,
+        service_id: isNowSaida ? null : ($('entryService').value ? Number($('entryService').value) : null),
         amount: $('entryAmount').value,
         payment_method: $('entryPayment').value || null,
         notes: $('entryNotes').value || null
@@ -1159,7 +1197,7 @@
         });
         closeModal();
         await renderFinances();
-        toast(id ? 'Entrada atualizada.' : 'Entrada registrada.', 'success');
+        toast(id ? 'Lançamento atualizado.' : (isNowSaida ? 'Saída registrada.' : 'Entrada registrada.'), 'success');
       } catch (e) {
         toast(e.message, 'error');
       }
@@ -1168,12 +1206,12 @@
   }
 
   async function deleteEntry(id) {
-    if (!confirm('Excluir esta entrada?')) return;
+    if (!confirm('Excluir este lançamento?')) return;
     try {
       showLoader();
       await api('/api/admin/financials/entries/' + id, { method: 'DELETE' });
       await renderFinances();
-      toast('Entrada excluída.', 'success');
+      toast('Lançamento excluído.', 'success');
     } catch (e) {
       toast(e.message, 'error');
     }
