@@ -631,7 +631,7 @@ function getMaintenanceHandler(req, res) {
 function deleteTenantHandler(req, res, next) {
   const tenant = getTenantById(req.params.id);
   if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
-  if (tenant.slug === 'torque-detail') {
+  if (process.env.DEFAULT_TENANT_SLUG && tenant.slug === process.env.DEFAULT_TENANT_SLUG) {
     throw new AppError(400, 'A empresa padrão da plataforma não pode ser excluída.');
   }
 
@@ -1067,7 +1067,7 @@ function platformSettings(req, res) {
     platform_name: process.env.PLATFORM_NAME || 'PapiCore',
     storage: 'SQLite isolado por empresa',
     node_env: process.env.NODE_ENV || 'development',
-    default_tenant_slug: process.env.DEFAULT_TENANT_SLUG || 'torque-detail',
+    default_tenant_slug: process.env.DEFAULT_TENANT_SLUG || '',
     platform_domain: process.env.PLATFORM_DOMAIN || '',
     platform_server_ip: process.env.PLATFORM_SERVER_IP || '',
     counts: {

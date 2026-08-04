@@ -2089,7 +2089,7 @@
             <div class="branding-grid" id="pixQrBox"></div>
             <p class="sub">Imagem do QR Code final que o cliente escaneia (PNG, JPG ou WEBP, máx 3 MB).</p>
           </div>
-          <div class="field">${fieldHtml('setPixCompany', 'Nome do recebedor (empresa)', s.pix_company_name, 'text', 'Ex: Torque Detail')}</div>
+          <div class="field">${fieldHtml('setPixCompany', 'Nome do recebedor (empresa)', s.pix_company_name, 'text', 'Ex: Sua Empresa')}</div>
           <div class="field"><label for="setPixCode">Chave Pix — copia e cola</label>
             <textarea id="setPixCode" rows="4" placeholder="Cole aqui o código Pix completo (copia e cola)">${escapeHtml(s.pix_code || '')}</textarea></div>
         </div>

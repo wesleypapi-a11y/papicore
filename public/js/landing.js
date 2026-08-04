@@ -6,6 +6,7 @@
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   const DEFAULT_WHATSAPP_MESSAGE = 'Olá! Conheci o PapiCore pelo site e gostaria de saber mais sobre o sistema.';
+  const FALLBACK_WHATSAPP = '5521964465949';
 
   /* ---------- Rolagem suave / animação de entrada das seções ---------- */
 
@@ -161,7 +162,7 @@
 
   /* ---------- Planos (buscados da API pública) ---------- */
 
-  const state = { plans: [] };
+  const state = { plans: [], whatsapp: FALLBACK_WHATSAPP };
 
   function formatCentsToBRL(cents) {
     return (Number(cents || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -173,14 +174,21 @@
   }
 
   function pickHighlightedPlan(plans) {
-    const bySlug = plans.find((p) => String(p.slug || '').toUpperCase() === 'PROFESSIONAL');
+    const bySlug = plans.find((p) => String(p.slug || '').toUpperCase() === 'PRO');
     if (bySlug) return bySlug.id;
+    const professional = plans.find((p) => String(p.slug || '').toUpperCase() === 'PROFESSIONAL');
+    if (professional) return professional.id;
     if (plans.length === 3) return plans[1].id;
     return null;
   }
 
   function planCardHtml(plan, highlightId) {
     const isHighlighted = plan.id === highlightId;
+    const waMessage = `Olá! Conheci o PapiCore pelo site e gostaria de saber mais sobre o plano ${plan.name}.`;
+    const waLink = buildWhatsAppLink(state.whatsapp, waMessage);
+    const cta = waLink
+      ? `<a class="l-btn ${isHighlighted ? 'l-btn-primary' : 'l-btn-outline'} l-btn-block" href="${esc(waLink)}" target="_blank" rel="noopener">Começar agora</a>`
+      : `<button type="button" class="l-btn ${isHighlighted ? 'l-btn-primary' : 'l-btn-outline'} l-btn-block" data-open-contact data-plan="${esc(plan.name)}">Começar agora</button>`;
     return `
       <article class="l-plan-card${isHighlighted ? ' is-highlighted' : ''}">
         ${isHighlighted ? '<span class="l-plan-badge">Mais escolhido</span>' : ''}
@@ -192,13 +200,14 @@
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Recursos do PapiCore 1.0</li>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>${esc(plan.support_level_label || 'Suporte padrão')}</li>
         </ul>
-        <button type="button" class="l-btn ${isHighlighted ? 'l-btn-primary' : 'l-btn-outline'} l-btn-block" data-open-contact data-plan="${esc(plan.name)}">Começar agora</button>
+        ${cta}
       </article>`;
   }
 
-  async function loadPlans() {
+  async function loadPlans(whatsapp) {
     const grid = $('#plansGrid');
     const planSelect = $('#cf-plan');
+    if (whatsapp) state.whatsapp = whatsapp;
     if (!grid) return;
     try {
       const res = await fetch('/api/public/plans');
@@ -435,11 +444,11 @@
     initDemoTabs();
     initContactModal();
     initFooterYear();
-    loadPlans();
 
     const site = await loadSiteContent();
     initVideo(site.demo_video_url);
     initFooterContact({ whatsapp: site.contact_whatsapp, email: site.contact_email, instagram: site.contact_instagram });
     applySiteImages(site.images);
+    loadPlans(site.contact_whatsapp);
   });
 })();

@@ -1,6 +1,6 @@
-<svg width="200" height="48" viewBox="0 0 200 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Torque Detail">
+<svg width="200" height="48" viewBox="0 0 200 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PapiCore">
   <circle cx="24" cy="24" r="22" fill="#ff7a1a" />
   <path d="M13.5 31 19 18h4l-2.2 13h-3l1.3-8.2L16 31h-2.5Zm12 0V23l-2.8-5h3.7l1.2 2 1.2-2h3.7l-2.8 5v8h-3.6Zm6.8 0v-6.9h-2V20h5.7v4.1h-2V31h-1.7Z" fill="#0e1015" />
-  <text x="58" y="25" font-family="Poppins, Arial, sans-serif" font-size="20" font-weight="700" fill="#f5f7fa">TORQUE</text>
-  <text x="58" y="43" font-family="Poppins, Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="4" fill="#ff7a1a">DETAIL</text>
+  <text x="58" y="25" font-family="Poppins, Arial, sans-serif" font-size="19" font-weight="700" fill="#f5f7fa">PapiCore</text>
+  <text x="58" y="43" font-family="Poppins, Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="4" fill="#ff7a1a">AGENDA</text>
 </svg>

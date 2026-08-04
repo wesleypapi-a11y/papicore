@@ -97,8 +97,8 @@ app.use((req, res, next) => {
    Registrada ANTES do express.static — que entrega o index.html do tenant
    (booking) na raiz para qualquer outro host — e antes de qualquer
    middleware que resolva tenant para a página inicial. Não afeta
-   /admin, /desenvolvedor, /api nem os domínios dos clientes (torquedetail.com.br
-   e demais), que continuam resolvendo normalmente pelo host. */
+   /admin, /desenvolvedor, /api nem os domínios dos clientes, que continuam
+   resolvendo normalmente pelo host. */
 const platformDomain = normalizeDomain(process.env.PLATFORM_DOMAIN || '');
 
 function isPlatformHost(host) {
@@ -165,7 +165,7 @@ app.get('/termos', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'termos.html'));
 });
 
-/* Área pública por slug (futuro: /agendar/torque-detail). A resolução do banco
+/* Área pública por slug (ex.: /agendar/seu-cliente). A resolução do banco
    na API permanece baseada no domínio configurado da empresa. */
 app.get('/agendar/:slug', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

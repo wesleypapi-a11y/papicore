@@ -3,7 +3,7 @@
    * Identidade de cada tenant (aba Configurações > Aparência). Setadas em
    * runtime por applyTenantTheme() (public/js/branding.js) a partir de
    * GET /api/branding — nunca declaradas com valor aqui, então os fallbacks
-   * abaixo (idênticos ao visual atual da Torque Detail) valem sempre que o
+   * abaixo (idênticos ao visual padrão do PapiCore) valem sempre que o
    * JS/API falhar ou ainda não tiver rodado, e a página nunca fica sem
    * estilo. Não usadas em desenvolvedor.html (painel do desenvolvedor não
    * carrega branding.js, então sempre usa a identidade fixa do PapiCore).

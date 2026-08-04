@@ -110,7 +110,7 @@ const COLOR_KEYS = Object.keys(COLOR_COLUMN_BY_KEY);
 /*
  * Resolve as cores efetivas do tenant: usa o que está gravado nas colunas
  * (snapshot do preset aplicado em PUT /theme); se o tenant nunca salvou tema
- * (linha nova ou colunas vazias), cai para o preset padrão (Torque Orange)
+ * (linha nova ou colunas vazias), cai para o preset padrão (PapiCore Orange)
  * sem gravar nada — a página pública/admin sempre recebe um objeto de cores
  * completo, nunca parcial.
  */

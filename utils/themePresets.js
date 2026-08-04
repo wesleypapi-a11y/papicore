@@ -10,8 +10,8 @@
 
 const THEME_PRESETS = [
   {
-    key: 'torque-orange',
-    name: 'Torque Orange',
+    key: 'papicore-orange',
+    name: 'PapiCore Orange',
     description: 'Laranja, preto e cinza.',
     colors: {
       primary: '#FF7A00',
@@ -96,7 +96,7 @@ const THEME_PRESETS = [
   }
 ];
 
-const DEFAULT_THEME_KEY = 'torque-orange';
+const DEFAULT_THEME_KEY = 'papicore-orange';
 
 const THEME_KEYS = THEME_PRESETS.map((t) => t.key);
 

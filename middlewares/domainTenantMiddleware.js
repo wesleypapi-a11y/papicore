@@ -54,7 +54,7 @@ function resolveTenantByHost(req, res, next) {
       verified: row.verified ? 1 : 0
     };
   } else if (isDevLocalhost(domain)) {
-    const def = getTenantBySlug(process.env.DEFAULT_TENANT_SLUG || 'torque-detail');
+    const def = getTenantBySlug(process.env.DEFAULT_TENANT_SLUG || '');
     if (def) {
       req.tenantFromDomain = {
         id: def.id,

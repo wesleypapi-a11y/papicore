@@ -16,7 +16,7 @@
  * essa meta tag e ficam como estão.
  *
  * Tema de cores: GET /api/branding sempre retorna um objeto `colors`
- * completo (com fallback para o tema Torque Orange no backend), então
+ * completo (com fallback para o tema PapiCore Orange no backend), então
  * applyTenantTheme só precisa setar as variáveis --tenant-* no <html> — o
  * CSS já usa essas variáveis com fallback próprio para o caso de falha de
  * rede (a página nunca fica sem estilo).

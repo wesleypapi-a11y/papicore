@@ -243,7 +243,7 @@
 
   <script>
     (function () {
-      var m = localStorage.getItem('torque_view_mode') || 'auto';
+      var m = localStorage.getItem('papicore_view_mode') || 'auto';
       var c = document.documentElement.classList;
       c.toggle('lock-mobile', m === 'mobile');
       c.toggle('lock-desktop', m === 'desktop');
@@ -251,7 +251,7 @@
   </script>
   <script>
     (function () {
-      var KEY = 'torque_view_mode';
+      var KEY = 'papicore_view_mode';
       function current() { return localStorage.getItem(KEY) || 'auto'; }
       function sync() {
         var m = current();

@@ -45,7 +45,7 @@ function timeLabel(a) {
 function getCompanyName() {
   const db = getDb();
   const s = db.prepare('SELECT company_name FROM company_settings WHERE id = 1').get();
-  return (s && s.company_name) || 'Torque Detail';
+  return (s && s.company_name) || 'PapiCore';
 }
 
 function getPaymentLabel(appointment) {

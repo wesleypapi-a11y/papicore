@@ -993,11 +993,11 @@
   function buildPixCode(total) {
     const s = state.settings;
     const phone = digits(s.phone || s.whatsapp || '') || '34999999999';
-    const name = (s.pix_company_name || s.company_name || 'TORQUE DETAIL')
-      .replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, 25) || 'TORQUE DETAIL';
+    const name = (s.pix_company_name || s.company_name || 'PAPICORE')
+      .replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, 25) || 'PAPICORE';
     const city = 'UBERLANDIA';
     const amt = (Number(total) || 0).toFixed(2);
-    const txid = 'TORQUE' + String(Date.now()).slice(-4);
+    const txid = 'PAPICORE' + String(Date.now()).slice(-4);
     const sub = pixField('00', 'BR.GOV.BCB.PIX') + pixField('01', phone);
     let payload =
       '000201' +
