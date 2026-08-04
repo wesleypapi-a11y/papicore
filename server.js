@@ -75,6 +75,9 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  /* API sempre fresca: evita que navegador/proxy sirva resposta em cache da
+     Agenda e esconda agendamentos criados após o primeiro carregamento. */
+  if (req.path.startsWith('/api')) res.setHeader('Cache-Control', 'no-store');
   next();
 });
 
