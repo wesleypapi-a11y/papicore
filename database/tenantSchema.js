@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS company_settings (
   default_interval INTEGER NOT NULL DEFAULT 60,
   working_days TEXT NOT NULL DEFAULT '[1,2,3,4,5,6]',
   confirmation_message TEXT NOT NULL DEFAULT 'Solicitação enviada com sucesso! Nossa equipe analisará a disponibilidade e entrará em contato pelo WhatsApp para confirmar.',
+  payment_methods_enabled TEXT NOT NULL DEFAULT '["local","card","pix","qrcode"]',
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -440,6 +441,10 @@ function upgradeSchema(db) {
      coluna no banco — a presença do arquivo em disco é a fonte da verdade. */
   ensureColumn(db, 'company_settings', 'pix_code', 'TEXT');
   ensureColumn(db, 'company_settings', 'pix_company_name', 'TEXT');
+
+  /* Formas de pagamento habilitadas (JSON array de 'local' | 'card' | 'pix' |
+     'qrcode'). As desabilitadas não aparecem para o cliente no passo de pagamento. */
+  ensureColumn(db, 'company_settings', 'payment_methods_enabled', "TEXT NOT NULL DEFAULT '[\"local\",\"card\",\"pix\",\"qrcode\"]'");
 
   ensureColumn(db, 'services', 'pickup_extra_minutes', 'INTEGER NOT NULL DEFAULT 60');
   ensureColumn(db, 'appointments', 'end_date', 'TEXT');

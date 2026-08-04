@@ -8,14 +8,30 @@ const {
   AppError,
   isValidTime,
   isValidPhone,
-  parseWorkingDays
+  parseWorkingDays,
+  PAYMENT_METHODS
 } = require('../utils/helpers');
+
+/* Interpreta o JSON armazenado em payment_methods_enabled, garantindo sempre
+   uma lista válida dentro de PAYMENT_METHODS (padrão: todos habilitados). */
+function parsePaymentMethods(raw) {
+  let list;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    list = null;
+  }
+  if (!Array.isArray(list)) return [...PAYMENT_METHODS];
+  const valid = list.filter((m) => PAYMENT_METHODS.includes(m));
+  return valid.length ? valid : [...PAYMENT_METHODS];
+}
 
 function get(req, res) {
   const db = getDb();
   const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
   if (!s) throw new AppError(404, 'Configurações não encontradas.');
   s.working_days = parseWorkingDays(s.working_days);
+  s.payment_methods_enabled = parsePaymentMethods(s.payment_methods_enabled);
 
   /* QR Code do Pix: o arquivo em disco é a fonte da verdade (mesmo padrão do
      serve público). A URL usa o updated_at como cache-buster. */
@@ -43,7 +59,8 @@ function update(req, res) {
     confirmation_message,
     capacity,
     pix_code,
-    pix_company_name
+    pix_company_name,
+    payment_methods_enabled
   } = data;
 
   if (!company_name || String(company_name).trim().length < 2) {
@@ -96,12 +113,27 @@ function update(req, res) {
     : parseWorkingDays(working_days);
   if (days.length === 0) throw new AppError(400, 'Selecione pelo menos um dia de funcionamento.');
 
+  /* Formas de pagamento habilitadas: se enviado, valida contra PAYMENT_METHODS
+     e exige pelo menos uma ativa. Se não enviado, preserva o atual. */
+  let enabledMethods = current && current.payment_methods_enabled
+    ? parsePaymentMethods(current.payment_methods_enabled)
+    : [...PAYMENT_METHODS];
+  if (payment_methods_enabled != null) {
+    const list = Array.isArray(payment_methods_enabled)
+      ? payment_methods_enabled
+      : String(payment_methods_enabled).split(',');
+    const valid = [...new Set(list)].filter((m) => PAYMENT_METHODS.includes(m));
+    if (valid.length === 0) throw new AppError(400, 'Selecione pelo menos uma forma de pagamento.');
+    enabledMethods = valid;
+  }
+  const paymentMethodsJson = JSON.stringify(enabledMethods);
+
   db.prepare(
     `INSERT INTO company_settings
        (id, company_name, phone, whatsapp, logo_url, default_opening_time, default_closing_time,
         default_interval, lunch_start, lunch_end, working_days, confirmation_message, capacity,
-        pix_code, pix_company_name)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        pix_code, pix_company_name, payment_methods_enabled)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        company_name = excluded.company_name,
        phone = excluded.phone,
@@ -117,6 +149,7 @@ function update(req, res) {
        capacity = excluded.capacity,
        pix_code = excluded.pix_code,
        pix_company_name = excluded.pix_company_name,
+       payment_methods_enabled = excluded.payment_methods_enabled,
        updated_at = datetime('now', 'localtime')`
   ).run(
     String(company_name).trim(),
@@ -132,11 +165,13 @@ function update(req, res) {
     confirmation_message ? String(confirmation_message).trim() : '',
     cap,
     pixCode,
-    pixCompanyName
+    pixCompanyName,
+    paymentMethodsJson
   );
 
   const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
   s.working_days = parseWorkingDays(s.working_days);
+  s.payment_methods_enabled = parsePaymentMethods(s.payment_methods_enabled);
   return res.json(s);
 }
 

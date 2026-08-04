@@ -816,7 +816,16 @@
   function renderPayment() {
     const grid = $('paymentGrid');
     grid.innerHTML = '';
-    PAYMENT_METHODS.forEach((p) => {
+    const enabled = state.settings.payment_methods_enabled;
+    const available = PAYMENT_METHODS.filter(
+      (p) => !Array.isArray(enabled) || enabled.includes(p.key)
+    );
+    if (state.paymentMethod && !available.some((p) => p.key === state.paymentMethod)) {
+      state.paymentMethod = '';
+      state.cardPaid = false;
+      saveState();
+    }
+    available.forEach((p) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'payment-card';

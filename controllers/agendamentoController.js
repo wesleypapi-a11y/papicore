@@ -12,8 +12,21 @@ const {
   VEHICLE_CATEGORIES,
   todayStr,
   isValidDateStr,
-  parseWorkingDays
+  parseWorkingDays,
+  PAYMENT_METHODS
 } = require('../utils/helpers');
+
+function parsePaymentMethods(raw) {
+  let list;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    list = null;
+  }
+  if (!Array.isArray(list)) return [...PAYMENT_METHODS];
+  const valid = list.filter((m) => PAYMENT_METHODS.includes(m));
+  return valid.length ? valid : [...PAYMENT_METHODS];
+}
 
 function getPublicSettings(req, res) {
   const db = getDb();
@@ -41,6 +54,7 @@ function getPublicSettings(req, res) {
     confirmation_message: s.confirmation_message,
     pix_code: s.pix_code || null,
     pix_company_name: s.pix_company_name || null,
+    payment_methods_enabled: parsePaymentMethods(s.payment_methods_enabled),
     pix_qr_url: hasPixQr ? `/api/payment/pix-qr?v=${ts}` : null
   });
 }

@@ -30,6 +30,7 @@
     pix: 'Pix (copia e cola)',
     qrcode: 'Pix (QR Code)'
   };
+  const PAYMENT_METHOD_KEYS = ['local', 'card', 'pix', 'qrcode'];
   const LONG_SERVICE_THRESHOLD_MINUTES = 2 * 24 * 60;
   function isLongAppointment(a) {
     return Number(a && a.booked_duration_minutes || 0) > LONG_SERVICE_THRESHOLD_MINUTES;
@@ -330,6 +331,7 @@
     };
     $('topbarTitle').textContent = titles[name];
     closeSidebar();
+    if (name === 'agenda' && state.agenda) state.agenda.monthKey = ''; /* recarrega a agenda sempre que a aba é aberta */
     const renderer = {
       dashboard: renderDashboard,
       agenda: renderAgenda,
@@ -2033,6 +2035,14 @@
         <h3 class="review-section-title">Mensagem de sucesso</h3>
         <div class="field"><label for="setMsg">Mensagem exibida ao cliente após enviar a solicitação</label>
           <textarea id="setMsg" rows="3">${escapeHtml(s.confirmation_message || '')}</textarea></div>
+        <h3 class="review-section-title">Pagamento</h3>
+        <div class="field">
+          <label>Formas de pagamento habilitadas</label>
+          <p class="sub" style="margin-top:0;">As opções desmarcadas não aparecem para o cliente no passo de pagamento do agendamento.</p>
+          <div class="checkbox-row">
+            ${PAYMENT_METHOD_KEYS.map((m) => `<label class="switch-row"><input type="checkbox" class="setPaymentMethod" data-method="${m}" ${(s.payment_methods_enabled || PAYMENT_METHOD_KEYS).includes(m) ? 'checked' : ''} /><span>${PAYMENT_LABELS[m]}</span></label>`).join('')}
+          </div>
+        </div>
         <h3 class="review-section-title">Pagamento — Pix</h3>
         <p class="sub" style="margin-top:0;">Dados exibidos ao cliente no passo de pagamento do agendamento.</p>
         <div class="form-grid">
@@ -2062,6 +2072,7 @@
         working_days: days,
         capacity: Number($('setCapacity').value),
         confirmation_message: $('setMsg').value,
+        payment_methods_enabled: [...document.querySelectorAll('.setPaymentMethod:checked')].map((c) => c.dataset.method),
         pix_company_name: $('setPixCompany').value || null,
         pix_code: $('setPixCode').value || null
       };
