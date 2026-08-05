@@ -114,7 +114,9 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const msg = data && data.error ? data.error : 'Algo deu errado. Tente novamente.';
-      throw new Error(msg);
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
     }
     return data;
   }
@@ -137,11 +139,21 @@
   /* ---------- API data ---------- */
 
   async function init() {
-    const [settings, modalities, units] = await Promise.all([
-      api('/api/settings'),
-      api('/api/modalities'),
-      api('/api/units')
-    ]);
+    let settings, modalities, units;
+    try {
+      [settings, modalities, units] = await Promise.all([
+        api('/api/settings'),
+        api('/api/modalities'),
+        api('/api/units')
+      ]);
+    } catch (err) {
+      /* Empresa suspensa, em manutenção ou com domínio inválido: a API do
+         domínio responde 403/503/404 e não há agendamento a exibir. Mostra
+         uma tela de bloqueio amigável em vez de falhar em silêncio. */
+      showBlockedScreen(err.status);
+      if (window.loadTenantBranding) window.loadTenantBranding();
+      return;
+    }
     state.settings = settings || {};
     state.modalities = modalities || [];
     state.units = units || [];
@@ -232,6 +244,36 @@
       }
     }
 
+    window.scrollTo({ top: 0 });
+  }
+
+  /* Tela de bloqueio exibida quando a empresa está suspensa, em manutenção
+     ou o domínio não está cadastrado. Mantém a identidade visual aplicada. */
+  function showBlockedScreen(status) {
+    const form = $('bookingForm');
+    const progressWrap = $('progressWrap');
+    const pageProgress = $('pageProgress');
+    if (form) form.hidden = true;
+    if (progressWrap) progressWrap.hidden = true;
+    if (pageProgress) pageProgress.hidden = true;
+    const setup = $('setupScreen');
+    if (setup) setup.hidden = true;
+    const blocked = $('blockedScreen');
+    if (blocked) blocked.hidden = false;
+    const nav = $('navRow');
+    if (nav) nav.hidden = true;
+
+    if (status === 503) {
+      const title = $('blockedTitle');
+      if (title) title.textContent = 'Sistema em manutenção';
+      const msg = $('blockedMsg');
+      if (msg) msg.textContent = 'Estamos realizando uma manutenção rápida. Tente novamente em alguns instantes.';
+    } else {
+      const title = $('blockedTitle');
+      if (title) title.textContent = 'Este site está temporariamente suspenso';
+      const msg = $('blockedMsg');
+      if (msg) msg.textContent = 'O agendamento online desta empresa está temporariamente indisponível. Entre em contato com a empresa para mais informações.';
+    }
     window.scrollTo({ top: 0 });
   }
 
