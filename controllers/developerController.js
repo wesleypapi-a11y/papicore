@@ -58,7 +58,7 @@ const {
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
 const { createTenantDatabase } = require('../database/tenantDatabase');
 const { deleteTenantDatabase } = require('../database/tenantDatabase');
-const { AppError, isValidEmail, isValidPhone, todayStr, slugify, LEAD_STATUSES } = require('../utils/helpers');
+const { AppError, isValidEmail, isValidPhone, isValidTime, todayStr, slugify, LEAD_STATUSES } = require('../utils/helpers');
 const { signToken } = require('./authController');
 const backupService = require('../services/backupService');
 const restoreService = require('../services/restoreService');
@@ -287,6 +287,8 @@ function validateTenantInput(body, { existing } = {}) {
     }
   }
 
+  const unitInfo = buildUnitInput(body);
+
   return {
     name: name !== undefined ? String(name).trim() : undefined,
     slug: finalSlug,
@@ -299,7 +301,137 @@ function validateTenantInput(body, { existing } = {}) {
     adminName: adminName !== undefined ? String(adminName).trim() : undefined,
     adminEmail: adminEmail !== undefined ? String(adminEmail).trim().toLowerCase() : undefined,
     adminPassword,
-    domain: domain !== undefined ? finalDomain : undefined
+    domain: domain !== undefined ? finalDomain : undefined,
+    unit: unitInfo.provided ? unitInfo.unit : undefined
+  };
+}
+
+/*
+ * Valida e normaliza os dados da primeira unidade preenchidos no formulário
+ * "Nova empresa". Quando nenhum campo de unidade é informado (ex.: edição),
+ * retorna { provided: false }. Quando os campos obrigatórios estão ausentes
+ * ou inválidos, lança AppError com a lista clara do que falta — impedindo a
+ * implantação antes de qualquer escrita no banco (regra: nunca salvar nome,
+ * endereço ou telefone placeholder).
+ */
+function buildUnitInput(body = {}) {
+  const {
+    unitName, unitPhone, unitZipcode, unitStreet, unitNumber, unitComplement,
+    unitNeighborhood, unitCity, unitState, unitReference, unitMapsLink,
+    unitCapacity, unitOpeningTime, unitClosingTime, unitLunchStart, unitLunchEnd,
+    unitWorkingDays, unitInterval
+  } = body || {};
+
+  const hasAnyUnitField =
+    unitName !== undefined || unitPhone !== undefined || unitZipcode !== undefined ||
+    unitStreet !== undefined || unitNumber !== undefined || unitComplement !== undefined ||
+    unitNeighborhood !== undefined || unitCity !== undefined || unitState !== undefined ||
+    unitReference !== undefined || unitMapsLink !== undefined ||
+    unitCapacity !== undefined || unitOpeningTime !== undefined || unitClosingTime !== undefined ||
+    unitLunchStart !== undefined || unitLunchEnd !== undefined ||
+    unitWorkingDays !== undefined || unitInterval !== undefined;
+
+  if (!hasAnyUnitField) return { provided: false, unit: null };
+
+  const str = (v) => String(v || '').trim();
+  const required = [
+    ['unitName', 'nome da unidade'],
+    ['unitPhone', 'telefone da unidade'],
+    ['unitZipcode', 'CEP'],
+    ['unitStreet', 'rua'],
+    ['unitNumber', 'número'],
+    ['unitNeighborhood', 'bairro'],
+    ['unitCity', 'cidade'],
+    ['unitState', 'estado'],
+    ['unitCapacity', 'capacidade simultânea'],
+    ['unitOpeningTime', 'horário de abertura'],
+    ['unitClosingTime', 'horário de fechamento']
+  ];
+
+  const missing = required.filter(([key]) => !str(body[key])).map(([, label]) => label);
+  if (missing.length) {
+    throw new AppError(
+      400,
+      `Dados da primeira unidade incompletos. Faltam: ${missing.join(', ')}.`
+    );
+  }
+
+  if (!isValidPhone(unitPhone)) {
+    throw new AppError(400, 'Telefone da unidade inválido.');
+  }
+  const zipcode = str(unitZipcode).replace(/\D/g, '');
+  if (!/^\d{8}$/.test(zipcode)) {
+    throw new AppError(400, 'CEP da unidade inválido.');
+  }
+  const state = str(unitState).toUpperCase();
+  if (!/^[A-Z]{2}$/.test(state)) {
+    throw new AppError(400, 'Estado da unidade inválido (use a sigla, ex: SP).');
+  }
+  if (!isValidTime(unitOpeningTime) || !isValidTime(unitClosingTime)) {
+    throw new AppError(400, 'Horários de funcionamento da unidade inválidos.');
+  }
+  if (unitClosingTime <= unitOpeningTime) {
+    throw new AppError(400, 'O horário de fechamento deve ser após a abertura.');
+  }
+  if (unitLunchStart && !isValidTime(unitLunchStart)) {
+    throw new AppError(400, 'Início do almoço inválido.');
+  }
+  if (unitLunchEnd && !isValidTime(unitLunchEnd)) {
+    throw new AppError(400, 'Fim do almoço inválido.');
+  }
+  if (unitLunchStart && unitLunchEnd && unitLunchEnd <= unitLunchStart) {
+    throw new AppError(400, 'O fim do almoço deve ser após o início.');
+  }
+  const interval = unitInterval === undefined || unitInterval === '' ? 60 : Number(unitInterval);
+  if (!Number.isInteger(interval) || interval < 15 || interval > 240) {
+    throw new AppError(400, 'O intervalo entre agendamentos deve estar entre 15 e 240 minutos.');
+  }
+  const capacity = Number(unitCapacity);
+  if (!Number.isInteger(capacity) || capacity < 1 || capacity > 20) {
+    throw new AppError(400, 'A capacidade de atendimento deve estar entre 1 e 20.');
+  }
+
+  let days = [];
+  if (Array.isArray(unitWorkingDays)) {
+    days = [...new Set(unitWorkingDays.map(Number).filter((d) => d >= 0 && d <= 6))];
+  } else if (unitWorkingDays !== undefined && unitWorkingDays !== '') {
+    days = [...new Set(String(unitWorkingDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6))];
+  }
+  if (days.length === 0) {
+    throw new AppError(400, 'Selecione pelo menos um dia de funcionamento da unidade.');
+  }
+
+  const street = str(unitStreet);
+  const number = str(unitNumber);
+  const complement = str(unitComplement);
+  const neighborhood = str(unitNeighborhood);
+  const city = str(unitCity);
+  const address = [street, number, complement, neighborhood, city, state].filter(Boolean).join(', ');
+
+  return {
+    provided: true,
+    unit: {
+      name: str(unitName),
+      phone: str(unitPhone),
+      address,
+      address_street: street || null,
+      address_number: number || null,
+      address_complement: complement || null,
+      address_neighborhood: neighborhood || null,
+      address_city: city || null,
+      address_state: state || null,
+      address_zipcode: zipcode || null,
+      address_reference: str(unitReference) || null,
+      maps_link: str(unitMapsLink) || null,
+      capacity,
+      opening_time: unitOpeningTime,
+      closing_time: unitClosingTime,
+      lunch_start: unitLunchStart ? str(unitLunchStart) : '12:00',
+      lunch_end: unitLunchEnd ? str(unitLunchEnd) : '13:00',
+      appointment_interval: interval,
+      working_days: days,
+      active: 1
+    }
   };
 }
 
@@ -322,19 +454,41 @@ function createTenant(req, res) {
     throw new AppError(409, 'Este domínio já está cadastrado.');
   }
 
+  /* A primeira unidade é obrigatória e criada na MESMA operação de
+     implantação. Sem ela, não há empresa para publicar a agenda. */
+  if (!body.unit) {
+    throw new AppError(
+      400,
+      'Dados da primeira unidade obrigatórios: nome, telefone, CEP, rua, número, bairro, cidade, estado, capacidade e horários de funcionamento.'
+    );
+  }
+
   const id = nextTenantId();
   const databaseName = buildDatabaseName(id, body.slug);
   if (tenantDatabaseExists(databaseName)) {
     throw new AppError(409, 'O banco desta empresa já existe. Verifique os dados.');
   }
 
-  /* 1. Cria o banco SQLite exclusivo da empresa (arquivo + tabelas + dados padrão). */
-  createTenantDatabase(databaseName, {
-    companyName: body.name,
-    phone: body.phone || body.adminEmail,
-    whatsapp: body.phone,
-    fullCatalog: false
-  });
+  /* 1. Cria o banco SQLite exclusivo da empresa (arquivo + tabelas + dados
+        padrão) já com a primeira unidade real. O telefone NUNCA usa o e-mail
+        do administrador como fallback. Se a criação da unidade falhar, o
+        banco parcial é removido (compensação) e a implantação é abortada. */
+  try {
+    createTenantDatabase(databaseName, {
+      companyName: body.name,
+      phone: body.phone || body.unit.phone || null,
+      whatsapp: body.phone || body.unit.phone || null,
+      unit: body.unit,
+      fullCatalog: false
+    });
+  } catch (unitErr) {
+    try {
+      deleteTenantDatabase(databaseName);
+    } catch (cleanupErr) {
+      console.error('[papi-core] Erro ao remover banco parcial após falha na unidade', databaseName, cleanupErr.message);
+    }
+    throw mapCreateTenantError(unitErr);
+  }
 
   /* 2. Registra tenant + owner + domínio de forma atômica no banco central.
         Se qualquer passo falhar, remove o banco recém-criado e não deixa

@@ -516,7 +516,7 @@ function upgradeSchema(db) {
  * fullCatalog = false cria apenas modalidades e categorias padrão genéricas.
  */
 function seedDefaults(db, opts = {}) {
-  const { companyName, phone, whatsapp, fullCatalog } = opts;
+  const { companyName, phone, whatsapp, fullCatalog, unit } = opts;
 
   db.prepare(
     `INSERT INTO company_settings
@@ -536,7 +536,44 @@ function seedDefaults(db, opts = {}) {
   );
 
   const unitCount = db.prepare('SELECT COUNT(*) AS total FROM units').get().total;
-  if (unitCount === 0) {
+  /* Primeira unidade com dados reais vindos do formulário "Nova empresa".
+     Nunca usa placeholders nem o e-mail do administrador como telefone. */
+  if (unit && unit.name && unit.phone) {
+    const working = Array.isArray(unit.working_days)
+      ? JSON.stringify(unit.working_days)
+      : (unit.working_days || JSON.stringify([1, 2, 3, 4, 5, 6]));
+    db.prepare(`
+      INSERT INTO units
+        (name, address, address_street, address_number, address_complement, address_neighborhood,
+         address_city, address_state, address_zipcode, address_reference, maps_link,
+         phone, opening_time, closing_time, lunch_start, lunch_end, appointment_interval, capacity, working_days, active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      unit.name,
+      unit.address || '',
+      unit.address_street || null,
+      unit.address_number || null,
+      unit.address_complement || null,
+      unit.address_neighborhood || null,
+      unit.address_city || null,
+      unit.address_state || null,
+      unit.address_zipcode || null,
+      unit.address_reference || null,
+      unit.maps_link || null,
+      unit.phone,
+      unit.opening_time || '08:00',
+      unit.closing_time || '17:00',
+      unit.lunch_start || '12:00',
+      unit.lunch_end || '13:00',
+      unit.appointment_interval || 60,
+      unit.capacity || 1,
+      working,
+      unit.active === undefined ? 1 : unit.active
+    );
+  } else if (unitCount === 0) {
+    /* Fallback legado (migração do tenant padrão / testes) sem unidade
+       informada. O fluxo de implantação via painel do desenvolvedor sempre
+       envia os dados reais da primeira unidade e nunca chega aqui. */
     const insertUnit = db.prepare(`
       INSERT INTO units
         (name, address, phone, opening_time, closing_time, appointment_interval, lunch_start, lunch_end, working_days, active)

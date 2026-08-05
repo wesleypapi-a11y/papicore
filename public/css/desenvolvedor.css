@@ -8,3 +8,4 @@
 .storage-banner.warn{background:#fffbeb;color:#92400e;border-color:#fde68a}
 .storage-banner.critical{background:#fef2f2;color:#991b1b;border-color:#fecaca}
 .tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line)}.tabs button{border:0;border-bottom:2px solid transparent;background:transparent;padding:10px 14px;font-weight:700;color:var(--muted);cursor:pointer;margin-bottom:-1px}.tabs button.active{color:var(--primary);border-color:var(--primary)}
+.field-label{display:block;font-weight:700;font-size:13px;margin:18px 0 6px}.day-chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 18px}.day-chip{display:inline-flex;align-items:center;gap:6px;margin:0!important;padding:8px 12px;border:1px solid #cfd6e2;border-radius:9px;background:#fff;font-weight:600;cursor:pointer;user-select:none}.day-chip input{width:auto;accent-color:var(--primary)}.day-chip:has(input:checked){border-color:var(--primary);background:#eff6ff;color:var(--primary)}
