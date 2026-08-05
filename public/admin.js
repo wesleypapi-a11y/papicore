@@ -328,6 +328,7 @@
       units: 'Unidades',
       blocks: 'Bloqueios',
       modalities: 'Formas de atendimento',
+      contract: 'Contrato',
       settings: 'Configurações'
     };
     $('topbarTitle').textContent = titles[name];
@@ -342,6 +343,7 @@
       units: renderUnits,
       blocks: renderBlocks,
       modalities: renderModalities,
+      contract: renderContract,
       settings: renderSettings
     }[name];
     if (renderer) {
@@ -1459,6 +1461,76 @@
         if (action === 'cancel') { confirmAction('Cancelar este agendamento?', `/api/admin/appointments/${id}/status`, 'PATCH', { status: 'cancelled' }, () => { closeModal(); renderAgendaOrAppointments(); }); return; }
         if (action === 'delete') { confirmAction('Excluir definitivamente este agendamento?', `/api/admin/appointments/${id}`, 'DELETE', null, () => { closeModal(); renderAgendaOrAppointments(); }); }
       });
+    });
+  }
+
+  /* ---------- contrato ---------- */
+
+  const CONTRACT_TYPE_LABELS = { SUBSCRIPTION: 'Assinatura', RENEWAL: 'Renovação', ADDENDUM: 'Aditivo', CANCELLATION: 'Distrato', CUSTOM: 'Personalizado' };
+  const CONTRACT_STATUS_LABELS = { FINALIZED: 'Vigente', CANCELLED: 'Cancelado', EXPIRED: 'Expirado', REPLACED: 'Substituído' };
+
+  function contractTypeLabel(t) { return CONTRACT_TYPE_LABELS[t] || t; }
+  function contractStatusBadge(s) {
+    const cls = { FINALIZED: 'badge-entrada', CANCELLED: 'badge-saida', EXPIRED: 'badge-saida', REPLACED: 'badge-saida' }[s] || '';
+    return `<span class="badge ${cls}">${escapeHtml(CONTRACT_STATUS_LABELS[s] || s)}</span>`;
+  }
+
+  /* Baixa o PDF do contrato autenticado (o navegador não envia o Bearer
+     token em downloads via <a href>, por isso busca com fetch e monta o
+     blob localmente — mesmo padrão usado no painel do desenvolvedor). */
+  async function downloadContractPdf(id, fallbackName) {
+    try {
+      const headers = {};
+      if (state.token) headers.Authorization = 'Bearer ' + state.token;
+      const res = await fetch(`/api/admin/contracts/${id}/download`, { headers });
+      if (!res.ok) {
+        if (res.status === 404) throw new Error('Arquivo não encontrado.');
+        const data = await res.json().catch(() => null);
+        throw new Error((data && data.error) || 'Falha ao baixar o contrato.');
+      }
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      a.download = m ? m[1] : (fallbackName || 'contrato.pdf');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast('Contrato baixado.');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  async function renderContract() {
+    const el = $('view-contract');
+    const contracts = await api('/api/admin/contracts');
+    if (!contracts.length) {
+      el.innerHTML = `
+        <div class="admin-header"><div><h1>Contrato</h1><div class="sub">Contrato de prestação de serviços com a PapiCore</div></div></div>
+        <div class="empty-state">Nenhum contrato disponível ainda. Assim que a PapiCore finalizar seu contrato, ele aparece aqui para download.</div>`;
+      return;
+    }
+    const rows = contracts.map((c) => `
+      <tr>
+        <td><strong>${escapeHtml(c.contract_number)}</strong></td>
+        <td>${escapeHtml(contractTypeLabel(c.contract_type))}</td>
+        <td>${escapeHtml(c.plan_name || '—')}</td>
+        <td><strong>${money((c.total_cents || 0) / 100)}</strong></td>
+        <td>${toDateBR(c.start_date)} – ${toDateBR(c.end_date)}</td>
+        <td>${contractStatusBadge(c.status)}</td>
+        <td>${c.has_pdf ? `<button class="btn btn-sm btn-primary" data-action="downloadContract" data-id="${c.id}" data-number="${escapeHtml(c.contract_number)}">Baixar PDF</button>` : '<span class="muted">Sem PDF</span>'}</td>
+      </tr>`).join('');
+    el.innerHTML = `
+      <div class="admin-header"><div><h1>Contrato</h1><div class="sub">Contrato de prestação de serviços com a PapiCore</div></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Número</th><th>Tipo</th><th>Plano</th><th>Valor</th><th>Vigência</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`;
+    el.querySelectorAll('[data-action="downloadContract"]').forEach((btn) => {
+      btn.addEventListener('click', () => downloadContractPdf(btn.dataset.id, `${btn.dataset.number}.pdf`));
     });
   }
 

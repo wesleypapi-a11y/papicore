@@ -172,19 +172,27 @@
         <div class="actions wide"><button class="primary" type="submit">Salvar</button></div>
       </form>
     </div>
-    <div class="section-head"><h3>Logo para contratos</h3></div>
-    <div class="panel"><p class="muted">Exibida no cabeçalho do PDF gerado.</p><div class="branding-grid" id="contractLogoBox"></div></div>`;
-    renderContractLogo(Boolean(settings.has_logo));
+    <div class="section-head"><h3>Logo e assinatura para contratos</h3></div>
+    <div class="panel"><p class="muted">A logo aparece no cabeçalho do PDF; a assinatura é carimbada sobre a linha "CONTRATADA" — assim o contrato já sai assinado para o cliente baixar.</p><div class="branding-grid"><div id="contractLogoBox"></div><div id="contractSignatureBox"></div></div></div>`;
+    renderContractImageBox('logo', 'contractLogoBox', Boolean(settings.has_logo));
+    renderContractImageBox('signature', 'contractSignatureBox', Boolean(settings.has_signature));
     $('#companySettingsForm').onsubmit=async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;try{const raw=Object.fromEntries(new FormData(e.target));await api('/api/developer/contracts/company-settings',{method:'PUT',body:JSON.stringify(raw)});toast('Dados da contratada atualizados.')}catch(err){toast(err.message)}finally{btn.disabled=false}};
   }
 
-  async function renderContractLogo(hasLogo){
-    const box=$('#contractLogoBox');if(!box)return;
+  const CONTRACT_IMAGE_LABELS={logo:{name:'Logo',empty:'Nenhuma logo enviada',send:'Enviar logo',removed:'Logo removida.',sent:'Logo enviada.'},signature:{name:'Assinatura',empty:'Nenhuma assinatura enviada',send:'Enviar assinatura',removed:'Assinatura removida.',sent:'Assinatura enviada.'}};
+
+  /* Widget de upload de logo/assinatura da contratada — mesmo componente
+     para os dois, só troca o endpoint e os textos. */
+  async function renderContractImageBox(kind,boxId,hasIt){
+    const box=$('#'+boxId);if(!box)return;
+    const labels=CONTRACT_IMAGE_LABELS[kind];
+    const url=`/api/developer/contracts/company-settings/${kind}`;
     let src=null;
-    if(hasLogo){try{const headers={};if(state.token)headers.Authorization='Bearer '+state.token;const r=await fetch('/api/developer/contracts/company-settings/logo',{headers});if(r.ok){src=URL.createObjectURL(await r.blob())}}catch{/* ignore */}}
-    box.innerHTML=`<div class="branding-card"><div class="branding-preview">${src?`<img src="${src}" alt="Logo dos contratos">`:'<span class="branding-placeholder">Nenhuma logo enviada</span>'}</div><div class="branding-actions">${hasLogo?'<button type="button" id="removeContractLogo" class="danger">Remover</button>':''}<label class="branding-upload">${hasLogo?'Substituir':'Enviar logo'}<input type="file" id="contractLogoFile" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" hidden></label></div></div>`;
-    if(hasLogo)$('#removeContractLogo').onclick=async()=>{try{await api('/api/developer/contracts/company-settings/logo',{method:'DELETE'});toast('Logo removida.');renderContractLogo(false)}catch(err){toast(err.message)}};
-    $('#contractLogoFile').onchange=async()=>{const file=$('#contractLogoFile').files[0];if(!file)return;try{const fd=new FormData();fd.append('file',file);await apiForm('/api/developer/contracts/company-settings/logo',fd);toast('Logo enviada.');renderContractLogo(true)}catch(err){toast(err.message)}};
+    if(hasIt){try{const headers={};if(state.token)headers.Authorization='Bearer '+state.token;const r=await fetch(url,{headers});if(r.ok){src=URL.createObjectURL(await r.blob())}}catch{/* ignore */}}
+    box.innerHTML=`<div class="branding-card"><div class="branding-preview">${src?`<img src="${src}" alt="${labels.name} dos contratos">`:`<span class="branding-placeholder">${labels.empty}</span>`}</div><div class="branding-actions">${hasIt?`<button type="button" data-remove-image class="danger">Remover</button>`:''}<label class="branding-upload">${hasIt?'Substituir':labels.send}<input type="file" data-upload-image hidden accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></label></div></div>`;
+    const removeBtn=box.querySelector('[data-remove-image]');
+    if(removeBtn)removeBtn.onclick=async()=>{try{await api(url,{method:'DELETE'});toast(labels.removed);renderContractImageBox(kind,boxId,false)}catch(err){toast(err.message)}};
+    box.querySelector('[data-upload-image]').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const fd=new FormData();fd.append('file',file);await apiForm(url,fd);toast(labels.sent);renderContractImageBox(kind,boxId,true)}catch(err){toast(err.message)}};
   }
 
   /* --- Modelos --- */

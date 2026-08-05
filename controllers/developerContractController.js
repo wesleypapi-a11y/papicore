@@ -29,7 +29,8 @@ const contractService = require('../services/contractService');
 const contractPdfService = require('../services/contractPdfService');
 
 const LOGO_KIND = 'contract_logo';
-const LOGO_LIMIT = 3 * 1024 * 1024; /* 3 MB, mesmo limite usado na logo da tela de login */
+const SIGNATURE_KIND = 'contract_signature';
+const IMAGE_LIMIT = 3 * 1024 * 1024; /* 3 MB, mesmo limite usado na logo da tela de login */
 
 function safeLog(fn) {
   try {
@@ -51,8 +52,11 @@ function contractWithTenant(contract) {
 
 function getCompanySettingsHandler(req, res) {
   const settings = core.getContractCompanySettings();
-  const logoFile = storedPlatformFilePath(LOGO_KIND);
-  return res.json({ ...(settings || {}), has_logo: Boolean(logoFile) });
+  return res.json({
+    ...(settings || {}),
+    has_logo: Boolean(storedPlatformFilePath(LOGO_KIND)),
+    has_signature: Boolean(storedPlatformFilePath(SIGNATURE_KIND))
+  });
 }
 
 function validateCompanySettingsInput(body) {
@@ -79,7 +83,7 @@ function updateCompanySettingsHandler(req, res) {
   return res.json(settings);
 }
 
-function logoMulter() {
+function imageMulter(kind) {
   return multer({
     storage: multer.diskStorage({
       destination(req, file, cb) {
@@ -87,10 +91,10 @@ function logoMulter() {
       },
       filename(req, file, cb) {
         const ext = extensionFor('logo', file.mimetype);
-        cb(null, LOGO_KIND + ext);
+        cb(null, kind + ext);
       }
     }),
-    limits: { fileSize: LOGO_LIMIT },
+    limits: { fileSize: IMAGE_LIMIT },
     fileFilter(req, file, cb) {
       if (!isAllowedMime('logo', file.mimetype)) return cb(new AppError(400, 'Formato de imagem não suportado (use PNG, JPG ou WEBP).'));
       cb(null, true);
@@ -98,40 +102,58 @@ function logoMulter() {
   }).single('file');
 }
 
-function uploadCompanyLogo(req, res, next) {
-  const upload = logoMulter();
-  upload(req, res, (err) => {
-    if (err) return next(err);
-    if (!req.file) return next(new AppError(400, 'Envie um arquivo.'));
-    const savedPath = req.file.path;
-    const sniffed = sniffMime(savedPath);
-    if (!sniffed || !extensionFor('logo', sniffed)) {
-      unlinkIfExists(savedPath);
-      return next(new AppError(400, 'O conteúdo do arquivo não corresponde a uma imagem válida.'));
-    }
-    const old = storedPlatformFilePath(LOGO_KIND);
-    if (old && path.resolve(old) !== path.resolve(savedPath)) unlinkIfExists(old);
-    safeLog(() => core.logActivity(req.user.id, null, 'CONTRACT_COMPANY_SETTINGS_UPDATED', 'Logo de contratos atualizada'));
-    return res.status(201).json({ success: true, has_logo: true });
-  });
+/* Upload de logo/assinatura da contratada — mesmo fluxo para os dois
+   (multer -> valida o conteúdo real do arquivo com sniffMime -> substitui
+   a versão anterior). Reaproveita o mapa de mimes de "logo" (PNG/JPG/WEBP
+   servem bem para uma assinatura escaneada também). */
+function uploadCompanyImage(kind, actionLabel) {
+  return (req, res, next) => {
+    const upload = imageMulter(kind);
+    upload(req, res, (err) => {
+      if (err) return next(err);
+      if (!req.file) return next(new AppError(400, 'Envie um arquivo.'));
+      const savedPath = req.file.path;
+      const sniffed = sniffMime(savedPath);
+      if (!sniffed || !extensionFor('logo', sniffed)) {
+        unlinkIfExists(savedPath);
+        return next(new AppError(400, 'O conteúdo do arquivo não corresponde a uma imagem válida.'));
+      }
+      const old = storedPlatformFilePath(kind);
+      if (old && path.resolve(old) !== path.resolve(savedPath)) unlinkIfExists(old);
+      safeLog(() => core.logActivity(req.user.id, null, 'CONTRACT_COMPANY_SETTINGS_UPDATED', `${actionLabel} atualizada`));
+      return res.status(201).json({ success: true });
+    });
+  };
 }
 
-/* GET /api/developer/contracts/company-settings/logo — protegida por
-   requireDeveloper (não é exibida em tela pública), por isso o frontend
-   busca via fetch + Authorization e monta um blob local, como já é feito
-   para o download de backups. */
-function serveCompanyLogo(req, res) {
-  const file = storedPlatformFilePath(LOGO_KIND);
-  if (!file) throw new AppError(404, 'Nenhuma logo cadastrada.');
-  res.set('Cache-Control', 'private, max-age=300');
-  return res.sendFile(file);
+/* GET .../company-settings/{logo,signature} — protegida por requireDeveloper
+   (não é exibida em tela pública), por isso o frontend busca via fetch +
+   Authorization e monta um blob local, como já é feito para o download de
+   backups. */
+function serveCompanyImage(kind, notFoundMessage) {
+  return (req, res) => {
+    const file = storedPlatformFilePath(kind);
+    if (!file) throw new AppError(404, notFoundMessage);
+    res.set('Cache-Control', 'private, max-age=300');
+    return res.sendFile(file);
+  };
 }
 
-function removeCompanyLogo(req, res) {
-  removePlatformAssetFile(LOGO_KIND);
-  safeLog(() => core.logActivity(req.user.id, null, 'CONTRACT_COMPANY_SETTINGS_UPDATED', 'Logo de contratos removida'));
-  return res.json({ success: true, has_logo: false });
+function removeCompanyImage(kind, actionLabel) {
+  return (req, res) => {
+    removePlatformAssetFile(kind);
+    safeLog(() => core.logActivity(req.user.id, null, 'CONTRACT_COMPANY_SETTINGS_UPDATED', `${actionLabel} removida`));
+    return res.json({ success: true });
+  };
 }
+
+const uploadCompanyLogo = uploadCompanyImage(LOGO_KIND, 'Logo de contratos');
+const serveCompanyLogo = serveCompanyImage(LOGO_KIND, 'Nenhuma logo cadastrada.');
+const removeCompanyLogo = removeCompanyImage(LOGO_KIND, 'Logo de contratos');
+
+const uploadCompanySignature = uploadCompanyImage(SIGNATURE_KIND, 'Assinatura de contratos');
+const serveCompanySignature = serveCompanyImage(SIGNATURE_KIND, 'Nenhuma assinatura cadastrada.');
+const removeCompanySignature = removeCompanyImage(SIGNATURE_KIND, 'Assinatura de contratos');
 
 /* ---------- Modelos ---------- */
 
@@ -399,6 +421,9 @@ module.exports = {
   uploadCompanyLogo,
   serveCompanyLogo,
   removeCompanyLogo,
+  uploadCompanySignature,
+  serveCompanySignature,
+  removeCompanySignature,
   listTemplatesHandler,
   listCurrentTemplatesHandler,
   getTemplateHandler,

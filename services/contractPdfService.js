@@ -65,19 +65,30 @@ function drawBody(doc, contract) {
 }
 
 function drawSignatures(doc, contract, provider) {
-  if (doc.y > doc.page.height - PAGE_MARGIN.bottom - 160) doc.addPage();
+  const signatureFile = storedPlatformFilePath('contract_signature');
+  if (doc.y > doc.page.height - PAGE_MARGIN.bottom - 180) doc.addPage();
   doc.moveDown(2);
   const today = new Date();
   doc.fontSize(10).text(
     `${provider.city || 'Local'}, ${today.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}.`,
     { align: 'center' }
   );
-  doc.moveDown(3);
+  doc.moveDown(signatureFile ? 4.5 : 3);
 
   const colWidth = (doc.page.width - PAGE_MARGIN.left - PAGE_MARGIN.right - 30) / 2;
   const leftX = PAGE_MARGIN.left;
   const rightX = PAGE_MARGIN.left + colWidth + 30;
   const lineY = doc.y;
+
+  /* Assinatura digitalizada da contratada (opcional) — carimbada por cima da
+     linha, como uma assinatura manual escaneada ficaria. Nunca acompanha o
+     lado da CONTRATANTE: não temos a assinatura do cliente. */
+  if (signatureFile) {
+    try {
+      const imgWidth = Math.min(150, colWidth - 20);
+      doc.image(signatureFile, leftX + (colWidth - imgWidth) / 2, lineY - 46, { width: imgWidth, height: 40 });
+    } catch { /* imagem corrompida/ilegível: segue sem assinatura */ }
+  }
 
   doc.moveTo(leftX, lineY).lineTo(leftX + colWidth, lineY).stroke();
   doc.moveTo(rightX, lineY).lineTo(rightX + colWidth, lineY).stroke();
@@ -97,10 +108,20 @@ function drawSignatures(doc, contract, provider) {
   }
 }
 
+/*
+ * O rodapé fica dentro da margem inferior (abaixo de maxY() = page.height -
+ * margins.bottom). Escrever ali com doc.text() aciona a paginação automática
+ * do PDFKit MESMO com x/y explícitos (LineWrapper.wrap() compara this.y com
+ * maxY() antes de desenhar) — sem o zero-margin abaixo, cada rodapé "foge"
+ * para uma página nova em branco em vez de ficar na página certa, e o
+ * documento final acumula uma página em branco extra por página de conteúdo.
+ */
 function drawFooter(doc) {
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i += 1) {
     doc.switchToPage(i);
+    const originalBottomMargin = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     const bottom = doc.page.height - PAGE_MARGIN.bottom + 20;
     doc.fontSize(8).fillColor('#888').text(
       `Página ${i + 1 - range.start} de ${range.count}`,
@@ -108,6 +129,7 @@ function drawFooter(doc) {
       bottom,
       { width: doc.page.width - PAGE_MARGIN.left - PAGE_MARGIN.right, align: 'center' }
     );
+    doc.page.margins.bottom = originalBottomMargin;
   }
 }
 

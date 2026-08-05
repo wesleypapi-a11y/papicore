@@ -526,7 +526,7 @@ CLÁUSULA 12 — DO BACKUP
 A CONTRATADA realiza backups periódicos dos dados da CONTRATANTE, conforme sua política vigente de retenção.
 
 CLÁUSULA 13 — DO CANCELAMENTO
-Qualquer das partes poderá rescindir o presente contrato mediante aviso prévio de 30 (trinta) dias.
+O presente contrato possui prazo mínimo de vigência de 6 (seis) meses a contar de {{CONTRATO_INICIO}}. Qualquer das partes poderá rescindir o contrato mediante aviso prévio de 30 (trinta) dias. Caso a CONTRATANTE solicite o cancelamento antes de completar o prazo mínimo de 6 (seis) meses, pagará à CONTRATADA multa rescisória equivalente a 1 (uma) mensalidade do plano contratado.
 
 CLÁUSULA 14 — DA INADIMPLÊNCIA
 O atraso no pagamento poderá acarretar a suspensão do acesso à plataforma até a regularização.
@@ -783,6 +783,31 @@ function migrateSubscriptionsV3() {
   ensureColumn('subscriptions', 'external_subscription_id', 'TEXT');
 }
 
+/*
+ * v1 — instalações que já tinham o modelo padrão semeado antes da cláusula
+ * de prazo mínimo/multa rescisória existir ganham uma NOVA VERSÃO da mesma
+ * família (nunca sobrescreve a v1 já salva — mesma regra de qualquer edição
+ * de modelo). Instalações novas já nascem com o texto atualizado direto em
+ * seedDefaultContractTemplate() (roda depois desta migração, no primeiro
+ * boot), então aqui não encontram nada para migrar.
+ */
+function migrateContractTemplateMinimumTermV1() {
+  const OLD_CLAUSE = 'CLÁUSULA 13 — DO CANCELAMENTO\nQualquer das partes poderá rescindir o presente contrato mediante aviso prévio de 30 (trinta) dias.';
+  const NEW_CLAUSE = 'CLÁUSULA 13 — DO CANCELAMENTO\nO presente contrato possui prazo mínimo de vigência de 6 (seis) meses a contar de {{CONTRATO_INICIO}}. Qualquer das partes poderá rescindir o contrato mediante aviso prévio de 30 (trinta) dias. Caso a CONTRATANTE solicite o cancelamento antes de completar o prazo mínimo de 6 (seis) meses, pagará à CONTRATADA multa rescisória equivalente a 1 (uma) mensalidade do plano contratado.';
+  const family = db.prepare("SELECT * FROM contract_templates WHERE slug = 'licenca-prestacao-servicos-papicore' AND is_default = 1").get();
+  if (!family || !family.content.includes(OLD_CLAUSE)) return;
+  const updatedContent = family.content.replace(OLD_CLAUSE, NEW_CLAUSE);
+  const tx = db.transaction(() => {
+    const nextVersion = family.version + 1;
+    db.prepare('UPDATE contract_templates SET is_default = 0 WHERE slug = ?').run(family.slug);
+    db.prepare(
+      `INSERT INTO contract_templates (slug, name, description, contract_type, content, version, is_default, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 1)`
+    ).run(family.slug, family.name, family.description, family.contract_type, updatedContent, nextVersion);
+  });
+  tx();
+}
+
 function runMigrations() {
   if (!migrationApplied('plans_v1')) {
     migratePlansV1();
@@ -795,6 +820,10 @@ function runMigrations() {
   if (!migrationApplied('subscriptions_v3')) {
     migrateSubscriptionsV3();
     markMigrationApplied('subscriptions_v3');
+  }
+  if (!migrationApplied('contract_template_minimum_term_v1')) {
+    migrateContractTemplateMinimumTermV1();
+    markMigrationApplied('contract_template_minimum_term_v1');
   }
 }
 

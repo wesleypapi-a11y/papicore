@@ -142,6 +142,9 @@ router.put('/contracts/company-settings', contractController.updateCompanySettin
 router.get('/contracts/company-settings/logo', contractController.serveCompanyLogo);
 router.post('/contracts/company-settings/logo', contractController.uploadCompanyLogo);
 router.delete('/contracts/company-settings/logo', contractController.removeCompanyLogo);
+router.get('/contracts/company-settings/signature', contractController.serveCompanySignature);
+router.post('/contracts/company-settings/signature', contractController.uploadCompanySignature);
+router.delete('/contracts/company-settings/signature', contractController.removeCompanySignature);
 router.get('/contracts/meta', contractController.contractsMetaHandler);
 router.post('/contracts/preview', contractController.previewContractHandler);
 

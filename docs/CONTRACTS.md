@@ -109,6 +109,20 @@ paginação e blocos de assinatura (contratada/contratante). É renderizado a
 partir do **snapshot congelado** do contrato (`provider_snapshot_json` +
 `content`), nunca dos dados "ao vivo".
 
+**Assinatura digitalizada**: se uma imagem for cadastrada em Configurações
+da contratada, ela é carimbada automaticamente sobre a linha "CONTRATADA" —
+o PDF já sai do "Finalizar" com a assinatura da PapiCore aplicada, sem
+nenhum passo manual. A assinatura da CONTRATANTE continua manual (não temos
+essa imagem).
+
+**Cuidado com rodapé/paginação no PDFKit**: escrever com `doc.text()` numa
+posição Y além de `doc.page.maxY()` (`page.height - margins.bottom`) aciona
+a paginação automática do PDFKit **mesmo com x/y explícitos** — o rodapé
+"foge" para uma página nova em branco em vez de ficar na página certa. A
+correção usada aqui é zerar `doc.page.margins.bottom` só durante a escrita
+do rodapé (e restaurar em seguida); qualquer nova área de desenho dentro da
+margem inferior precisa do mesmo cuidado.
+
 ## Armazenamento
 
 ```
@@ -120,9 +134,15 @@ banco (`pdf_path`, relativo a `CONTRACTS_ROOT`) sempre confirmando que o
 resultado final continua dentro de `CONTRACTS_ROOT` (bloqueia path
 traversal) — o mesmo padrão de `services/backupService.js` para
 `BACKUPS_ROOT`. Nenhum caminho vindo do frontend é aceito; o PDF é sempre
-localizado pelo registro do contrato no banco. O download
-(`GET /api/developer/contracts/:id/download`) exige `requireDeveloper` e
-nunca serve a pasta como estática.
+localizado pelo registro do contrato no banco.
+
+**Download pelo desenvolvedor**: `GET /api/developer/contracts/:id/download`
+exige `requireDeveloper`. **Download pelo cliente**: a própria empresa vê e
+baixa os contratos dela (menos rascunhos) na aba "Contrato" do painel
+administrativo (`GET /api/admin/contracts` + `GET
+/api/admin/contracts/:id/download`), sempre restrito a `req.tenant.id`
+resolvido pelo `tenantMiddleware` a partir do usuário autenticado — nunca por
+um id vindo da URL. Nenhuma das duas rotas serve a pasta como estática.
 
 ## Backup e restauração
 
@@ -171,6 +191,7 @@ identificador.
 | --- | --- | --- |
 | GET/PUT | `/contracts/company-settings` | Dados da contratada (singleton) |
 | GET/POST/DELETE | `/contracts/company-settings/logo` | Logo usada no PDF |
+| GET/POST/DELETE | `/contracts/company-settings/signature` | Assinatura carimbada no PDF |
 | GET | `/contracts/meta` | Enums (tipos, status, periodicidades, placeholders) |
 | GET | `/contract-templates` | Todas as versões de todos os modelos |
 | GET | `/contract-templates/current` | Só a versão padrão de cada família |
@@ -190,8 +211,15 @@ identificador.
 | POST | `/contracts/:id/addendum` | Gera aditivo (rascunho vinculado) |
 | POST | `/contracts/:id/cancel` | Cancela (só `FINALIZED`) |
 
-Somente `role = developer` acessa qualquer uma dessas rotas — o admin do
-tenant não tem acesso a esta área nesta fase.
+Somente `role = developer` acessa qualquer uma dessas rotas.
+
+**Painel da empresa cliente** (`/api/admin`, autenticação normal do tenant,
+sempre restrito a `req.tenant.id`):
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| GET | `/contracts` | Lista os contratos da própria empresa (sem rascunhos) |
+| GET | `/contracts/:id/download` | Download do PDF (só se pertencer ao tenant e não for `DRAFT`) |
 
 ## Editor de texto
 
@@ -211,7 +239,13 @@ duplica, renova, gera aditivo e cancela — sem tocar em dados reais.
 ## Limitações conhecidas / próximos passos
 
 - `PLANO_LIMITE_USUARIOS` não tem fonte real no schema de planos.
-- Sem integração de assinatura eletrônica (campos preparados, sem provedor).
+- A "assinatura" é uma imagem estática carimbada no PDF, não uma assinatura
+  eletrônica com validade jurídica/cadeia de custódia — sem integração com
+  provedor de assinatura (campos preparados: `signature_status`,
+  `provider_signed_at`, `client_signed_at`).
 - Editor de texto simples (sem formatação rica).
 - Restauração não religa PDFs de contrato a registros automaticamente.
-- Texto do modelo inicial precisa de revisão jurídica antes de uso comercial.
+- Texto do modelo inicial precisa de revisão jurídica antes de uso comercial
+  (inclui prazo mínimo de 6 meses e multa de 1 mensalidade por rescisão
+  antecipada — confirme se esses termos refletem a política comercial atual
+  antes de usar com clientes reais).

@@ -17,6 +17,7 @@ const modalityController = require('../controllers/modalityController');
 const financialController = require('../controllers/financialController');
 const brandingController = require('../controllers/brandingController');
 const pixController = require('../controllers/pixController');
+const adminContractController = require('../controllers/adminContractController');
 
 const router = express.Router();
 
@@ -76,6 +77,11 @@ router.post('/branding/logo', brandingController.uploadAdminLogo);
 router.post('/branding/favicon', brandingController.uploadAdminFavicon);
 router.delete('/branding/logo', brandingController.removeAdminLogo);
 router.delete('/branding/favicon', brandingController.removeAdminFavicon);
+
+/* Contrato da própria empresa com a PapiCore (somente leitura/download —
+   quem cria e finaliza contratos é o painel do desenvolvedor). */
+router.get('/contracts', adminContractController.listMyContracts);
+router.get('/contracts/:id/download', adminContractController.downloadMyContract);
 
 router.get('/financials/summary', financialController.summary);
 router.get('/financials/entries', financialController.list);
