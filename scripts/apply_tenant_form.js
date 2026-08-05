@@ -19,7 +19,7 @@ if (!lines[usersIdx].includes('renderOwnerSection')) {
   );
 }
 
-lines[openIdx] = fragment;
+lines.splice(openIdx, usersIdx - openIdx, fragment);
 
 fs.writeFileSync(target, lines.join('\n'), 'utf8');
 console.log('OK: openTenantForm (linha', openIdx + 1, ') e loadTenantUsers (linha', usersIdx + 1, ') atualizados.');
