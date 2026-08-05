@@ -199,6 +199,10 @@ test('empresa nova A: seed neutro com dados reais do formulário, sem Torque e s
   assert(alpha.tenant && alpha.tenant.id >= 2, 'tenant A criado no core');
   assert(tenantDatabaseExists(alpha.databaseName), 'banco A existe');
 
+  const domainA = core.getDomainRow('alphadetalhes.com.br');
+  assert(domainA && domainA.tenant_id === alpha.tenant.id, 'domínio de A registrado no core');
+  assert(domainA.verified === 1, 'domínio criado junto com a empresa já nasce VERIFICADO');
+
   withDb(alpha.databaseName, (db) => {
     const s = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
     assert(s.company_name === 'Alpha Detalhes', `company_name deve vir do cadastro ("${s.company_name}")`);

@@ -338,10 +338,9 @@ function seedCore() {
       );
     }
 
-    /* Domínio principal da Torque Detail: configurado pelo próprio operador da
-       plataforma via env var, então já nasce verificado (diferente de um
-       domínio que um tenant adicionaria depois e precisaria comprovar
-       propriedade via DNS). */
+    /* Domínio principal da Torque Detail: o operador da plataforma é quem
+       cadastra os domínios, e todo domínio novo já nasce verificado por
+       padrão. */
     db.prepare('INSERT OR IGNORE INTO tenant_domains (tenant_id, domain, is_primary, verified) VALUES (?, ?, 1, 1)').run(
       tenantId,
       process.env.TORQUE_DETAIL_DOMAIN || 'torquedetail.com.br'
@@ -719,12 +718,18 @@ function getDomainRow(domain) {
   ).get(normalized);
 }
 
+/* Domínio novo já nasce VERIFICADO (1): o operador da plataforma é quem
+   cadastra empresas e domínios, então não faz sentido o site público ficar
+   bloqueado por padrão até um passo manual. Se o operador quiser bloquear um
+   domínio, usa o botão "Marcar como pendente" no painel (setDomainVerified).
+   Trocar o hostname de um domínio existente (setDomainValue) continua
+   voltando para 0, pois o novo endereço precisa ser conferido. */
 function insertDomain(tenantId, domain, isPrimary) {
   const normalized = normalizeDomain(domain);
   if (!normalized) throw new Error('Domínio inválido.');
   if (isPrimary) db.prepare('UPDATE tenant_domains SET is_primary = 0 WHERE tenant_id = ?').run(tenantId);
   const info = db.prepare(
-    'INSERT INTO tenant_domains (tenant_id, domain, is_primary, verified) VALUES (?, ?, ?, 0)'
+    'INSERT INTO tenant_domains (tenant_id, domain, is_primary, verified) VALUES (?, ?, ?, 1)'
   ).run(tenantId, normalized, isPrimary ? 1 : 0);
   return getDomainById(info.lastInsertRowid);
 }
