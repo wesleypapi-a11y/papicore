@@ -8,6 +8,9 @@
  *     cliente (sem Torque, sem "Rua das Flores", sem e-mail como telefone);
  *   - empresas novas começam com setup_status PENDING (sem serviços) e passam
  *     a READY quando ganham serviços;
+ *   - a primeira unidade é OPCIONAL no cadastro da empresa: uma empresa nova
+ *     pode nascer com units vazia (PENDING por falta de unidade e serviços) e
+ *     receber a unidade depois pelo painel administrativo (controller real);
  *   - o catálogo Torque existe APENAS no tenant legado (fullCatalog) — usado
  *     exclusivamente pela migração da Torque Detail;
  *   - branding das empresas novas é neutro (sem logo/favicon próprios).
@@ -32,9 +35,10 @@ process.env.DATA_DIR = TEST_DIR;
 process.env.NODE_ENV = 'development';
 
 const core = require('../database/coreDatabase');
-const { createTenantDatabase, openTenantDatabase, closeTenantDatabase } = require('../database/tenantDatabase');
+const { createTenantDatabase, openTenantDatabase, closeTenantDatabase, runWithTenant } = require('../database/tenantDatabase');
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
 const { computeSetupStatus } = require('../database/tenantSchema');
+const unitController = require('../controllers/unitController');
 
 /* ---------- Runner ---------- */
 
@@ -82,8 +86,8 @@ function createNewTenant(name, slug, unit, domain) {
   const databaseName = buildDatabaseName(id, slug);
   createTenantDatabase(databaseName, {
     companyName: name,
-    phone: unit.phone,
-    whatsapp: unit.phone,
+    phone: unit ? unit.phone : null,
+    whatsapp: unit ? unit.phone : null,
     unit,
     fullCatalog: false
   });
@@ -93,7 +97,7 @@ function createNewTenant(name, slug, unit, domain) {
       slug,
       database_name: databaseName,
       email: `${slug}@empresa.test`,
-      phone: unit.phone,
+      phone: unit ? unit.phone : null,
       plan: 'STARTER',
       status: 'ACTIVE',
       expires_at: null
@@ -157,11 +161,31 @@ const UNIT_B = {
   active: 1
 };
 
+/* Unidade cadastrada DEPOIS da criação da empresa, pelo painel administrativo
+   (controller real de unidades) — não faz parte do formulário "Nova empresa". */
+const UNIT_C = {
+  name: 'Gama Detalhes — Matriz',
+  phone: '(31) 98888-9999',
+  address: 'Rua dos Pinheiros, 250 — Funcionários, Belo Horizonte, MG',
+  address_street: 'Rua dos Pinheiros',
+  address_number: '250',
+  address_neighborhood: 'Funcionários',
+  address_city: 'Belo Horizonte',
+  address_state: 'MG',
+  opening_time: '08:30',
+  closing_time: '18:30',
+  appointment_interval: 60,
+  capacity: 2,
+  working_days: [1, 2, 3, 4, 5, 6],
+  active: 1
+};
+
 /* ---------- Testes ---------- */
 
 let coreTenant;
 let alpha = null;
 let beta = null;
+let gamma = null;
 
 test('initCore cria o core e o tenant padrão Torque Detail no DATA_DIR isolado', () => {
   core.initCore();
@@ -259,6 +283,54 @@ test('catálogo Torque só existe no tenant legado (fullCatalog) — a migraçã
     assert(services === 1, `A deve ter apenas o próprio serviço (${services})`);
     const withTorque = db.prepare("SELECT COUNT(*) AS n FROM services WHERE name LIKE '%Torque%'").get().n;
     assert(withTorque === 0, 'A não pode ter serviços Torque');
+  });
+});
+
+test('empresa nova C: criada SEM unidade — units vazia e PENDING; unidade adicionada depois pelo admin vira READY', () => {
+  gamma = createNewTenant('Gama Detalhes', 'gama-detalhes', null, 'gamadetalhes.com.br');
+  assert(gamma.tenant && gamma.tenant.id >= 2, 'tenant C criado no core');
+  assert(tenantDatabaseExists(gamma.databaseName), 'banco C existe');
+
+  withDb(gamma.databaseName, (db) => {
+    const units = db.prepare('SELECT COUNT(*) AS n FROM units').get().n;
+    assert(units === 0, `empresa nova SEM unidade nasce com units vazia (encontradas ${units})`);
+
+    const setup = computeSetupStatus(db);
+    assert(setup.status === 'PENDING', 'C deve começar PENDING sem unidade');
+    assert(setup.missing.includes('unidade'), `C falta 'unidade' (veio: ${setup.missing.join(', ')})`);
+    assert(setup.missing.includes('serviços'), `C também falta 'serviços' (veio: ${setup.missing.join(', ')})`);
+  });
+
+  /* Admin cadastra a primeira unidade pelo controller REAL de unidades
+     (mesma validação do painel /admin), dentro do contexto do banco de C. */
+  withDb(gamma.databaseName, (db) => {
+    let unitId = null;
+    runWithTenant(db, () => {
+      const res = { status: () => res, json: (d) => { unitId = d.id; return res; } };
+      unitController.create({ body: UNIT_C }, res);
+    });
+    assert(unitId != null, 'controller de unidades retornou a unidade criada');
+
+    const units = db.prepare('SELECT * FROM units ORDER BY id ASC').all();
+    assert(units.length === 1, `após cadastrar unidade: exatamente 1 unidade (tem ${units.length})`);
+    assert(units[0].name === UNIT_C.name, 'nome da unidade vindo do cadastro do admin');
+    assert(units[0].phone === UNIT_C.phone, 'telefone real da unidade (nunca e-mail)');
+    assert(units[0].working_days.includes('1'), 'dias de funcionamento salvos');
+
+    const setup = computeSetupStatus(db);
+    assert(setup.status === 'PENDING' && setup.missing.includes('serviços'), 'C segue PENDING apenas por falta de serviços');
+  });
+
+  /* Admin cadastra o primeiro serviço → C fica READY. */
+  withDb(gamma.databaseName, (db) => {
+    const catId = db.prepare('SELECT id FROM service_categories ORDER BY id ASC LIMIT 1').get().id;
+    db.prepare(
+      `INSERT INTO services
+         (category_id, name, slug, description, price_type, fixed_price, duration_minutes, available_at_unit, available_pickup_delivery, available_mobile_delivery, active, display_order)
+       VALUES (?, ?, ?, ?, 'fixed', 120, 75, 1, 1, 1, 1, 1)`
+    ).run(catId, 'Polimento Completo', 'polimento-completo', 'Serviço exclusivo de C');
+    const setup = computeSetupStatus(db);
+    assert(setup.status === 'READY', `C vira READY com unidade+modalidades+serviço+horários (veio ${setup.status})`);
   });
 });
 

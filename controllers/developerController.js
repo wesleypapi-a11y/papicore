@@ -481,15 +481,6 @@ function createTenant(req, res) {
     throw new AppError(409, 'Este domínio já está cadastrado.');
   }
 
-  /* A primeira unidade é obrigatória e criada na MESMA operação de
-     implantação. Sem ela, não há empresa para publicar a agenda. */
-  if (!body.unit) {
-    throw new AppError(
-      400,
-      'Dados da primeira unidade obrigatórios: nome, telefone, CEP, rua, número, bairro, cidade, estado, capacidade e horários de funcionamento.'
-    );
-  }
-
   const id = nextTenantId();
   const databaseName = buildDatabaseName(id, body.slug);
   if (tenantDatabaseExists(databaseName)) {
@@ -497,14 +488,16 @@ function createTenant(req, res) {
   }
 
   /* 1. Cria o banco SQLite exclusivo da empresa (arquivo + tabelas + dados
-        padrão) já com a primeira unidade real. O telefone NUNCA usa o e-mail
-        do administrador como fallback. Se a criação da unidade falhar, o
-        banco parcial é removido (compensação) e a implantação é abortada. */
+        padrão). A primeira unidade é OPCIONAL nesta etapa: se veio do
+        formulário, é inserida neste banco; se não veio, a empresa nasce com
+        setup_status PENDING e a unidade é cadastrada depois pelo admin. O
+        telefone NUNCA usa o e-mail do administrador como fallback. Se a
+        implantação falhar, o banco parcial é removido (compensação). */
   try {
     createTenantDatabase(databaseName, {
       companyName: body.name,
-      phone: body.phone || body.unit.phone || null,
-      whatsapp: body.phone || body.unit.phone || null,
+      phone: body.phone || (body.unit && body.unit.phone) || null,
+      whatsapp: body.phone || (body.unit && body.unit.phone) || null,
       unit: body.unit,
       fullCatalog: false
     });

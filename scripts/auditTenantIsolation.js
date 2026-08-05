@@ -13,7 +13,11 @@
  *
  * Uso:
  *   node scripts/auditTenantIsolation.js               # apenas audita
+ *   node scripts/auditTenantIsolation.js --tenant=<id> # audita só uma empresa
  *   node scripts/auditTenantIsolation.js --fix         # corrige a IVA Detalhes
+ *   node scripts/auditTenantIsolation.js --tenant=<id> --fix-empty-default-unit
+ *                                                      # remove unidade(s) vazia(s)
+ *                                                      # do seed antigo (com backup)
  *   DATA_DIR=... node scripts/auditTenantIsolation.js  # outro DATA_DIR
  *
  * O modo --fix corrige APENAS dados reais incorretos da IVA Detalhes
@@ -22,6 +26,12 @@
  * domínios, usuários, planos, cobranças, backup/restauração ou em qualquer
  * outra empresa. Domínio pendente de verificação é apenas reportado (o
  * desenvolvedor marca como verificado pelo painel dele).
+ *
+ * --fix-empty-default-unit remove a "unidade vazia" criada pelo seed antigo
+ * (sem endereço e telefone — placeholder). É um script MANUAL: NÃO rode em
+ * produção sem antes gerar um backup do banco. Uma cópia de segurança do
+ * arquivo (e WAL/SHM, se existirem) é feita em <DATA_DIR>/backups/audit-fixes/
+ * imediatamente antes da remoção.
  *
  * Código de saída: 0 (sem problemas / fix ok), 1 (auditoria encontrou
  * problemas ou fix falhou).
@@ -37,6 +47,9 @@ if (process.env.DATA_DIR) {
   process.env.DATA_DIR = path.resolve(process.env.DATA_DIR);
 }
 const IS_FIX = process.argv.includes('--fix');
+const IS_FIX_EMPTY_UNIT = process.argv.includes('--fix-empty-default-unit');
+const tenantFilterArg = process.argv.find((a) => a.startsWith('--tenant='));
+const tenantFilter = tenantFilterArg ? tenantFilterArg.split('=')[1] : null;
 
 const core = require('../database/coreDatabase');
 const { openTenantDatabase, closeTenantDatabase, isOpenTenantDatabase, tenantFilePath } = require('../database/tenantDatabase');
@@ -55,6 +68,54 @@ const FORBIDDEN_PATTERNS = [
 ];
 
 const EMAIL_RE = /@/;
+
+/* Unidade "vazia" do seed antigo: criada sem endereço e sem telefone
+   (placeholder). É o que sobrou da implantação que exigia unidade no cadastro
+   da empresa. Uma unidade real sempre tem ao menos endereço ou telefone. */
+function isEmptyDefaultUnit(u) {
+  return (!u.phone || !String(u.phone).trim()) && (!u.address || !String(u.address).trim());
+}
+
+/* Cópia de segurança do arquivo do banco antes de qualquer correção destrutiva
+   de dados. Usado pelo --fix e pelo --fix-empty-default-unit. */
+function backupTenantDb(tenant) {
+  const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+  const backupDir = path.join(dataDir, 'backups', 'audit-fixes');
+  fs.mkdirSync(backupDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const created = [];
+  for (const suffix of ['', '-wal', '-shm']) {
+    const src = tenantFilePath(tenant.database_name + suffix);
+    if (fs.existsSync(src)) {
+      const dest = path.join(backupDir, `${tenant.database_name}${suffix}.${stamp}`);
+      fs.copyFileSync(src, dest);
+      created.push(dest);
+    }
+  }
+  return created;
+}
+
+/* Remove unidades vazias do seed antigo (--fix-empty-default-unit), sempre com
+   backup antes. Retorna a lista de mudanças aplicadas (vazia se nada a fazer). */
+function removeEmptyDefaultUnits(tenant) {
+  const { db, wasOpen } = openTenantReadonly(tenant.database_name);
+  const changes = [];
+  try {
+    const units = db.prepare('SELECT id, name, address, phone FROM units ORDER BY id ASC').all();
+    const empty = units.filter(isEmptyDefaultUnit);
+    if (empty.length) {
+      const backupFiles = backupTenantDb(tenant);
+      changes.push(`backup criado: ${path.relative(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), backupFiles[0])}`);
+      for (const u of empty) {
+        db.prepare('DELETE FROM units WHERE id = ?').run(u.id);
+        changes.push(`unidade ${u.id} "${u.name}" removida (unidade vazia do seed antigo)`);
+      }
+    }
+  } finally {
+    if (!wasOpen) closeTenantDatabase(tenant.database_name);
+  }
+  return changes;
+}
 
 function openTenantReadonly(databaseName) {
   const wasOpen = isOpenTenantDatabase(databaseName);
@@ -82,6 +143,9 @@ function auditTenant(t) {
       }
       if (EMAIL_RE.test(String(u.phone || ''))) {
         issues.push(`unidade ${u.id} (${u.name}): phone contém e-mail ("${u.phone}")`);
+      }
+      if (isEmptyDefaultUnit(u)) {
+        issues.push(`unidade ${u.id} (${u.name}): unidade vazia do seed antigo (sem endereço e telefone) — remover com --fix-empty-default-unit`);
       }
     }
 
@@ -178,10 +242,18 @@ function main() {
   }
 
   core.initCore();
-  const tenants = core.listTenants();
+  let tenants = core.listTenants();
   if (!tenants.length) {
     console.log('[auditTenantIsolation] Nenhuma empresa cadastrada.');
     process.exit(0);
+  }
+
+  if (tenantFilter !== null) {
+    tenants = tenants.filter((t) => String(t.id) === tenantFilter);
+    if (!tenants.length) {
+      console.error(`[auditTenantIsolation] Nenhuma empresa com id ${tenantFilter} encontrada.`);
+      process.exit(1);
+    }
   }
 
   let problem = false;
@@ -211,18 +283,22 @@ function main() {
       console.log('  marcas Torque: presentes (esperado no tenant 0001)');
     }
 
-    if (t.database_name === IVA_DB && IS_FIX) {
-      const changes = fixIva(t);
+    const isIva = t.database_name === IVA_DB;
+    const wantsFix = (isIva && IS_FIX) || IS_FIX_EMPTY_UNIT;
+    if (wantsFix) {
+      const changes = [];
+      if (isIva && IS_FIX) changes.push(...fixIva(t));
+      if (IS_FIX_EMPTY_UNIT) changes.push(...removeEmptyDefaultUnits(t));
       if (changes.length) {
         fixed.push(...changes.map((c) => `  [empresa ${t.id}] ${c}`));
-      } else {
+      } else if (isIva && IS_FIX) {
         console.log('  IVA Detalhes: nenhuma correção necessária.');
       }
-      /* Re-audita após o fix: o que sobrou conta como problema real. */
+      /* Re-audita após a correção: o que sobrou conta como problema real. */
       const after = auditTenant(t);
       const remaining = after.issues.length;
       if (remaining) {
-        console.log(`  IVA Detalhes (após --fix): ${remaining} problema(s) restante(s)`);
+        console.log(`  [empresa ${t.id}] após correção: ${remaining} problema(s) restante(s)`);
         after.issues.forEach((r) => console.log(`    - ${r}`));
         problem = true;
       }

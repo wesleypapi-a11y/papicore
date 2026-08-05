@@ -7,8 +7,8 @@ const fragmentPath = path.join(__dirname, 'fragment_tenantForm.js');
 const lines = fs.readFileSync(target, 'utf8').split('\n');
 const fragment = fs.readFileSync(fragmentPath, 'utf8');
 
-const openIdx = lines.findIndex((l) => l.includes('function openTenantForm(tenant)'));
-if (openIdx === -1) throw new Error('openTenantForm não encontrado');
+const openIdx = lines.findIndex((l) => l.includes('function validateTenantForm(fd,editing)'));
+if (openIdx === -1) throw new Error('validateTenantForm não encontrado');
 const usersIdx = lines.findIndex((l, i) => i > openIdx && l.includes('async function loadTenantUsers(tenant)'));
 if (usersIdx === -1) throw new Error('loadTenantUsers não encontrado');
 
@@ -22,4 +22,4 @@ if (!lines[usersIdx].includes('renderOwnerSection')) {
 lines.splice(openIdx, usersIdx - openIdx, fragment);
 
 fs.writeFileSync(target, lines.join('\n'), 'utf8');
-console.log('OK: openTenantForm (linha', openIdx + 1, ') e loadTenantUsers (linha', usersIdx + 1, ') atualizados.');
+console.log('OK: bloco do formulário de empresa (linha', openIdx + 1, 'a', usersIdx, ') substituído pelo fragmento atual.');
