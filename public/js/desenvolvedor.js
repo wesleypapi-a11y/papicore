@@ -3,7 +3,7 @@
   const TOKEN_KEY='papi_developer_token';
   const $=(s)=>document.querySelector(s), esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const state={token:sessionStorage.getItem(TOKEN_KEY)||'',user:null,view:'dashboard',tenants:[],plans:[]};
-  const views=[['dashboard','Dashboard'],['tenants','Empresas'],['plans','Planos e Assinaturas'],['financial','Financeiro'],['domains','Domínios'],['users','Usuários'],['leads','Leads comerciais'],['site','Site'],['logs','Logs'],['backups','Backups e Recuperação'],['settings','Configurações']];
+  const views=[['dashboard','Dashboard'],['tenants','Empresas'],['plans','Planos e Assinaturas'],['financial','Financeiro'],['contracts','Contratos'],['domains','Domínios'],['users','Usuários'],['leads','Leads comerciais'],['site','Site'],['logs','Logs'],['backups','Backups e Recuperação'],['settings','Configurações']];
   const LEAD_STATUSES=[['new','Novo'],['contacted','Contatado'],['demo_scheduled','Demonstração marcada'],['proposal_sent','Proposta enviada'],['customer','Cliente'],['lost','Perdido']];
   const SITE_IMAGE_SLOTS=[['logo','Logo (cabeçalho e rodapé)'],['favicon','Favicon / ícone do app (PWA)'],['hero','Mockup do hero'],['demo_agenda','Demonstração — Agenda'],['demo_servicos','Demonstração — Serviços'],['demo_unidades','Demonstração — Unidades'],['demo_financeiro','Demonstração — Financeiro'],['demo_painel','Demonstração — Painel administrativo']];
   async function api(url,opt={}){const headers={'Content-Type':'application/json',...(opt.headers||{})};if(state.token)headers.Authorization='Bearer '+state.token;const r=await fetch(url,{...opt,headers});if(r.status===401&&url!=='/api/developer/login')logout();const data=(r.headers.get('content-type')||'').includes('json')?await r.json():null;if(!r.ok)throw new Error(data?.error||'Não foi possível concluir a operação.');return data}
@@ -19,7 +19,7 @@
   function iconBtn(icon,cls,action,id,label){return `<button type="button" class="action-btn action-btn-${cls}" data-action="${action}" data-id="${id}" title="${label}" aria-label="${label}">${ICONS[icon]}</button>`}
   async function boot(){if(!state.token)return logout();try{state.user=await api('/api/developer/me');$('#loginView').classList.add('hidden');$('#appView').classList.remove('hidden');$('#developerName').textContent=state.user.name;buildNav();await render()}catch{logout()}}
   function buildNav(){ $('#nav').innerHTML=views.map(([id,name])=>`<button class="nav-button ${id===state.view?'active':''}" data-view="${id}">${name}</button>`).join('');$('#nav').onclick=e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;$('#sidebar').classList.remove('open');buildNav();render()}}
-  async function render(){const label=views.find(v=>v[0]===state.view)?.[1]||'';$('#pageTitle').textContent=label;loading();try{await ({dashboard,tenants,plans,financial,domains,users,leads,site,logs,backups,settings}[state.view]||dashboard)()}catch(e){$('#content').innerHTML=`<div class="panel error">${esc(e.message)}</div>`}}
+  async function render(){const label=views.find(v=>v[0]===state.view)?.[1]||'';$('#pageTitle').textContent=label;loading();try{await ({dashboard,tenants,plans,financial,contracts,domains,users,leads,site,logs,backups,settings}[state.view]||dashboard)()}catch(e){$('#content').innerHTML=`<div class="panel error">${esc(e.message)}</div>`}}
   function money(v){return 'R$ '+Number(v||0).toFixed(2)}
   function financialTypeLabel(t){return {MONTHLY:'Mensalidade',PACKAGE:'Pacote parcelado',PERCENTAGE:'Porcentagem'}[t]||t}
   function financialStatusBadge(e){if(e.status==='PAID')return '<span class="status status-paid">Pago</span>';if(e.status==='CANCELED')return '<span class="status status-canceled">Cancelado</span>';if(e.is_overdue)return '<span class="status status-overdue">Atrasado</span>';return '<span class="status status-pending">Pendente</span>'}
@@ -126,6 +126,345 @@
   function refreshPageFavicon(){const l=document.getElementById('pageFavicon');if(l)l.href='/api/developer/login-favicon?v='+Date.now()}
   async function reloadLoginAssets(){loadLoginLogo();loadLoginFavicon();refreshPageFavicon()}
   function renderLoginAsset(kind,d){const box=$(kind==='logo'?'#loginLogoBox':'#loginFaviconBox');if(!box)return;const has=kind==='logo'?Boolean(d&&d.has_logo):Boolean(d&&d.has_favicon);const name=kind==='logo'?'Logo':'Favicon';const meta=kind==='logo'?'PNG, JPG ou WEBP (máx 3 MB)':'PNG ou ICO (máx 1 MB)';const src=kind==='logo'?(has?d.logo_url:'/assets/logo.png'):(has?d.favicon_url:'/assets/favicon.png');const accept=kind==='logo'?'.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp':'.png,.ico,image/png,image/x-icon,image/vnd.microsoft.icon';box.classList.remove('muted');box.innerHTML=`<div class="branding-card"><div class="branding-preview"><img src="${esc(src)}" alt="${name} da tela de login"></div><p class="muted">${name} — ${meta}</p><div class="branding-actions">${has?`<button type="button" data-login-remove="${kind}" class="danger">Remover</button>`:''}<label class="branding-upload">${has?'Substituir':'Enviar '+name.toLowerCase()}<input type="file" data-login-file="${kind}" accept="${accept}" hidden></label></div></div>`;const removeBtn=box.querySelector(`[data-login-remove="${kind}"]`);if(removeBtn)removeBtn.onclick=async()=>{try{await api(`/api/developer/settings/login-${kind}`,{method:'DELETE'});toast(name+' removida.');reloadLoginAssets()}catch(err){toast(err.message)}};const input=box.querySelector(`[data-login-file="${kind}"]`);input.onchange=async()=>{const file=input.files[0];if(!file)return;const label=input.closest('.branding-upload');const original=label.textContent;label.textContent='Enviando…';label.classList.add('disabled');try{const fd=new FormData();fd.append('file',file);await apiForm(`/api/developer/settings/login-${kind}`,fd);toast(name+' enviada.')}catch(err){toast(err.message)}finally{label.textContent=original;label.classList.remove('disabled');input.value='';reloadLoginAssets()}}}
+  /* ---------- Aba "Contratos" ---------- */
+  const CONTRACT_TABS=[['settings','Configurações da contratada'],['templates','Modelos'],['new','Novo contrato'],['history','Contratos gerados']];
+  const CONTRACT_TYPE_LABELS={SUBSCRIPTION:'Assinatura',RENEWAL:'Renovação',ADDENDUM:'Aditivo',CANCELLATION:'Distrato',CUSTOM:'Personalizado'};
+  const CONTRACT_STATUS_LABELS={DRAFT:'Rascunho',FINALIZED:'Finalizado',CANCELLED:'Cancelado',EXPIRED:'Expirado',REPLACED:'Substituído'};
+  const DISCLAIMER_HTML='<div class="disclaimer"><span>⚠️</span><span>Este modelo deve ser revisado por advogado antes de uso comercial definitivo.</span></div>';
+  function contractTypeLabel(t){return CONTRACT_TYPE_LABELS[t]||t}
+  function contractStatusLabel(s){return CONTRACT_STATUS_LABELS[s]||s}
+  function contractStatusBadge(s){const map={DRAFT:'status-pending',FINALIZED:'status-paid',CANCELLED:'status-canceled',EXPIRED:'status-overdue',REPLACED:'status-canceled'};return `<span class="status ${map[s]||''}">${esc(contractStatusLabel(s))}</span>`}
+
+  async function contracts(){
+    const [meta,tenantsData,plansData]=await Promise.all([api('/api/developer/contracts/meta'),api('/api/developer/tenants'),api('/api/developer/plans')]);
+    state.contractMeta=meta;state.tenants=tenantsData;state.plans=plansData;
+    const activeTab=state.contractsTab||'settings';
+    $('#content').innerHTML=`<div class="tabs">${CONTRACT_TABS.map(([id,label])=>`<button type="button" data-ctab="${id}" class="${id===activeTab?'active':''}">${esc(label)}</button>`).join('')}</div><div id="contractsBody"></div>`;
+    $('#content').querySelector('.tabs').onclick=e=>{const b=e.target.closest('[data-ctab]');if(!b)return;state.contractsTab=b.dataset.ctab;contracts()};
+    const bodyEl=$('#contractsBody');
+    if(activeTab==='settings')return renderContractSettings(bodyEl);
+    if(activeTab==='templates')return renderContractTemplates(bodyEl);
+    if(activeTab==='new')return renderNewContract(bodyEl);
+    return renderContractHistory(bodyEl);
+  }
+
+  /* --- Configurações da contratada --- */
+  async function renderContractSettings(bodyEl){
+    const settings=await api('/api/developer/contracts/company-settings');
+    bodyEl.innerHTML=`<div class="panel"><h2>Dados da contratada (PapiCore)</h2><p class="muted">Usados no cabeçalho e nas assinaturas de todo contrato gerado, para qualquer empresa cliente.</p>
+      <form id="companySettingsForm" class="grid-form">
+        <label>Razão social<input name="legal_name" value="${esc(settings.legal_name||'')}"></label>
+        <label>Nome fantasia<input name="trade_name" value="${esc(settings.trade_name||'')}"></label>
+        <label>CNPJ/CPF<input name="document" value="${esc(settings.document||'')}"></label>
+        <label>E-mail<input name="email" type="email" value="${esc(settings.email||'')}"></label>
+        <label>Telefone<input name="phone" value="${esc(settings.phone||'')}"></label>
+        <label>Endereço<input name="address" value="${esc(settings.address||'')}"></label>
+        <label>Número<input name="address_number" value="${esc(settings.address_number||'')}"></label>
+        <label>Complemento<input name="address_complement" value="${esc(settings.address_complement||'')}"></label>
+        <label>Bairro<input name="neighborhood" value="${esc(settings.neighborhood||'')}"></label>
+        <label>Cidade<input name="city" value="${esc(settings.city||'')}"></label>
+        <label>Estado<input name="state" maxlength="2" value="${esc(settings.state||'')}"></label>
+        <label>CEP<input name="zip_code" value="${esc(settings.zip_code||'')}"></label>
+        <label>Representante legal<input name="legal_representative_name" value="${esc(settings.legal_representative_name||'')}"></label>
+        <label>Documento do representante<input name="legal_representative_document" value="${esc(settings.legal_representative_document||'')}"></label>
+        <label>Cargo do representante<input name="legal_representative_role" value="${esc(settings.legal_representative_role||'')}"></label>
+        <label>Foro padrão<input name="default_jurisdiction" value="${esc(settings.default_jurisdiction||'')}" placeholder="Ex.: Comarca de São Paulo/SP"></label>
+        <div class="actions wide"><button class="primary" type="submit">Salvar</button></div>
+      </form>
+    </div>
+    <div class="section-head"><h3>Logo para contratos</h3></div>
+    <div class="panel"><p class="muted">Exibida no cabeçalho do PDF gerado.</p><div class="branding-grid" id="contractLogoBox"></div></div>`;
+    renderContractLogo(Boolean(settings.has_logo));
+    $('#companySettingsForm').onsubmit=async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;try{const raw=Object.fromEntries(new FormData(e.target));await api('/api/developer/contracts/company-settings',{method:'PUT',body:JSON.stringify(raw)});toast('Dados da contratada atualizados.')}catch(err){toast(err.message)}finally{btn.disabled=false}};
+  }
+
+  async function renderContractLogo(hasLogo){
+    const box=$('#contractLogoBox');if(!box)return;
+    let src=null;
+    if(hasLogo){try{const headers={};if(state.token)headers.Authorization='Bearer '+state.token;const r=await fetch('/api/developer/contracts/company-settings/logo',{headers});if(r.ok){src=URL.createObjectURL(await r.blob())}}catch{/* ignore */}}
+    box.innerHTML=`<div class="branding-card"><div class="branding-preview">${src?`<img src="${src}" alt="Logo dos contratos">`:'<span class="branding-placeholder">Nenhuma logo enviada</span>'}</div><div class="branding-actions">${hasLogo?'<button type="button" id="removeContractLogo" class="danger">Remover</button>':''}<label class="branding-upload">${hasLogo?'Substituir':'Enviar logo'}<input type="file" id="contractLogoFile" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" hidden></label></div></div>`;
+    if(hasLogo)$('#removeContractLogo').onclick=async()=>{try{await api('/api/developer/contracts/company-settings/logo',{method:'DELETE'});toast('Logo removida.');renderContractLogo(false)}catch(err){toast(err.message)}};
+    $('#contractLogoFile').onchange=async()=>{const file=$('#contractLogoFile').files[0];if(!file)return;try{const fd=new FormData();fd.append('file',file);await apiForm('/api/developer/contracts/company-settings/logo',fd);toast('Logo enviada.');renderContractLogo(true)}catch(err){toast(err.message)}};
+  }
+
+  /* --- Modelos --- */
+  async function renderContractTemplates(bodyEl){
+    const all=await api('/api/developer/contract-templates');
+    state.contractTemplates=all;
+    const families=new Map();
+    all.forEach(t=>{const cur=families.get(t.slug);if(!cur||t.version>cur.version)families.set(t.slug,t)});
+    all.forEach(t=>{if(t.is_default)families.set(t.slug,t)});
+    const rows=[...families.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt'));
+    bodyEl.innerHTML=`${DISCLAIMER_HTML}<div class="toolbar"><button id="newTemplate" class="primary">Novo modelo</button></div><div id="templatesTable"></div>`;
+    const trows=rows.map(t=>`<tr><td><b>${esc(t.name)}</b><br><small class="muted">${esc(t.slug)}</small></td><td>${esc(contractTypeLabel(t.contract_type))}</td><td>v${t.version}</td><td><span class="status">${t.is_active?'Ativo':'Inativo'}</span></td><td>${esc(t.updated_at)}</td><td><div class="row-actions">${iconBtn('edit','edit','edit',t.id,'Editar (cria nova versão)')}${iconBtn('detail','neutral','versions',t.id,'Ver versões')}${iconBtn('backup','neutral','duplicate',t.id,'Duplicar')}${iconBtn(t.is_active?'cancel':'accept',t.is_active?'warn':'success','toggle',t.id,t.is_active?'Inativar':'Ativar')}</div></td></tr>`);
+    $('#templatesTable').innerHTML=table(['Nome','Tipo','Versão padrão','Status','Atualizado em','Ações'],trows);
+    $('#newTemplate').onclick=()=>openTemplateEditor();
+    $('#templatesTable').onclick=templateAction;
+  }
+
+  async function templateAction(e){
+    const b=e.target.closest('[data-action]');if(!b)return;
+    const t=state.contractTemplates.find(x=>String(x.id)===b.dataset.id);if(!t)return;
+    try{
+      if(b.dataset.action==='edit')return openTemplateEditor(t);
+      if(b.dataset.action==='duplicate'){const name=prompt('Nome do novo modelo (cópia):',`${t.name} (cópia)`);if(!name)return;await api(`/api/developer/contract-templates/${t.id}/duplicate`,{method:'POST',body:JSON.stringify({name})});toast('Modelo duplicado.');contracts();return}
+      if(b.dataset.action==='toggle'){if(!confirm(`${t.is_active?'Inativar':'Ativar'} o modelo "${t.name}" (todas as versões)?`))return;await api(`/api/developer/contract-templates/${t.id}/active`,{method:'POST',body:JSON.stringify({is_active:!t.is_active})});toast('Status do modelo atualizado.');contracts();return}
+      if(b.dataset.action==='versions')return openTemplateVersions(t.slug);
+    }catch(err){toast(err.message)}
+  }
+
+  function openTemplateVersions(slug){
+    const versions=state.contractTemplates.filter(t=>t.slug===slug).sort((a,b)=>b.version-a.version);
+    $('#modalBody').innerHTML=`<h2>Versões — ${esc(versions[0].name)}</h2>${table(['Versão','Status','Atualizado em','Ações'],versions.map(v=>`<tr><td>v${v.version}${v.is_default?' <span class="status status-paid">padrão</span>':''}</td><td>${v.is_active?'Ativo':'Inativo'}</td><td>${esc(v.updated_at)}</td><td><div class="row-actions">${iconBtn('detail','neutral','view',v.id,'Ver conteúdo')}${!v.is_default?iconBtn('star','star','default',v.id,'Marcar como padrão'):''}</div></td></tr>`))}<div class="actions"><button type="button" data-close>Fechar</button></div>`;
+    openModal();
+    $('#modalBody').querySelector('[data-close]').onclick=()=>$('#modal').close();
+    $('#modalBody').onclick=async e=>{
+      const b=e.target.closest('[data-action]');if(!b)return;
+      const v=versions.find(x=>String(x.id)===b.dataset.id);if(!v)return;
+      if(b.dataset.action==='view'){$('#modalBody').innerHTML=`<h2>${esc(v.name)} — v${v.version}</h2><div class="contract-page-wrap"><div class="contract-page">${esc(v.content)}</div></div><div class="actions"><button type="button" id="backToVersions">Voltar</button></div>`;$('#backToVersions').onclick=()=>openTemplateVersions(slug);return}
+      if(b.dataset.action==='default'){try{await api(`/api/developer/contract-templates/${v.id}/default`,{method:'POST'});toast('Versão marcada como padrão.');$('#modal').close();contracts()}catch(err){toast(err.message)}}
+    };
+  }
+
+  function placeholderPanelHtml(){
+    const groups={};
+    Object.entries(state.contractMeta.placeholders).forEach(([key,label])=>{const prefix=key.split('_')[0];(groups[prefix]=groups[prefix]||[]).push([key,label])});
+    const groupLabels={CONTRATADA:'Contratada (PapiCore)',CLIENTE:'Cliente',PLANO:'Plano',CONTRATO:'Contrato'};
+    return Object.entries(groups).map(([g,items])=>`<h4>${esc(groupLabels[g]||g)}</h4>${items.map(([key,label])=>`<div class="placeholder-item"><code title="${esc(label)}">{{${key}}}</code><button type="button" data-insert="${key}">Inserir</button></div>`).join('')}`).join('');
+  }
+
+  function openTemplateEditor(tpl){
+    const editing=Boolean(tpl);
+    $('#modalBody').innerHTML=`<h2>${editing?'Editar modelo (cria nova versão)':'Novo modelo'}</h2>${DISCLAIMER_HTML}
+      <form id="templateForm">
+        <div class="grid-form">
+          <label>Nome *<input name="name" value="${editing?esc(tpl.name):''}" required></label>
+          <label>Tipo de contrato<select name="contract_type">${state.contractMeta.contract_types.map(t=>`<option value="${t}" ${editing&&tpl.contract_type===t?'selected':''}>${esc(contractTypeLabel(t))}</option>`).join('')}</select></label>
+          <label class="wide">Descrição<input name="description" value="${editing?esc(tpl.description||''):''}"></label>
+        </div>
+        <div class="contract-editor">
+          <label>Conteúdo do modelo *<textarea name="content" id="templateContent" required>${editing?esc(tpl.content):''}</textarea></label>
+          <div class="placeholder-panel"><h4>Campos disponíveis</h4><p class="muted" style="font-size:12px;margin-top:0">Clique para inserir no cursor.</p>${placeholderPanelHtml()}</div>
+        </div>
+        <div class="actions wide"><button type="button" data-close>Cancelar</button><button class="primary" type="submit">${editing?'Salvar nova versão':'Criar modelo'}</button></div>
+      </form>`;
+    openModal();
+    $('#modalBody').querySelector('[data-close]').onclick=()=>$('#modal').close();
+    $('#modalBody').querySelectorAll('[data-insert]').forEach(btn=>{btn.onclick=()=>{const ta=$('#templateContent');const token=`{{${btn.dataset.insert}}}`;const start=ta.selectionStart||0,end=ta.selectionEnd||0;ta.value=ta.value.slice(0,start)+token+ta.value.slice(end);ta.focus();ta.selectionStart=ta.selectionEnd=start+token.length}});
+    $('#templateForm').onsubmit=async e=>{
+      e.preventDefault();const btn=e.submitter;btn.disabled=true;
+      try{
+        const raw=Object.fromEntries(new FormData(e.target));
+        if(!raw.name||raw.name.trim().length<2)throw new Error('Informe o nome do modelo.');
+        if(editing)await api(`/api/developer/contract-templates/${tpl.id}`,{method:'PUT',body:JSON.stringify(raw)});
+        else await api('/api/developer/contract-templates',{method:'POST',body:JSON.stringify(raw)});
+        $('#modal').close();toast(editing?'Nova versão do modelo criada.':'Modelo criado.');contracts()
+      }catch(err){toast(err.message)}finally{btn.disabled=false}
+    };
+  }
+
+  /* --- Novo contrato --- */
+  async function renderNewContract(bodyEl){
+    const tenantsSorted=[...state.tenants].sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt'));
+    const currentTemplates=await api('/api/developer/contract-templates/current');
+    state.currentTemplates=currentTemplates;
+    bodyEl.innerHTML=`${DISCLAIMER_HTML}<div class="panel"><h2>Novo contrato</h2>
+      ${currentTemplates.length?'':'<p class="error">Nenhum modelo de contrato cadastrado. Cadastre um modelo na aba "Modelos" antes de continuar.</p>'}
+      <form id="newContractForm" class="grid-form">
+        <label class="wide">Buscar empresa<input id="tenantSearch" placeholder="Nome, slug, documento ou domínio"></label>
+        <label class="wide">Empresa *<select name="tenant_id" id="tenantSelect" required>${tenantsSorted.map(t=>`<option value="${t.id}" data-search="${esc((t.name+' '+t.slug+' '+(t.document||'')+' '+(t.domains&&t.domains[0]?t.domains[0].domain:'')).toLowerCase())}">${esc(t.name)} — ${esc(t.slug)}</option>`).join('')}</select></label>
+        <div id="tenantInfoBox" class="wide"></div>
+        <label>Modelo<select name="template_id" id="templateSelect">${currentTemplates.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></label>
+        <label>Tipo de contrato<select name="contract_type">${state.contractMeta.contract_types.map(t=>`<option value="${t}">${esc(contractTypeLabel(t))}</option>`).join('')}</select></label>
+        <label>Plano<select name="plan_id" id="planSelect"><option value="">Usar plano atual da empresa</option>${state.plans.map(p=>`<option value="${p.id}">${esc(p.name)} (${formatCents(p.monthly_price_cents)}/mês)</option>`).join('')}</select></label>
+        <label>Periodicidade<select name="billing_periodicity" id="periodicitySelect">${state.contractMeta.billing_periodicities.map(p=>`<option value="${p}">${esc(state.contractMeta.periodicity_labels[p])}</option>`).join('')}</select></label>
+        <label>Data de início *<input type="date" name="start_date" required></label>
+        <label>Duração (meses)<input type="number" name="duration_months" min="1" value="12"></label>
+        <label>Desconto (R$)<input name="discount_cents" placeholder="0,00"></label>
+        <label>Implantação (R$)<input name="implementation_fee_cents" placeholder="0,00"></label>
+        <label id="customSubtotalLabel" class="hidden">Valor personalizado (R$)<input name="subtotal_cents" placeholder="Obrigatório para periodicidade personalizada"></label>
+        <label>Forma de pagamento<input name="payment_method" placeholder="Pix, boleto, cartão…"></label>
+        <label>Dia de vencimento<input name="billing_day" type="number" min="1" max="31"></label>
+        <label>Foro<input name="jurisdiction" placeholder="Vazio = foro padrão da contratada"></label>
+        <label class="wide">Observações<textarea name="notes" rows="2"></textarea></label>
+        <div class="actions wide"><button type="button" class="primary" id="previewBtn">Gerar prévia</button></div>
+      </form>
+    </div>
+    <div id="previewBox"></div>`;
+
+    function renderTenantInfo(){
+      const id=$('#tenantSelect').value;
+      const t=state.tenants.find(x=>String(x.id)===id);
+      const box=$('#tenantInfoBox');
+      if(!t){box.innerHTML='';return}
+      const domain=(t.domains||[]).find(d=>d.is_primary)||(t.domains||[])[0];
+      box.innerHTML=`<div class="tenant-info-card"><b>${esc(t.name)}</b>Documento: ${esc(t.document||'—')} · E-mail: ${esc(t.email||'—')} · Telefone: ${esc(t.phone||'—')} · Domínio: ${esc(domain?domain.domain:'—')} · Plano atual: ${esc(t.plan||'—')} · Administrador: ${esc(t.admin?t.admin.name:'—')}${!t.document?'<div class="contract-missing" style="margin-top:8px"><b>Esta empresa não possui documento cadastrado.</b> <button type="button" id="editTenantFromContract">Editar empresa</button></div>':''}</div>`;
+      if(!t.document){const editBtn=$('#editTenantFromContract');if(editBtn)editBtn.onclick=()=>openTenantForm(t)}
+    }
+    renderTenantInfo();
+    $('#tenantSelect').onchange=renderTenantInfo;
+    $('#tenantSearch').oninput=()=>{const q=$('#tenantSearch').value.toLowerCase();[...$('#tenantSelect').options].forEach(opt=>{opt.hidden=Boolean(q)&&!opt.dataset.search.includes(q)})};
+    $('#periodicitySelect').onchange=()=>{$('#customSubtotalLabel').classList.toggle('hidden',$('#periodicitySelect').value!=='CUSTOM')};
+
+    $('#previewBtn').onclick=async()=>{
+      const raw=Object.fromEntries(new FormData($('#newContractForm')));
+      if(!raw.tenant_id)return toast('Selecione uma empresa.');
+      if(!raw.start_date)return toast('Informe a data de início.');
+      const payload=buildContractPayload(raw);
+      try{
+        const result=await api('/api/developer/contracts/preview',{method:'POST',body:JSON.stringify(payload)});
+        state.lastContractPayload=payload;
+        renderContractPreview(result);
+      }catch(err){toast(err.message)}
+    };
+  }
+
+  function buildContractPayload(raw){
+    return {
+      tenant_id:Number(raw.tenant_id),
+      template_id:raw.template_id?Number(raw.template_id):undefined,
+      contract_type:raw.contract_type,
+      plan_id:raw.plan_id?Number(raw.plan_id):undefined,
+      billing_periodicity:raw.billing_periodicity,
+      start_date:raw.start_date,
+      duration_months:raw.duration_months?Number(raw.duration_months):undefined,
+      discount_cents:raw.discount_cents?parseBRLToCents(raw.discount_cents):0,
+      implementation_fee_cents:raw.implementation_fee_cents?parseBRLToCents(raw.implementation_fee_cents):0,
+      subtotal_cents:raw.billing_periodicity==='CUSTOM'&&raw.subtotal_cents?parseBRLToCents(raw.subtotal_cents):undefined,
+      payment_method:raw.payment_method||undefined,
+      billing_day:raw.billing_day?Number(raw.billing_day):undefined,
+      jurisdiction:raw.jurisdiction||undefined,
+      notes:raw.notes||undefined
+    };
+  }
+
+  function renderContractPreview(result){
+    const box=$('#previewBox');
+    const missing=result.missing_required||[];
+    const labels=missing.map(k=>state.contractMeta.placeholders[k]||k);
+    box.innerHTML=`<div class="panel">
+      <h2>Prévia do contrato</h2>
+      ${missing.length?`<div class="contract-missing"><b>Campos obrigatórios pendentes:</b> ${labels.map(esc).join(', ')}. A finalização ficará bloqueada até estes dados existirem.</div>`:''}
+      <div class="contract-summary">
+        <div><span>Subtotal</span><b>${formatCents(result.financials.subtotal_cents)}</b></div>
+        <div><span>Desconto</span><b>${formatCents(result.financials.discount_cents)}</b></div>
+        <div><span>Implantação</span><b>${formatCents(result.financials.implementation_fee_cents)}</b></div>
+        <div><span>Total</span><b>${formatCents(result.financials.total_cents)}</b></div>
+      </div>
+      <div class="contract-page-wrap"><div class="contract-page">${esc(result.content)}</div></div>
+      <div class="actions wide"><button type="button" class="primary" id="saveDraftBtn">Salvar rascunho</button></div>
+    </div>`;
+    $('#saveDraftBtn').onclick=async()=>{
+      const btn=$('#saveDraftBtn');btn.disabled=true;
+      try{
+        const created=await api('/api/developer/contracts',{method:'POST',body:JSON.stringify(state.lastContractPayload)});
+        toast(`Contrato ${created.contract_number} criado como rascunho.`);
+        openContractModal(created);
+      }catch(err){toast(err.message)}finally{btn.disabled=false}
+    };
+  }
+
+  /* --- Contratos gerados (histórico) --- */
+  async function renderContractHistory(bodyEl){
+    const list=await api('/api/developer/contracts');
+    state.contractsList=list;
+    bodyEl.innerHTML=`<div class="toolbar">
+      <input id="cSearch" placeholder="Buscar por número">
+      <select id="cTenant"><option value="">Todas as empresas</option>${[...state.tenants].sort((a,b)=>String(a.name).localeCompare(String(b.name),'pt')).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
+      <select id="cStatus"><option value="">Todos os status</option>${state.contractMeta.statuses.map(s=>`<option value="${s}">${esc(contractStatusLabel(s))}</option>`).join('')}</select>
+      <select id="cType"><option value="">Todos os tipos</option>${state.contractMeta.contract_types.map(t=>`<option value="${t}">${esc(contractTypeLabel(t))}</option>`).join('')}</select>
+    </div><div id="contractsTable"></div>`;
+    const draw=()=>{
+      const q=($('#cSearch').value||'').toLowerCase(),tf=$('#cTenant').value,sf=$('#cStatus').value,tyf=$('#cType').value;
+      const rows=list.filter(c=>(!q||c.contract_number.toLowerCase().includes(q))&&(!tf||String(c.tenant_id)===tf)&&(!sf||c.status===sf)&&(!tyf||c.contract_type===tyf))
+        .map(c=>`<tr class="row-click" data-id="${c.id}"><td>${esc(c.contract_number)}</td><td>${esc(c.tenant?c.tenant.name:'—')}</td><td>${esc(contractTypeLabel(c.contract_type))}</td><td>${esc(c.plan_name||'—')}</td><td>${formatCents(c.total_cents)}</td><td>${date(c.start_date)}</td><td>${date(c.end_date)}</td><td>${contractStatusBadge(c.status)}</td><td>${esc(c.created_at)}</td><td><div class="row-actions">${c.pdf_path?iconBtn('backup','neutral','download',c.id,'Baixar PDF'):''}${iconBtn('detail','edit','open',c.id,'Abrir')}</div></td></tr>`);
+      $('#contractsTable').innerHTML=table(['Número','Empresa','Tipo','Plano','Valor','Início','Vencimento','Status','Criado em','Ações'],rows);
+    };
+    draw();
+    $('#cSearch').oninput=draw;$('#cTenant').onchange=draw;$('#cStatus').onchange=draw;$('#cType').onchange=draw;
+    $('#contractsTable').onclick=e=>{
+      const dlBtn=e.target.closest('[data-action="download"]');
+      if(dlBtn){const c0=list.find(x=>String(x.id)===dlBtn.dataset.id);return fetchContractDownload(`/api/developer/contracts/${dlBtn.dataset.id}/download`,c0?`${c0.contract_number}.pdf`:undefined)}
+      const openBtn=e.target.closest('[data-action="open"]');
+      const row=e.target.closest('tr[data-id]');
+      const id=(openBtn||row)?.dataset.id;
+      if(!id)return;
+      const c=list.find(x=>String(x.id)===id);
+      if(c)openContractModal(c);
+    };
+  }
+
+  /* Download do PDF do contrato — variante de fetchDownload() com mensagens
+     próprias (fetchDownload é compartilhada com a aba Backups e sempre
+     exibe "Backup baixado."). */
+  async function fetchContractDownload(url,fallbackName){
+    try{
+      const headers={};if(state.token)headers.Authorization='Bearer '+state.token;
+      const r=await fetch(url,{headers});
+      if(!r.ok){if(r.status===404)throw new Error('Arquivo não encontrado.');const d=await r.json().catch(()=>null);throw new Error(d?.error||'Falha ao baixar o PDF do contrato.')}
+      const blob=await r.blob();
+      const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+      const cd=r.headers.get('Content-Disposition')||'';const m=cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+      a.download=m?m[1]:(fallbackName||'contrato.pdf');
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+      toast('PDF do contrato baixado.');
+    }catch(err){toast(err.message)}
+  }
+
+  /* --- Modal compartilhado (rascunho/finalizado, usado por Novo contrato e Histórico) --- */
+  function contractSummaryHtml(c){
+    return `<div class="contract-summary">
+      <div><span>Subtotal</span><b>${formatCents(c.subtotal_cents)}</b></div>
+      <div><span>Desconto</span><b>${formatCents(c.discount_cents)}</b></div>
+      <div><span>Implantação</span><b>${formatCents(c.implementation_fee_cents)}</b></div>
+      <div><span>Total</span><b>${formatCents(c.total_cents)}</b></div>
+      <div><span>Início</span><b>${date(c.start_date)}</b></div>
+      <div><span>Vencimento</span><b>${date(c.end_date)}</b></div>
+    </div>`;
+  }
+
+  function contractActionButtons(c){
+    const btns=[];
+    if(c.status==='DRAFT')btns.push('<button type="button" data-caction="finalize" class="primary">Finalizar e gerar PDF</button>');
+    if(c.pdf_path)btns.push('<button type="button" data-caction="download">Baixar PDF</button>');
+    if(c.status==='FINALIZED'){btns.push('<button type="button" data-caction="renewal">Gerar renovação</button>');btns.push('<button type="button" data-caction="addendum">Gerar aditivo</button>');btns.push('<button type="button" data-caction="cancel" class="danger">Cancelar contrato</button>')}
+    btns.push('<button type="button" data-caction="duplicate">Duplicar</button>');
+    return btns.join('');
+  }
+
+  function openContractModal(contract){
+    const editable=contract.status==='DRAFT';
+    $('#modalBody').innerHTML=`<h2>${esc(contract.contract_number)} — ${esc(contract.tenant?contract.tenant.name:'')}</h2>
+      <p class="muted">${esc(contractTypeLabel(contract.contract_type))} · ${contractStatusBadge(contract.status)}</p>
+      ${contractSummaryHtml(contract)}
+      <form id="contractEditForm">
+        <div class="grid-form">
+          <label>Forma de pagamento<input name="payment_method" value="${esc(contract.payment_method||'')}" ${editable?'':'disabled'}></label>
+          <label>Dia de vencimento<input name="billing_day" type="number" min="1" max="31" value="${contract.billing_day||''}" ${editable?'':'disabled'}></label>
+          <label class="wide">Observações<textarea name="notes" rows="2" ${editable?'':'disabled'}>${esc(contract.notes||'')}</textarea></label>
+        </div>
+        <label>Texto do contrato<textarea name="content" id="contractContentArea" rows="16" ${editable?'':'readonly'}>${esc(contract.content)}</textarea></label>
+        <div class="actions wide">${editable?'<button type="button" class="primary" id="saveContractDraft">Salvar alterações</button>':''}</div>
+      </form>
+      <div class="actions wide">${contractActionButtons(contract)}<button type="button" data-close>Fechar</button></div>`;
+    openModal();
+    $('#modalBody').querySelector('[data-close]').onclick=()=>{$('#modal').close();contracts()};
+    if(editable){const saveBtn=$('#saveContractDraft');if(saveBtn)saveBtn.onclick=async()=>{try{const raw=Object.fromEntries(new FormData($('#contractEditForm')));await api(`/api/developer/contracts/${contract.id}`,{method:'PUT',body:JSON.stringify(raw)});toast('Rascunho atualizado.');const updated=await api(`/api/developer/contracts/${contract.id}`);openContractModal(updated)}catch(err){toast(err.message)}}}
+    $('#modalBody').querySelectorAll('[data-caction]').forEach(btn=>{btn.onclick=()=>contractModalAction(btn.dataset.caction,contract)});
+  }
+
+  async function contractModalAction(action,contract){
+    try{
+      if(action==='finalize'){if(!confirm('Finalizar este contrato e gerar o PDF? Depois de finalizado o texto não pode mais ser editado diretamente.'))return;const updated=await api(`/api/developer/contracts/${contract.id}/finalize`,{method:'POST'});toast('Contrato gerado com sucesso.');openContractModal(updated);return}
+      if(action==='download')return fetchContractDownload(`/api/developer/contracts/${contract.id}/download`,`${contract.contract_number}.pdf`);
+      if(action==='duplicate'){const dup=await api(`/api/developer/contracts/${contract.id}/duplicate`,{method:'POST'});toast(`Contrato ${dup.contract_number} criado como cópia.`);openContractModal(dup);return}
+      if(action==='renewal'){const ren=await api(`/api/developer/contracts/${contract.id}/renewal`,{method:'POST',body:JSON.stringify({})});toast(`Renovação ${ren.contract_number} criada.`);openContractModal(ren);return}
+      if(action==='addendum'){const changes=prompt('Descreva as cláusulas alteradas por este aditivo:');if(!changes)return;const add=await api(`/api/developer/contracts/${contract.id}/addendum`,{method:'POST',body:JSON.stringify({changes})});toast(`Aditivo ${add.contract_number} criado.`);openContractModal(add);return}
+      if(action==='cancel'){const reason=prompt('Motivo do cancelamento (opcional):')||'';if(!confirm('Cancelar este contrato?'))return;const cancelled=await api(`/api/developer/contracts/${contract.id}/cancel`,{method:'POST',body:JSON.stringify({reason})});toast('Contrato cancelado.');openContractModal(cancelled);return}
+    }catch(err){toast(err.message)}
+  }
+
   $('#loginForm').onsubmit=async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;btn.textContent='Entrando…';$('#loginError').textContent='';try{const d=await api('/api/developer/login',{method:'POST',body:JSON.stringify({email:$('#email').value,password:$('#password').value})});state.token=d.token;sessionStorage.setItem(TOKEN_KEY,d.token);await boot()}catch(err){state.token='';sessionStorage.removeItem(TOKEN_KEY);$('#loginError').textContent=err.message}finally{btn.disabled=false;btn.textContent='Entrar'}};
   $('#showPassword').onclick=()=>{const p=$('#password');p.type=p.type==='password'?'text':'password';$('#showPassword').textContent=p.type==='password'?'Mostrar':'Ocultar'};$('#logout').onclick=logout;$('#refresh').onclick=render;$('#menu').onclick=()=>$('#sidebar').classList.toggle('open');  $('#modalClose').onclick=()=>{if(state.modalLocked)return;$('#modal').close()};$('#modal').addEventListener('cancel',e=>{if(state.modalLocked)e.preventDefault()});logout();
 })();

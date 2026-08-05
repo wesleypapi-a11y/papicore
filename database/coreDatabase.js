@@ -32,6 +32,7 @@ const {
   deleteTenantDatabase
 } = require('./tenantDatabase');
 const { removeTenantAssets } = require('../utils/assetStorage');
+const { removeTenantContracts } = require('../utils/contractStorage');
 
 const DATA_DIR =
   process.env.DATA_DIR ||
@@ -250,6 +251,130 @@ CREATE TABLE IF NOT EXISTS commercial_leads (
 );
 `;
 
+/* Contratos de prestação de serviço com as empresas clientes (tenants).
+   Ficam no banco central porque o fluxo é exclusivo do painel do
+   desenvolvedor. O PDF gerado nunca fica em public/ — vive em
+   DATA_DIR/contracts/ e o registro guarda apenas o caminho relativo + hash
+   SHA-256 (imutabilidade).
+   - contract_company_settings: dados fixos da CONTRATADA (a própria
+     PapiCore, não um tenant) — linha única (id = 1), mesmo padrão de
+     site_content;
+   - contract_templates: modelos GLOBAIS mantidos pelo desenvolvedor e
+     usados para gerar contrato de qualquer empresa cliente. Versionamento
+     por família (mesmo slug, version crescente): nunca apaga versão antiga;
+     is_default marca a versão vigente da família;
+   - contract_sequences: contador GLOBAL por ano (não por tenant) — o número
+     final (PC-2026-000001) não identifica a empresa, então a reserva também
+     não pode ser por tenant (dois clientes gerando o 1º contrato do ano não
+     podem colidir no mesmo número). Reserva sempre transacional, nunca
+     count(*) + 1;
+   - contracts: contratos gerados PARA uma empresa cliente (tenant_id).
+     FINALIZED é imutável; os *_snapshot_json congelam contratada, cliente e
+     plano no momento da geração, para nunca mudar mesmo que os dados de
+     origem mudem depois. */
+const CONTRACTS_DDL = `
+CREATE TABLE IF NOT EXISTS contract_company_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  legal_name TEXT,
+  trade_name TEXT,
+  document TEXT,
+  address TEXT,
+  address_number TEXT,
+  address_complement TEXT,
+  neighborhood TEXT,
+  city TEXT,
+  state TEXT,
+  zip_code TEXT,
+  phone TEXT,
+  email TEXT,
+  legal_representative_name TEXT,
+  legal_representative_document TEXT,
+  legal_representative_role TEXT,
+  default_jurisdiction TEXT,
+  logo_path TEXT,
+  signature_path TEXT,
+  updated_by_user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS contract_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  contract_type TEXT NOT NULL DEFAULT 'SUBSCRIPTION',
+  content TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_by_user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (slug, version)
+);
+
+CREATE TABLE IF NOT EXISTS contract_sequences (
+  year INTEGER PRIMARY KEY,
+  last_number INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS contracts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  template_id INTEGER REFERENCES contract_templates(id) ON DELETE SET NULL,
+  template_version INTEGER,
+  contract_number TEXT NOT NULL UNIQUE,
+  year INTEGER NOT NULL,
+  contract_type TEXT NOT NULL DEFAULT 'SUBSCRIPTION',
+  status TEXT NOT NULL DEFAULT 'DRAFT',
+  title TEXT,
+  content TEXT NOT NULL,
+  provider_snapshot_json TEXT NOT NULL,
+  client_snapshot_json TEXT NOT NULL,
+  plan_snapshot_json TEXT,
+  client_name TEXT NOT NULL,
+  client_document TEXT,
+  client_email TEXT,
+  client_phone TEXT,
+  plan_name TEXT,
+  plan_price_cents INTEGER,
+  billing_periodicity TEXT NOT NULL DEFAULT 'MONTHLY',
+  subtotal_cents INTEGER,
+  discount_cents INTEGER NOT NULL DEFAULT 0,
+  implementation_fee_cents INTEGER NOT NULL DEFAULT 0,
+  total_cents INTEGER,
+  payment_method TEXT,
+  billing_day INTEGER,
+  start_date TEXT,
+  end_date TEXT,
+  duration_months INTEGER,
+  jurisdiction TEXT,
+  notes TEXT,
+  signature_status TEXT NOT NULL DEFAULT 'PENDING',
+  provider_signed_at TEXT,
+  client_signed_at TEXT,
+  finalized_at TEXT,
+  finalized_by_user_id INTEGER,
+  cancelled_at TEXT,
+  cancel_reason TEXT,
+  created_by_user_id INTEGER,
+  previous_contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
+  replaces_contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
+  pdf_path TEXT,
+  pdf_sha256 TEXT,
+  pdf_size_bytes INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_contracts_tenant ON contracts(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
+CREATE INDEX IF NOT EXISTS idx_contracts_replaces ON contracts(replaces_contract_id);
+CREATE INDEX IF NOT EXISTS idx_contract_templates_slug ON contract_templates(slug);
+`;
+
 /* Planos iniciais da plataforma. Os valores ficam fixos aqui (migration/seed)
    e NÃO são duplicados no front-end: depois da primeira criação, o painel do
    desenvolvedor pode alterar preço, limite e status. max_units = null
@@ -295,6 +420,7 @@ function openCore() {
   db.exec(RESTORE_RUNS_DDL);
   db.exec(COMMERCIAL_LEADS_DDL);
   db.exec(SITE_CONTENT_DDL);
+  db.exec(CONTRACTS_DDL);
   migrateBrandingThemeColumns();
   runMigrations();
 }
@@ -347,6 +473,86 @@ function seedCore() {
     );
     ensureSubscriptionForTenant(tenantId, 'STARTER');
   }
+}
+
+/*
+ * Modelo padrão inicial de contrato ("Contrato de Licença e Prestação de
+ * Serviços PapiCore") — texto administrativo estruturado, NÃO uma peça
+ * jurídica pronta (precisa de revisão de advogado antes de uso comercial;
+ * o aviso também aparece nas telas de Modelos e Novo contrato). Só é criado
+ * se ainda não existir NENHUM modelo — nunca sobrescreve ou recria um
+ * modelo que o desenvolvedor já tenha editado, versionado ou substituído.
+ */
+function seedDefaultContractTemplate() {
+  const hasAny = db.prepare('SELECT 1 FROM contract_templates LIMIT 1').get();
+  if (hasAny) return;
+  const content = `IDENTIFICAÇÃO DAS PARTES
+De um lado {{CONTRATADA_RAZAO_SOCIAL}}, inscrita no CNPJ/CPF sob o nº {{CONTRATADA_DOCUMENTO}}, com sede em {{CONTRATADA_ENDERECO}}, doravante denominada CONTRATADA, neste ato representada por {{CONTRATADA_REPRESENTANTE}}, portador do documento {{CONTRATADA_REPRESENTANTE_DOCUMENTO}}, e-mail {{CONTRATADA_EMAIL}}, telefone {{CONTRATADA_TELEFONE}}; e de outro lado {{CLIENTE_RAZAO_SOCIAL}}, inscrita no CNPJ/CPF sob o nº {{CLIENTE_DOCUMENTO}}, doravante denominada CONTRATANTE, neste ato representada por {{CLIENTE_REPRESENTANTE}}, e-mail {{CLIENTE_REPRESENTANTE_EMAIL}}; têm entre si justo e contratado o presente instrumento (nº {{CONTRATO_NUMERO}}, firmado em {{CONTRATO_DATA}}), que se regerá pelas cláusulas seguintes.
+
+CLÁUSULA 1 — DO OBJETO
+O presente contrato tem por objeto a licença de uso da plataforma PapiCore e a prestação dos serviços de implantação, configuração e suporte relacionados ao plano {{PLANO_NOME}} contratado pela CONTRATANTE: {{PLANO_DESCRICAO}}.
+
+CLÁUSULA 2 — DA LICENÇA DE USO
+A CONTRATADA concede à CONTRATANTE licença de uso não exclusiva e intransferível da plataforma, limitada às condições do plano contratado — {{PLANO_RECURSOS}} —, com limite de {{PLANO_LIMITE_UNIDADES}} unidade(s) e {{PLANO_LIMITE_USUARIOS}}.
+
+CLÁUSULA 3 — DA IMPLANTAÇÃO E CONFIGURAÇÃO
+A implantação compreende a configuração inicial da agenda, unidades, serviços e formas de atendimento da CONTRATANTE.
+
+CLÁUSULA 4 — DO DOMÍNIO
+A plataforma é disponibilizada à CONTRATANTE no domínio {{CLIENTE_DOMINIO}}.
+
+CLÁUSULA 5 — DA MENSALIDADE/ANUIDADE E DO VENCIMENTO
+Pela licença de uso e prestação dos serviços, a CONTRATANTE pagará à CONTRATADA o valor de {{CONTRATO_VALOR_TOTAL}}, com periodicidade {{PLANO_PERIODICIDADE}}, mediante {{CONTRATO_FORMA_PAGAMENTO}}.
+
+CLÁUSULA 6 — DO REAJUSTE
+Os valores poderão ser reajustados anualmente, mediante comunicação prévia de 30 (trinta) dias à CONTRATANTE.
+
+CLÁUSULA 7 — DO PRAZO E DA RENOVAÇÃO
+O presente contrato vigora de {{CONTRATO_INICIO}} a {{CONTRATO_VENCIMENTO}} ({{CONTRATO_DURACAO_MESES}} meses), renovável por períodos iguais e sucessivos mediante a geração de um novo contrato de renovação, salvo manifestação em contrário de qualquer das partes.
+
+CLÁUSULA 8 — DAS OBRIGAÇÕES DA CONTRATADA
+Manter a plataforma disponível, prestar suporte técnico conforme o nível contratado e zelar pela segurança dos dados armazenados.
+
+CLÁUSULA 9 — DAS OBRIGAÇÕES DA CONTRATANTE
+Efetuar os pagamentos nas datas de vencimento, fornecer as informações necessárias à prestação do serviço e utilizar a plataforma de acordo com a legislação vigente.
+
+CLÁUSULA 10 — DO SUPORTE E DA DISPONIBILIDADE
+O suporte é prestado conforme o nível contratado, com melhor esforço de disponibilidade da plataforma.
+
+CLÁUSULA 11 — DA PROTEÇÃO DE DADOS (LGPD)
+As partes se comprometem a tratar os dados pessoais em conformidade com a Lei Geral de Proteção de Dados (Lei nº 13.709/2018).
+
+CLÁUSULA 12 — DO BACKUP
+A CONTRATADA realiza backups periódicos dos dados da CONTRATANTE, conforme sua política vigente de retenção.
+
+CLÁUSULA 13 — DO CANCELAMENTO
+Qualquer das partes poderá rescindir o presente contrato mediante aviso prévio de 30 (trinta) dias.
+
+CLÁUSULA 14 — DA INADIMPLÊNCIA
+O atraso no pagamento poderá acarretar a suspensão do acesso à plataforma até a regularização.
+
+CLÁUSULA 15 — DA PROPRIEDADE INTELECTUAL
+A plataforma PapiCore e todos os seus componentes são de propriedade exclusiva da CONTRATADA, não se transferindo à CONTRATANTE qualquer direito além da licença de uso aqui concedida.
+
+CLÁUSULA 16 — DA LIMITAÇÃO DE RESPONSABILIDADE
+A responsabilidade da CONTRATADA fica limitada ao valor pago pela CONTRATANTE nos últimos 12 (doze) meses.
+
+CLÁUSULA 17 — DA RESCISÃO
+O descumprimento de qualquer cláusula deste contrato poderá ensejar sua rescisão, sem prejuízo das perdas e danos cabíveis.
+
+CLÁUSULA 18 — DO FORO
+Fica eleito o foro de {{CONTRATO_FORO}} para dirimir quaisquer questões oriundas deste contrato, com renúncia a qualquer outro, por mais privilegiado que seja.
+
+E por estarem assim justas e contratadas, as partes assinam o presente instrumento.`;
+  db.prepare(
+    `INSERT INTO contract_templates (slug, name, description, contract_type, content, version, is_default, is_active)
+     VALUES (?, ?, ?, 'SUBSCRIPTION', ?, 1, 1, 1)`
+  ).run(
+    'licenca-prestacao-servicos-papicore',
+    'Contrato de Licença e Prestação de Serviços PapiCore',
+    'Modelo administrativo inicial — revise com um advogado antes de uso comercial definitivo.',
+    content
+  );
 }
 
 /*
@@ -438,6 +644,7 @@ function initCore() {
   if (db) return db;
   openCore();
   seedCore();
+  seedDefaultContractTemplate();
   migrateLegacyData();
   ensureDefaultTenant();
   ensureDefaultDomainVerified();
@@ -668,6 +875,11 @@ function deleteTenant(id) {
     removeTenantAssets(id);
   } catch (err) {
     console.error('[papi-core] Erro ao remover assets da empresa', id, err.message);
+  }
+  try {
+    removeTenantContracts(id);
+  } catch (err) {
+    console.error('[papi-core] Erro ao remover PDFs de contrato da empresa', id, err.message);
   }
   return true;
 }
@@ -1439,6 +1651,227 @@ function updateTenantFavicon(tenantId, assetPath) {
   return upsertTenantBranding(tenantId, { favicon_path: assetPath || null });
 }
 
+/* ---------- Contratos ---------- */
+
+/* Configurações da contratada (a própria PapiCore) — linha única (id = 1),
+   mesmo padrão de getSiteContent/upsertSiteContent. */
+function getContractCompanySettings() {
+  return db.prepare('SELECT * FROM contract_company_settings WHERE id = 1').get() || null;
+}
+
+const CONTRACT_COMPANY_FIELDS = [
+  'legal_name', 'trade_name', 'document', 'address', 'address_number', 'address_complement',
+  'neighborhood', 'city', 'state', 'zip_code', 'phone', 'email',
+  'legal_representative_name', 'legal_representative_document', 'legal_representative_role',
+  'default_jurisdiction', 'logo_path', 'signature_path'
+];
+
+function upsertContractCompanySettings(fields = {}, updatedByUserId) {
+  const existing = getContractCompanySettings();
+  if (existing) {
+    const sets = [];
+    const params = [];
+    for (const key of CONTRACT_COMPANY_FIELDS) {
+      if (fields[key] !== undefined) {
+        sets.push(`${key} = ?`);
+        params.push(fields[key]);
+      }
+    }
+    if (!sets.length) return existing;
+    sets.push('updated_by_user_id = ?', "updated_at = datetime('now', 'localtime')");
+    params.push(updatedByUserId ?? null);
+    db.prepare(`UPDATE contract_company_settings SET ${sets.join(', ')} WHERE id = 1`).run(...params);
+    return getContractCompanySettings();
+  }
+  const columns = ['id', ...CONTRACT_COMPANY_FIELDS, 'updated_by_user_id'];
+  const placeholders = columns.map(() => '?').join(', ');
+  db.prepare(`INSERT INTO contract_company_settings (${columns.join(', ')}) VALUES (${placeholders})`).run(
+    1,
+    ...CONTRACT_COMPANY_FIELDS.map((key) => fields[key] ?? null),
+    updatedByUserId ?? null
+  );
+  return getContractCompanySettings();
+}
+
+/* ---- Modelos (globais, versionados por família via slug) ---- */
+
+function listContractTemplates() {
+  return db.prepare('SELECT * FROM contract_templates ORDER BY slug ASC, version DESC').all();
+}
+
+/* Uma linha por família (a versão vigente/is_default) — usada para escolher
+   um modelo ao gerar um novo contrato. */
+function listCurrentContractTemplates() {
+  return db.prepare('SELECT * FROM contract_templates WHERE is_default = 1 AND is_active = 1 ORDER BY name ASC').all();
+}
+
+function listContractTemplateVersions(slug) {
+  return db.prepare('SELECT * FROM contract_templates WHERE slug = ? ORDER BY version DESC').all(slug);
+}
+
+function getContractTemplate(id) {
+  return db.prepare('SELECT * FROM contract_templates WHERE id = ?').get(id);
+}
+
+function contractTemplateSlugExists(slug) {
+  return Boolean(db.prepare('SELECT 1 FROM contract_templates WHERE slug = ? LIMIT 1').get(slug));
+}
+
+/* Cria uma nova família de modelo (primeira versão, já como padrão). */
+function insertContractTemplate(data) {
+  const info = db.prepare(
+    `INSERT INTO contract_templates (slug, name, description, contract_type, content, version, is_default, is_active, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?)`
+  ).run(
+    data.slug,
+    data.name,
+    data.description || null,
+    data.contract_type || 'SUBSCRIPTION',
+    data.content || '',
+    data.created_by_user_id ?? null
+  );
+  return getContractTemplate(info.lastInsertRowid);
+}
+
+/*
+ * Cria uma nova versão de uma família existente (nunca sobrescreve o
+ * conteúdo de uma versão já salva). A nova versão passa a ser a padrão da
+ * família; a versão anterior continua acessível no histórico de versões.
+ */
+function createContractTemplateVersion(slug, data) {
+  const tx = db.transaction(() => {
+    const last = db.prepare('SELECT MAX(version) AS v FROM contract_templates WHERE slug = ?').get(slug);
+    const nextVersion = (last && last.v ? last.v : 0) + 1;
+    db.prepare('UPDATE contract_templates SET is_default = 0 WHERE slug = ?').run(slug);
+    const info = db.prepare(
+      `INSERT INTO contract_templates (slug, name, description, contract_type, content, version, is_default, is_active, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)`
+    ).run(
+      slug,
+      data.name,
+      data.description || null,
+      data.contract_type,
+      data.content || '',
+      nextVersion,
+      data.created_by_user_id ?? null
+    );
+    return info.lastInsertRowid;
+  });
+  return getContractTemplate(tx());
+}
+
+/* Marca uma versão específica (já existente) como a padrão da sua família. */
+function setContractTemplateDefault(id) {
+  const template = getContractTemplate(id);
+  if (!template) return null;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE contract_templates SET is_default = 0 WHERE slug = ?').run(template.slug);
+    db.prepare('UPDATE contract_templates SET is_default = 1 WHERE id = ?').run(id);
+  });
+  tx();
+  return getContractTemplate(id);
+}
+
+/* Ativa/inativa a família inteira (todas as versões do slug). */
+function setContractTemplateActive(slug, isActive) {
+  db.prepare('UPDATE contract_templates SET is_active = ? WHERE slug = ?').run(isActive ? 1 : 0, slug);
+  return listContractTemplateVersions(slug);
+}
+
+/* ---- Numeração (contador global por ano, nunca por tenant) ---- */
+
+function formatContractNumber(number, year) {
+  return `PC-${year}-${String(number).padStart(6, '0')}`;
+}
+
+/*
+ * Reserva o próximo número de contrato do ano incrementando o contador
+ * global. Deve ser chamada DENTRO da mesma transação que insere o contrato
+ * (contractService agrupa ambos em db.transaction), garantindo numeração
+ * única mesmo com dois contratos gerados simultaneamente — nunca depende de
+ * count(*) + 1.
+ */
+function reserveContractNumber(year) {
+  db.prepare(
+    `INSERT INTO contract_sequences (year, last_number) VALUES (?, 1)
+     ON CONFLICT(year) DO UPDATE SET last_number = last_number + 1,
+       updated_at = datetime('now', 'localtime')`
+  ).run(year);
+  const seq = db.prepare('SELECT * FROM contract_sequences WHERE year = ?').get(year);
+  return formatContractNumber(seq.last_number, year);
+}
+
+/* ---- Contratos (por empresa cliente) ---- */
+
+const CONTRACT_INSERT_FIELDS = [
+  'tenant_id', 'template_id', 'template_version', 'contract_number', 'year', 'contract_type', 'status',
+  'title', 'content', 'provider_snapshot_json', 'client_snapshot_json', 'plan_snapshot_json',
+  'client_name', 'client_document', 'client_email', 'client_phone',
+  'plan_name', 'plan_price_cents', 'billing_periodicity', 'subtotal_cents', 'discount_cents',
+  'implementation_fee_cents', 'total_cents', 'payment_method', 'billing_day', 'start_date', 'end_date', 'duration_months',
+  'jurisdiction', 'notes', 'signature_status', 'finalized_at', 'finalized_by_user_id',
+  'created_by_user_id', 'previous_contract_id', 'replaces_contract_id',
+  'pdf_path', 'pdf_sha256', 'pdf_size_bytes'
+];
+
+function insertContract(data) {
+  const columns = CONTRACT_INSERT_FIELDS;
+  const placeholders = columns.map(() => '?').join(', ');
+  const info = db.prepare(`INSERT INTO contracts (${columns.join(', ')}) VALUES (${placeholders})`).run(
+    ...columns.map((key) => (data[key] === undefined ? null : data[key]))
+  );
+  return getContractById(info.lastInsertRowid);
+}
+
+function getContractById(id) {
+  return db.prepare('SELECT * FROM contracts WHERE id = ?').get(id);
+}
+
+function getContractByNumber(contractNumber) {
+  return db.prepare('SELECT * FROM contracts WHERE contract_number = ?').get(contractNumber);
+}
+
+function listContracts(filters = {}) {
+  const clauses = [];
+  const params = [];
+  if (filters.tenant_id) { clauses.push('tenant_id = ?'); params.push(Number(filters.tenant_id)); }
+  if (filters.status) { clauses.push('status = ?'); params.push(filters.status); }
+  if (filters.contract_type) { clauses.push('contract_type = ?'); params.push(filters.contract_type); }
+  if (filters.q) { clauses.push('contract_number LIKE ?'); params.push(`%${filters.q}%`); }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return db.prepare(`SELECT * FROM contracts ${where} ORDER BY created_at DESC, id DESC`).all(...params);
+}
+
+const CONTRACT_UPDATE_FIELDS = [
+  'status', 'title', 'content', 'start_date', 'end_date', 'duration_months',
+  'billing_periodicity', 'subtotal_cents', 'discount_cents', 'implementation_fee_cents', 'total_cents',
+  'payment_method', 'billing_day', 'jurisdiction', 'notes',
+  'signature_status', 'provider_signed_at', 'client_signed_at',
+  'finalized_at', 'finalized_by_user_id', 'cancelled_at', 'cancel_reason',
+  'pdf_path', 'pdf_sha256', 'pdf_size_bytes'
+];
+
+function updateContract(id, fields) {
+  const sets = [];
+  const params = [];
+  for (const key of CONTRACT_UPDATE_FIELDS) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  if (!sets.length) return getContractById(id);
+  sets.push("updated_at = datetime('now', 'localtime')");
+  params.push(id);
+  db.prepare(`UPDATE contracts SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getContractById(id);
+}
+
+function countContracts(tenantId) {
+  const row = db.prepare('SELECT COUNT(*) AS total FROM contracts WHERE tenant_id = ?').get(tenantId);
+  return row ? row.total : 0;
+}
+
 /* ---------- Utilitários ---------- */
 
 function countTenantAppointments(databaseName) {
@@ -1567,5 +2000,25 @@ module.exports = {
   upsertTenantBranding,
   deleteTenantBranding,
   updateTenantLogo,
-  updateTenantFavicon
+  updateTenantFavicon,
+  /* contratos */
+  getContractCompanySettings,
+  upsertContractCompanySettings,
+  listContractTemplates,
+  listCurrentContractTemplates,
+  listContractTemplateVersions,
+  getContractTemplate,
+  contractTemplateSlugExists,
+  insertContractTemplate,
+  createContractTemplateVersion,
+  setContractTemplateDefault,
+  setContractTemplateActive,
+  formatContractNumber,
+  reserveContractNumber,
+  insertContract,
+  getContractById,
+  getContractByNumber,
+  listContracts,
+  updateContract,
+  countContracts
 };

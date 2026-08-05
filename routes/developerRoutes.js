@@ -14,6 +14,7 @@ const express = require('express');
 const developerController = require('../controllers/developerController');
 const brandingController = require('../controllers/brandingController');
 const siteContentController = require('../controllers/siteContentController');
+const contractController = require('../controllers/developerContractController');
 const { requireDeveloper } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -132,5 +133,37 @@ router.delete('/site-content/images/:slot', siteContentController.removeSiteImag
 
 /* Logs */
 router.get('/logs', developerController.logsHandler);
+
+/* Contratos — rotas de caminho fixo REGISTRADAS ANTES de /contracts/:id para
+   nunca serem capturadas pelo parâmetro (ex.: "company-settings" e "meta"
+   não podem ser interpretados como um :id). */
+router.get('/contracts/company-settings', contractController.getCompanySettingsHandler);
+router.put('/contracts/company-settings', contractController.updateCompanySettingsHandler);
+router.get('/contracts/company-settings/logo', contractController.serveCompanyLogo);
+router.post('/contracts/company-settings/logo', contractController.uploadCompanyLogo);
+router.delete('/contracts/company-settings/logo', contractController.removeCompanyLogo);
+router.get('/contracts/meta', contractController.contractsMetaHandler);
+router.post('/contracts/preview', contractController.previewContractHandler);
+
+router.get('/contracts', contractController.listContractsHandler);
+router.post('/contracts', contractController.createContractHandler);
+router.get('/contracts/:id', contractController.getContractHandler);
+router.put('/contracts/:id', contractController.updateContractHandler);
+router.post('/contracts/:id/finalize', contractController.finalizeContractHandler);
+router.get('/contracts/:id/download', contractController.downloadContractHandler);
+router.post('/contracts/:id/duplicate', contractController.duplicateContractHandler);
+router.post('/contracts/:id/renewal', contractController.renewContractHandler);
+router.post('/contracts/:id/addendum', contractController.addendumContractHandler);
+router.post('/contracts/:id/cancel', contractController.cancelContractHandler);
+
+/* Modelos de contrato (globais) */
+router.get('/contract-templates', contractController.listTemplatesHandler);
+router.get('/contract-templates/current', contractController.listCurrentTemplatesHandler);
+router.post('/contract-templates', contractController.createTemplateHandler);
+router.get('/contract-templates/:id', contractController.getTemplateHandler);
+router.put('/contract-templates/:id', contractController.updateTemplateHandler);
+router.post('/contract-templates/:id/duplicate', contractController.duplicateTemplateHandler);
+router.post('/contract-templates/:id/default', contractController.setTemplateDefaultHandler);
+router.post('/contract-templates/:id/active', contractController.setTemplateActiveHandler);
 
 module.exports = router;

@@ -44,6 +44,7 @@ const {
 } = require('../database/coreDatabase');
 const { openTenantDatabase, tenantFilePath } = require('../database/tenantDatabase');
 const { ASSETS_DIR } = require('../utils/assetStorage');
+const contractStorage = require('../utils/contractStorage');
 
 const BACKUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -288,6 +289,16 @@ function collectAssets(tenantId) {
   return { files: entries, totalSize };
 }
 
+/* PDFs de contrato da empresa (gerados pela aba "Contratos" do painel do
+   desenvolvedor). Os REGISTROS de contrato ficam só no banco central — a
+   restauração de tenant não os recria automaticamente (ver docs/CONTRACTS.md,
+   seção "Backup e restauração"); o backup preserva os arquivos em si. */
+function collectContracts(tenantId) {
+  const files = contractStorage.listTenantContractFiles(tenantId);
+  const totalSize = files.reduce((sum, f) => sum + f.size_bytes, 0);
+  return { files, totalSize };
+}
+
 /* ---------- Compactação ---------- */
 
 /* archiver v8 é ESM-only: resolve a classe ZipArchive via import() e guarda
@@ -414,8 +425,9 @@ async function createTenantBackup({ tenantId, backupType, userId, skipRetention,
 
     /* Verifica espaço ANTES de copiar qualquer coisa. */
     const assets = collectAssets(tenant.id);
+    const contracts = collectContracts(tenant.id);
     const dbSize = fs.statSync(sourceDbPath).size;
-    checkFreeSpace(TMP_ROOT, dbSize + assets.totalSize);
+    checkFreeSpace(TMP_ROOT, dbSize + assets.totalSize + contracts.totalSize);
 
     /* 1. Snapshot consistente do banco. */
     const dbSnapshotPath = snapshotTenantDatabase(tenant.database_name, path.join(tmpDir, 'database'));
@@ -439,6 +451,18 @@ async function createTenantBackup({ tenantId, backupType, userId, skipRetention,
         fs.copyFileSync(f.src, path.join(assetsDestDir, f.name));
         const hash = await hashFile(f.src);
         assetFiles.push({ name: f.name, size_bytes: f.size, sha256: hash });
+      }
+    }
+
+    /* 4b. PDFs de contrato da empresa. */
+    const contractFiles = [];
+    if (contracts.files.length) {
+      for (const f of contracts.files) {
+        const dest = path.join(tmpDir, f.relative_path);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(f.absolute_path, dest);
+        const hash = await hashFile(f.absolute_path);
+        contractFiles.push({ relative_path: f.relative_path, size_bytes: f.size_bytes, sha256: hash });
       }
     }
 
@@ -468,6 +492,10 @@ async function createTenantBackup({ tenantId, backupType, userId, skipRetention,
       assets: {
         count: assetFiles.length,
         files: assetFiles
+      },
+      contracts: {
+        count: contractFiles.length,
+        files: contractFiles
       },
       application: {
         name: 'PapiCore',
@@ -507,7 +535,7 @@ async function createTenantBackup({ tenantId, backupType, userId, skipRetention,
       error_message: null
     });
 
-    safeLog(() => logActivity(userId, tenant.id, 'BACKUP_SUCCESS', `Backup ${filename} gerado (${zipSize} bytes, ${assetFiles.length} asset(s))`));
+    safeLog(() => logActivity(userId, tenant.id, 'BACKUP_SUCCESS', `Backup ${filename} gerado (${zipSize} bytes, ${assetFiles.length} asset(s), ${contractFiles.length} contrato(s))`));
 
     /* 8. Retenção local — falha aqui não invalida o backup recém-criado.
        Backups de segurança (skipRetention, ex.: TENANT_PRE_RESTORE) não são
