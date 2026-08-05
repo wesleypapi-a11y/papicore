@@ -115,6 +115,20 @@ app.get('/', (req, res, next) => {
   return next();
 });
 
+/* O painel do desenvolvedor é exclusivo da plataforma: papicore.com.br/
+   /desenvolvedor. Em qualquer outro host — incluindo os domínios dos
+   clientes — o caminho /desenvolvedor e o arquivo /desenvolvedor.html não
+   existem e respondem 404, como se nunca tivessem sido servidos. Isso
+   impede que www.cliente.com.br/desenvolvedor exponha o painel. */
+const DEVELOPER_PATHS = new Set(['/desenvolvedor', '/desenvolvedor/login', '/desenvolvedor.html']);
+
+app.use((req, res, next) => {
+  if (DEVELOPER_PATHS.has(req.path) && !isPlatformHost(req.hostname || req.headers.host)) {
+    return res.status(404).send('Não encontrado.');
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* /api/auth, /api/admin e /api/developer precisam ser registradas antes de
