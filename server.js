@@ -162,6 +162,12 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
+/* Redefinição de senha: mesma página do admin, em outro "modo" (o token vem
+   na query string e é lido pelo front-end). Ver public/admin.js. */
+app.get('/admin/redefinir-senha', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
 app.get('/desenvolvedor', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'desenvolvedor.html'));
 });

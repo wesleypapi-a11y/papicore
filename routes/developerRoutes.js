@@ -59,6 +59,8 @@ router.get('/tenants/:tenantId/maintenance', developerController.getMaintenanceH
 
 /* Configurações da plataforma */
 router.get('/settings', developerController.platformSettings);
+router.get('/settings/email', developerController.getEmailSettingsHandler);
+router.put('/settings/email', developerController.updateEmailSettingsHandler);
 router.get('/settings/login-logo', brandingController.getLoginLogoHandler);
 router.post('/settings/login-logo', brandingController.uploadLoginLogo);
 router.delete('/settings/login-logo', brandingController.removeLoginLogo);

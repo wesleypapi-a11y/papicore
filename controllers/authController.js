@@ -26,7 +26,18 @@ const { AppError, isValidEmail } = require('../utils/helpers');
 
 function signToken(user) {
   return jwt.sign(
-    { id: user.id, name: user.name, email: user.email, role: user.role, tenant_id: user.tenant_id },
+    {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      tenant_id: user.tenant_id,
+      /* Carimbo da senha no momento do login. requireAuth compara com o
+         valor atual do usuário a cada requisição: se a senha mudou depois
+         (reset autoatendido ou pelo desenvolvedor), este token para de
+         funcionar mesmo dentro do prazo de expiração. */
+      pwd: user.password_changed_at || null
+    },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
   );

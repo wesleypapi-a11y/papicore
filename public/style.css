@@ -954,6 +954,69 @@ body.booking-app {
   font-size: 14px;
   margin-bottom: 14px;
 }
+.login-msg.success {
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  color: var(--green, #34d399);
+}
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.password-input { position: relative; }
+.password-input input { padding-right: 44px; width: 100%; }
+.password-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 6px;
+  opacity: 0.7;
+}
+.password-toggle:hover { opacity: 1; }
+
+.password-requirements {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 4px;
+}
+.password-requirements li { padding-left: 20px; position: relative; }
+.password-requirements li::before {
+  content: '○';
+  position: absolute;
+  left: 0;
+  color: var(--text-muted);
+}
+.password-requirements li.met {
+  color: var(--green, #34d399);
+}
+.password-requirements li.met::before {
+  content: '●';
+  color: var(--green, #34d399);
+}
+
+.reset-cta-link {
+  display: block;
+  text-align: center;
+  margin-top: 8px;
+}
 
 /* ---------- topbar ---------- */
 

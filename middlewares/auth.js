@@ -25,6 +25,11 @@ function requireAuth(req, res, next) {
     if (!user || !user.active) {
       return next(new AppError(401, 'Usuário não encontrado ou inativo.'));
     }
+    /* Token emitido antes da senha atual: a senha foi trocada (reset ou
+       redefinição) depois deste login, então a sessão antiga é encerrada. */
+    if ((payload.pwd || null) !== (user.password_changed_at || null)) {
+      return next(new AppError(401, 'Sessão expirada ou inválida. Faça login novamente.'));
+    }
     req.user = user;
     req.token = payload;
     return next();

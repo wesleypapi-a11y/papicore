@@ -53,7 +53,9 @@ const {
   logActivity,
   normalizeDomain,
   listLeads,
-  updateLeadStatus
+  updateLeadStatus,
+  getPlatformEmailSettings,
+  upsertPlatformEmailSettings
 } = require('../database/coreDatabase');
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
 const {
@@ -1252,6 +1254,51 @@ function platformSettings(req, res) {
   });
 }
 
+/* ---------- Integração de e-mail (Brevo) ---------- */
+
+/* Mostra os últimos 4 caracteres da chave salva, nunca a chave inteira —
+   só para o desenvolvedor confirmar qual chave está configurada. */
+function maskApiKey(key) {
+  const value = String(key || '');
+  if (value.length < 4) return null;
+  return `••••${value.slice(-4)}`;
+}
+
+function getEmailSettingsHandler(req, res) {
+  const settings = getPlatformEmailSettings();
+  return res.json({
+    enabled: Boolean(settings && settings.enabled),
+    brevo_sender_email: (settings && settings.brevo_sender_email) || '',
+    brevo_sender_name: (settings && settings.brevo_sender_name) || '',
+    has_api_key: Boolean(settings && settings.brevo_api_key),
+    api_key_preview: settings ? maskApiKey(settings.brevo_api_key) : null,
+    updated_at: (settings && settings.updated_at) || null
+  });
+}
+
+function updateEmailSettingsHandler(req, res) {
+  const { enabled, brevo_api_key: brevoApiKey, brevo_sender_email: brevoSenderEmail, brevo_sender_name: brevoSenderName } = req.body || {};
+
+  if (brevoSenderEmail !== undefined && brevoSenderEmail !== '' && !isValidEmail(brevoSenderEmail)) {
+    throw new AppError(400, 'E-mail do remetente inválido.');
+  }
+
+  const fields = {
+    enabled: enabled ? 1 : 0,
+    brevo_sender_email: brevoSenderEmail !== undefined ? String(brevoSenderEmail).trim() : undefined,
+    brevo_sender_name: brevoSenderName !== undefined ? String(brevoSenderName).trim() : undefined
+  };
+  /* Campo vazio/ausente mantém a chave já salva — evita apagar a chave sem
+     querer só por reabrir e salvar o formulário. */
+  if (typeof brevoApiKey === 'string' && brevoApiKey.trim()) {
+    fields.brevo_api_key = brevoApiKey.trim();
+  }
+
+  upsertPlatformEmailSettings(fields, req.user.id);
+  logActivity(req.user.id, null, 'PLATFORM_EMAIL_SETTINGS_UPDATED', auditDetails(req, 'Configuração de e-mail (Brevo) atualizada'));
+  return getEmailSettingsHandler(req, res);
+}
+
 /* ---------- Leads comerciais (site institucional) ---------- */
 
 function listLeadsHandler(req, res) {
@@ -1321,6 +1368,8 @@ module.exports = {
   deleteFinancialEntryHandler,
   logsHandler,
   platformSettings,
+  getEmailSettingsHandler,
+  updateEmailSettingsHandler,
   listLeadsHandler,
   updateLeadStatusHandler
 };

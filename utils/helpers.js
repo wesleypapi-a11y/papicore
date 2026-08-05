@@ -187,6 +187,13 @@ function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+/* Usada na redefinição de senha: mínimo 8 caracteres, com ao menos uma
+   letra maiúscula, uma minúscula e um número. */
+function isStrongPassword(password) {
+  if (typeof password !== 'string' || password.length < 8) return false;
+  return /[a-z]/.test(password) && /[A-Z]/.test(password) && /[0-9]/.test(password);
+}
+
 function isValidCPF(cpf) {
   const digits = String(cpf || '').replace(/\D/g, '');
   if (!/^\d{11}$/.test(digits)) return false;
@@ -310,6 +317,7 @@ module.exports = {
   normalizePhone,
   isValidPhone,
   isValidEmail,
+  isStrongPassword,
   isValidCPF,
   isValidPlate,
   formatPhone,

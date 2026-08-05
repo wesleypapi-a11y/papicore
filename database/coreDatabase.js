@@ -194,6 +194,46 @@ CREATE TABLE IF NOT EXISTS tenant_maintenance (
 );
 `;
 
+/* Recuperação de senha do painel administrativo dos tenants. O token puro
+   nunca é gravado — apenas o hash SHA-256 (token_hash). id/created_at/
+   expires_at/used_at são ISO-8601 (new Date().toISOString()), calculados em
+   JS, pelo mesmo motivo de backup_runs: a expiração é comparada em JS. */
+const PASSWORD_RESET_DDL = `
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  tenant_id INTEGER NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL,
+  requested_ip TEXT,
+  requested_user_agent TEXT,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+`;
+
+/* Configuração da integração de e-mail transacional (Brevo), editável pelo
+   Painel do Desenvolvedor. Linha única (id = 1), mesmo padrão de
+   site_content/contract_company_settings. Quando ausente ou com campos
+   vazios, o serviço de e-mail cai para as variáveis de ambiente
+   (BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME, EMAIL_ENABLED). */
+const PLATFORM_EMAIL_SETTINGS_DDL = `
+CREATE TABLE IF NOT EXISTS platform_email_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  brevo_api_key TEXT,
+  brevo_sender_email TEXT,
+  brevo_sender_name TEXT,
+  updated_by_user_id INTEGER,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
 /* Histórico de restaurações por empresa. Nunca guarda senha, token ou
    caminho absoluto — apenas referências e status sanitizados. */
 const RESTORE_RUNS_DDL = `
@@ -410,6 +450,15 @@ function migrateBrandingThemeColumns() {
   ensureColumn('tenant_branding', 'danger_color', 'TEXT');
 }
 
+/* Marca quando a senha do usuário foi trocada pela última vez (reset
+   autoatendido, reset pelo desenvolvedor ou troca manual futura). O JWT
+   carrega esse valor no momento em que é assinado; requireAuth compara com
+   o valor atual do banco a cada requisição — se divergir, a sessão antiga
+   para de funcionar. NULL até a primeira troca. */
+function migrateUserPasswordChangedAtColumn() {
+  ensureColumn('users', 'password_changed_at', 'TEXT');
+}
+
 function openCore() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   db = new Database(CORE_FILE);
@@ -417,11 +466,14 @@ function openCore() {
   db.pragma('foreign_keys = ON');
   db.exec(CORE_DDL);
   db.exec(MAINTENANCE_DDL);
+  db.exec(PASSWORD_RESET_DDL);
+  db.exec(PLATFORM_EMAIL_SETTINGS_DDL);
   db.exec(RESTORE_RUNS_DDL);
   db.exec(COMMERCIAL_LEADS_DDL);
   db.exec(SITE_CONTENT_DDL);
   db.exec(CONTRACTS_DDL);
   migrateBrandingThemeColumns();
+  migrateUserPasswordChangedAtColumn();
   runMigrations();
 }
 
@@ -648,6 +700,7 @@ function initCore() {
   migrateLegacyData();
   ensureDefaultTenant();
   ensureDefaultDomainVerified();
+  cleanupExpiredPasswordResetTokens();
   return db;
 }
 
@@ -1087,8 +1140,15 @@ function setUserActive(id, active) {
   return updateUser(id, { active });
 }
 
+/* Grava password_changed_at sempre que a senha muda (reset autoatendido,
+   reset pelo desenvolvedor, etc.) — é o valor que invalida sessões (JWT)
+   emitidas antes da troca (ver signToken/requireAuth). */
 function setUserPassword(id, passwordHash) {
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
+  db.prepare("UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?").run(
+    passwordHash,
+    new Date().toISOString(),
+    id
+  );
   return getUserById(id);
 }
 
@@ -1099,6 +1159,96 @@ function deleteUser(id) {
 
 function countTenantUsers(tenantId) {
   return db.prepare('SELECT COUNT(*) AS total FROM users WHERE tenant_id = ?').get(tenantId).total;
+}
+
+/* ---------- Recuperação de senha ---------- */
+
+function insertPasswordResetToken({ id, user_id, tenant_id, token_hash, expires_at, requested_ip, requested_user_agent }) {
+  db.prepare(
+    `INSERT INTO password_reset_tokens
+       (id, user_id, tenant_id, token_hash, expires_at, created_at, requested_ip, requested_user_agent)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, user_id, tenant_id, token_hash, expires_at, new Date().toISOString(), requested_ip || null, requested_user_agent || null);
+  return getPasswordResetTokenByHash(token_hash);
+}
+
+function getPasswordResetTokenByHash(tokenHash) {
+  return db.prepare('SELECT * FROM password_reset_tokens WHERE token_hash = ?').get(tokenHash);
+}
+
+/* Invalida (marca como usados) todos os tokens ainda ativos de um usuário —
+   chamado ao gerar um novo token (uma solicitação nova aposenta as
+   anteriores) e depois de uma redefinição bem-sucedida. */
+function invalidateActivePasswordResetTokensForUser(userId) {
+  db.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL').run(
+    new Date().toISOString(),
+    userId
+  );
+}
+
+/* Efetiva a redefinição de senha em uma única transação: troca a senha
+   (com password_changed_at, invalidando sessões antigas), marca o token
+   usado e invalida qualquer outro token ainda ativo do mesmo usuário. */
+function finalizePasswordReset({ userId, tokenId, passwordHash }) {
+  const tx = db.transaction(() => {
+    setUserPassword(userId, passwordHash);
+    db.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE id = ?').run(new Date().toISOString(), tokenId);
+    invalidateActivePasswordResetTokensForUser(userId);
+    return getUserById(userId);
+  });
+  return tx();
+}
+
+/* Remove tokens usados ou expirados há mais de 24h. Chamada no boot e a
+   cada novo token gerado — mantém a tabela pequena sem precisar de um cron
+   dedicado. */
+function cleanupExpiredPasswordResetTokens() {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(
+    'DELETE FROM password_reset_tokens WHERE (used_at IS NOT NULL AND used_at < ?) OR (expires_at < ?)'
+  ).run(cutoff, cutoff);
+}
+
+/* ---------- Configuração de e-mail (Brevo) ---------- */
+
+function getPlatformEmailSettings() {
+  return db.prepare('SELECT * FROM platform_email_settings WHERE id = 1').get() || null;
+}
+
+const PLATFORM_EMAIL_SETTINGS_FIELDS = ['enabled', 'brevo_api_key', 'brevo_sender_email', 'brevo_sender_name'];
+
+function upsertPlatformEmailSettings(fields = {}, updatedByUserId) {
+  const existing = getPlatformEmailSettings();
+  const normalized = { ...fields };
+  if (normalized.enabled !== undefined) normalized.enabled = normalized.enabled ? 1 : 0;
+
+  if (existing) {
+    const sets = [];
+    const params = [];
+    for (const key of PLATFORM_EMAIL_SETTINGS_FIELDS) {
+      if (normalized[key] !== undefined) {
+        sets.push(`${key} = ?`);
+        params.push(normalized[key]);
+      }
+    }
+    if (!sets.length) return existing;
+    sets.push('updated_by_user_id = ?', "updated_at = datetime('now', 'localtime')");
+    params.push(updatedByUserId ?? null);
+    db.prepare(`UPDATE platform_email_settings SET ${sets.join(', ')} WHERE id = 1`).run(...params);
+    return getPlatformEmailSettings();
+  }
+
+  const columns = ['id', ...PLATFORM_EMAIL_SETTINGS_FIELDS, 'updated_by_user_id'];
+  const placeholders = columns.map(() => '?').join(', ');
+  db.prepare(`INSERT INTO platform_email_settings (${columns.join(', ')}) VALUES (${placeholders})`).run(
+    1,
+    normalized.enabled ?? 0,
+    normalized.brevo_api_key ?? null,
+    normalized.brevo_sender_email ?? null,
+    normalized.brevo_sender_name ?? null,
+    updatedByUserId ?? null
+  );
+  return getPlatformEmailSettings();
 }
 
 /* ---------- Planos ---------- */
@@ -1973,6 +2123,15 @@ module.exports = {
   setUserPassword,
   deleteUser,
   countTenantUsers,
+  /* recuperação de senha */
+  insertPasswordResetToken,
+  getPasswordResetTokenByHash,
+  invalidateActivePasswordResetTokensForUser,
+  finalizePasswordReset,
+  cleanupExpiredPasswordResetTokens,
+  /* configuração de e-mail (Brevo) */
+  getPlatformEmailSettings,
+  upsertPlatformEmailSettings,
   /* planos */
   listPlans,
   getPlan,

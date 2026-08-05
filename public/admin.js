@@ -227,6 +227,119 @@
     $('panelView').classList.add('hidden');
   }
 
+  /* ---------- esqueci minha senha (dentro da própria tela de login) ---------- */
+
+  function showLoginForm() {
+    $('forgotFormBlock').classList.add('hidden');
+    $('loginFormBlock').classList.remove('hidden');
+    $('forgotMsg').classList.add('hidden');
+  }
+
+  function showForgotForm() {
+    $('loginFormBlock').classList.add('hidden');
+    $('forgotFormBlock').classList.remove('hidden');
+    $('loginMsg').classList.add('hidden');
+  }
+
+  /* ---------- redefinir senha (/admin/redefinir-senha?token=...) ---------- */
+
+  function passwordRequirementsMet(password) {
+    const rules = {
+      length: password.length >= 8,
+      upper: /[A-Z]/.test(password),
+      lower: /[a-z]/.test(password),
+      number: /[0-9]/.test(password)
+    };
+    document.querySelectorAll('#passwordRequirements li').forEach((li) => {
+      li.classList.toggle('met', Boolean(rules[li.dataset.rule]));
+    });
+    return Object.values(rules).every(Boolean);
+  }
+
+  function bindPasswordToggle(btn) {
+    btn.addEventListener('click', () => {
+      const input = $(btn.dataset.toggleFor);
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.textContent = showing ? '👁' : '🙈';
+    });
+  }
+
+  function showResetState(name) {
+    ['resetLoadingState', 'resetInvalidState', 'resetFormState', 'resetSuccessState'].forEach((id) => {
+      $(id).classList.toggle('hidden', id !== name);
+    });
+  }
+
+  /* Nunca guarda o token em localStorage/sessionStorage — só em memória
+     (variável local) durante o fluxo desta página. */
+  async function initResetPasswordView() {
+    $('loginView').classList.add('hidden');
+    $('panelView').classList.add('hidden');
+    $('resetPasswordView').classList.remove('hidden');
+    if (window.loadTenantBranding) window.loadTenantBranding();
+
+    document.querySelectorAll('.password-toggle').forEach(bindPasswordToggle);
+
+    const token = new URLSearchParams(window.location.search).get('token') || '';
+    if (!token) {
+      showResetState('resetInvalidState');
+      return;
+    }
+
+    try {
+      const data = await api('/api/auth/reset-password/validate', {
+        method: 'POST',
+        body: JSON.stringify({ token })
+      });
+      if (!data.valid) {
+        $('resetInvalidMsg').textContent = data.message || 'Este link de redefinição é inválido ou expirou. Solicite um novo na tela de login.';
+        showResetState('resetInvalidState');
+        return;
+      }
+    } catch (e) {
+      showResetState('resetInvalidState');
+      return;
+    }
+
+    showResetState('resetFormState');
+    $('resetPassword').addEventListener('input', () => passwordRequirementsMet($('resetPassword').value));
+
+    $('resetForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = $('resetMsg');
+      msg.classList.add('hidden');
+
+      const password = $('resetPassword').value;
+      const passwordConfirmation = $('resetPasswordConfirm').value;
+      if (!passwordRequirementsMet(password)) {
+        msg.textContent = 'A senha não atende aos requisitos mínimos.';
+        msg.classList.remove('hidden');
+        return;
+      }
+      if (password !== passwordConfirmation) {
+        msg.textContent = 'A confirmação de senha não confere.';
+        msg.classList.remove('hidden');
+        return;
+      }
+
+      showLoader();
+      try {
+        await api('/api/auth/reset-password', {
+          method: 'POST',
+          body: JSON.stringify({ token, password, password_confirmation: passwordConfirmation })
+        });
+        /* remove o token da URL: não fica no histórico do navegador depois do uso */
+        history.replaceState(null, '', window.location.pathname);
+        showResetState('resetSuccessState');
+      } catch (err) {
+        msg.textContent = err.message;
+        msg.classList.remove('hidden');
+      }
+      hideLoader();
+    });
+  }
+
   /* ---------- modal helpers ---------- */
 
   function openModal(title, bodyHtml, actionsHtml) {
@@ -2475,6 +2588,27 @@
       hideLoader();
     });
 
+    $('btnForgotPassword').addEventListener('click', showForgotForm);
+    $('btnBackToLogin').addEventListener('click', showLoginForm);
+
+    $('forgotForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = $('forgotMsg');
+      msg.classList.remove('hidden', 'success');
+      showLoader();
+      try {
+        const data = await api('/api/auth/forgot-password', {
+          method: 'POST',
+          body: JSON.stringify({ email: $('forgotEmail').value })
+        });
+        msg.textContent = data.message;
+        msg.classList.add('success');
+      } catch (err) {
+        msg.textContent = err.message;
+      }
+      hideLoader();
+    });
+
     document.querySelectorAll('.admin-nav button[data-view]').forEach((b) => {
       b.addEventListener('click', () => showView(b.dataset.view));
     });
@@ -2488,6 +2622,12 @@
   }
 
   async function init() {
+    /* /admin/redefinir-senha serve este mesmo admin.html, num "modo"
+       totalmente separado do login/painel — nem tenta autenticar. */
+    if (window.location.pathname === '/admin/redefinir-senha') {
+      return initResetPasswordView();
+    }
+
     bindGlobals();
 
     /* Logo, favicon e título dinâmicos (identidade visual do tenant do

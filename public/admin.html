@@ -22,22 +22,99 @@
         <img data-tenant-logo src="/assets/logo.png" alt="PapiCore" class="brand-logo" />
         <span class="brand-name">PapiCore</span>
       </div>
-      <h1>Painel administrativo</h1>
-      <p class="sub">Acesse com suas credenciais</p>
-      <div id="loginMsg" class="login-msg hidden"></div>
-      <form id="loginForm" novalidate>
-        <div class="field" style="margin-bottom:14px;">
-          <label for="loginEmail">E-mail</label>
-          <input id="loginEmail" type="email" autocomplete="username" placeholder="admin@sistema.com" />
+
+      <div id="loginFormBlock">
+        <h1>Painel administrativo</h1>
+        <p class="sub">Acesse com suas credenciais</p>
+        <div id="loginMsg" class="login-msg hidden"></div>
+        <form id="loginForm" novalidate>
+          <div class="field" style="margin-bottom:14px;">
+            <label for="loginEmail">E-mail</label>
+            <input id="loginEmail" type="email" autocomplete="username" placeholder="admin@sistema.com" />
+          </div>
+          <div class="field" style="margin-bottom:22px;">
+            <label for="loginPassword">Senha</label>
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg btn-block">Entrar</button>
+        </form>
+        <div style="text-align:center;margin-top:16px;">
+          <button type="button" id="btnForgotPassword" class="linklike">Esqueci minha senha</button>
         </div>
-        <div class="field" style="margin-bottom:22px;">
-          <label for="loginPassword">Senha</label>
-          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" />
+        <div style="text-align:center;margin-top:10px;">
+          <a href="/" class="btn btn-ghost btn-sm">← Voltar ao site</a>
         </div>
-        <button type="submit" class="btn btn-primary btn-lg btn-block">Entrar</button>
-      </form>
-      <div style="text-align:center;margin-top:16px;">
-        <a href="/" class="btn btn-ghost btn-sm">← Voltar ao site</a>
+      </div>
+
+      <div id="forgotFormBlock" class="hidden">
+        <h1>Esqueci minha senha</h1>
+        <p class="sub">Informe o e-mail usado no painel. Se ele estiver cadastrado, enviaremos um link de recuperação.</p>
+        <div id="forgotMsg" class="login-msg hidden"></div>
+        <form id="forgotForm" novalidate>
+          <div class="field" style="margin-bottom:22px;">
+            <label for="forgotEmail">E-mail de acesso</label>
+            <input id="forgotEmail" type="email" autocomplete="username" placeholder="admin@sistema.com" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg btn-block">Enviar instruções</button>
+        </form>
+        <div style="text-align:center;margin-top:16px;">
+          <button type="button" id="btnBackToLogin" class="linklike">← Voltar ao login</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="resetPasswordView" class="login-wrap hidden">
+    <div class="login-card">
+      <div class="brand">
+        <img data-tenant-logo src="/assets/logo.png" alt="PapiCore" class="brand-logo" />
+        <span class="brand-name">PapiCore</span>
+      </div>
+
+      <div id="resetLoadingState">
+        <h1>Redefinir senha</h1>
+        <p class="sub">Verificando o link…</p>
+      </div>
+
+      <div id="resetInvalidState" class="hidden">
+        <h1>Link inválido</h1>
+        <p class="sub" id="resetInvalidMsg">Este link de redefinição é inválido ou expirou. Solicite um novo na tela de login.</p>
+        <a href="/admin" class="btn btn-primary btn-lg btn-block reset-cta-link">Ir para o login</a>
+      </div>
+
+      <div id="resetFormState" class="hidden">
+        <h1>Redefinir senha</h1>
+        <p class="sub">Escolha uma nova senha de acesso.</p>
+        <div id="resetMsg" class="login-msg hidden"></div>
+        <form id="resetForm" novalidate>
+          <div class="field" style="margin-bottom:14px;">
+            <label for="resetPassword">Nova senha</label>
+            <div class="password-input">
+              <input id="resetPassword" type="password" autocomplete="new-password" placeholder="••••••••" />
+              <button type="button" class="password-toggle" data-toggle-for="resetPassword" aria-label="Mostrar senha">👁</button>
+            </div>
+          </div>
+          <div class="field" style="margin-bottom:14px;">
+            <label for="resetPasswordConfirm">Confirmar nova senha</label>
+            <div class="password-input">
+              <input id="resetPasswordConfirm" type="password" autocomplete="new-password" placeholder="••••••••" />
+              <button type="button" class="password-toggle" data-toggle-for="resetPasswordConfirm" aria-label="Mostrar senha">👁</button>
+            </div>
+          </div>
+          <ul id="passwordRequirements" class="password-requirements">
+            <li data-rule="length">Pelo menos 8 caracteres</li>
+            <li data-rule="upper">Uma letra maiúscula</li>
+            <li data-rule="lower">Uma letra minúscula</li>
+            <li data-rule="number">Um número</li>
+          </ul>
+          <button type="submit" class="btn btn-primary btn-lg btn-block" style="margin-top:6px;">Redefinir senha</button>
+        </form>
+      </div>
+
+      <div id="resetSuccessState" class="hidden">
+        <h1>Senha redefinida com sucesso.</h1>
+        <p class="sub">Você já pode entrar com sua nova senha.</p>
+        <a href="/admin" class="btn btn-primary btn-lg btn-block reset-cta-link">Ir para o login</a>
       </div>
     </div>
   </div>
