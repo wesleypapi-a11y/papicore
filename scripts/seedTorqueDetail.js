@@ -87,7 +87,7 @@ function run() {
     let createdFile = false;
     try {
       if (!fs.existsSync(tenantFilePath(DATABASE_NAME))) {
-        createTenantDatabase(DATABASE_NAME, { companyName: 'Torque Detail', fullCatalog: true });
+        createTenantDatabase(DATABASE_NAME, { companyName: 'Torque Detail', fullCatalog: true, createDefaultUnit: true });
         createdFile = true;
       } else fail(`Arquivo ${DATABASE_NAME} já existe sem tenant correspondente; operação cancelada.`);
       tenant = db.transaction(() => {

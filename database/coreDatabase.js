@@ -255,9 +255,9 @@ CREATE TABLE IF NOT EXISTS commercial_leads (
    desenvolvedor pode alterar preço, limite e status. max_units = null
    significa unidades ilimitadas. */
 const SEED_PLANS = [
-  { name: 'Starter', slug: 'STARTER', monthly_price_cents: 9790, max_units: 1, support_level: 'standard', display_order: 1, is_active: 1, description: 'Para quem está começando: 1 unidade e suporte padrão.' },
-  { name: 'Professional', slug: 'PROFESSIONAL', monthly_price_cents: 19790, max_units: 3, support_level: 'priority', display_order: 2, is_active: 1, description: 'Até 3 unidades e suporte prioritário.' },
-  { name: 'Enterprise', slug: 'ENTERPRISE', monthly_price_cents: 39790, max_units: null, support_level: 'priority', display_order: 3, is_active: 1, description: 'Unidades ilimitadas e suporte prioritário.' }
+  { name: 'Starter', slug: 'STARTER', monthly_price_cents: 9900, max_units: 1, support_level: 'standard', display_order: 1, is_active: 1, description: 'Para quem está começando: 1 unidade e suporte padrão.' },
+  { name: 'Pro', slug: 'PRO', monthly_price_cents: 14900, max_units: null, support_level: 'priority', display_order: 2, is_active: 1, description: 'Unidades ilimitadas e suporte prioritário.' },
+  { name: 'Enterprise', slug: 'ENTERPRISE', monthly_price_cents: 19900, max_units: null, support_level: 'premium', display_order: 3, is_active: 1, description: 'Unidades ilimitadas, suporte premium e acesso aos futuros upgrades sem custo.' }
 ];
 
 let db = null;
@@ -429,7 +429,8 @@ function ensureDefaultTenant() {
       companyName: 'Torque Detail',
       phone: process.env.ADMIN_WHATSAPP || '(12) 99185-7345',
       whatsapp: process.env.ADMIN_WHATSAPP || '(12) 99185-7345',
-      fullCatalog: true
+      fullCatalog: true,
+      createDefaultUnit: true
     });
   }
 }
@@ -518,10 +519,9 @@ function migratePlansV1() {
 
 /* v2 — assinaturas: uma por empresa, espelhando o plano atual do tenant.
    Empresas que ainda não têm assinatura recebem um registro "active"
-   apontando para o plano (pela primeira palavra do slug antigo: STARTER,
-   PROFESSIONAL, ENTERPRISE; desconhecido/ausente cai no primeiro plano
-   ativo). Roda uma única vez; depois disso as assinaturas só mudam pelo
-   painel do desenvolvedor. */
+   apontando para o plano (pelo slug: STARTER, PRO, ENTERPRISE;
+   desconhecido/ausente cai no primeiro plano ativo). Roda uma única vez;
+   depois disso as assinaturas só mudam pelo painel do desenvolvedor. */
 function migrateSubscriptionsV2() {
   /* Repara instalações que rodaram a primeira versão desta migração: o
      rebuild de "plans" (RENAME + DROP) deixou a FK de subscriptions

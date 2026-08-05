@@ -1,4 +1,5 @@
 const { getDb } = require('../database/tenantDatabase');
+const { computeSetupStatus } = require('../database/tenantSchema');
 const { getAvailability } = require('../services/availabilityService');
 const { dateTimeStr } = require('../services/durationService');
 const {
@@ -379,13 +380,17 @@ function dashboard(req, res) {
     .prepare("SELECT COUNT(*) AS total FROM appointments WHERE appointment_date = ? AND status = 'pending'")
     .get(today).total;
 
+  const setup = computeSetupStatus(db);
+
   return res.json({
     today: todayCount,
     week: weekCount,
     month: monthCount,
     upcoming,
     pending_today: pendingToday,
-    today_slots: { available, occupied, blocked }
+    today_slots: { available, occupied, blocked },
+    setup_status: setup.status,
+    setup_missing: setup.missing
   });
 }
 

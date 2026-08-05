@@ -14,7 +14,8 @@ const { AppError, isValidPhone, normalizePhone } = require('../utils/helpers');
 const SUPPORT_LEVEL_LABELS = {
   standard: 'Suporte padrão',
   priority: 'Suporte prioritário',
-  dedicated: 'Suporte dedicado'
+  dedicated: 'Suporte dedicado',
+  premium: 'Suporte premium'
 };
 
 /*

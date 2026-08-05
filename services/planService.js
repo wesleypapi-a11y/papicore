@@ -10,7 +10,7 @@ const core = require('../database/coreDatabase');
 const { AppError, slugify, todayStr, toDateStr, addDays } = require('../utils/helpers');
 
 const SUBSCRIPTION_STATUSES = ['trial', 'active', 'overdue', 'suspended', 'canceled'];
-const SUPPORT_LEVELS = ['standard', 'priority', 'dedicated'];
+const SUPPORT_LEVELS = ['standard', 'priority', 'dedicated', 'premium'];
 
 /* ---------- Planos ---------- */
 

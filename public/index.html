@@ -44,6 +44,26 @@
       <ol class="progress" id="progress"></ol>
     </div>
 
+    <section class="step setup-screen" id="setupScreen" hidden>
+      <div class="setup-icon" aria-hidden="true">
+        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+      </div>
+      <h2 class="step-title">Estamos preparando a agenda desta empresa</h2>
+      <p class="setup-msg">
+        O site de agendamento está sendo configurado. Em breve você poderá
+        escolher o serviço e marcar seu horário por aqui.
+      </p>
+      <div class="setup-banner" id="setupBanner" hidden>
+        <div class="setup-banner-head">
+          <strong>Para liberar o agendamento, a empresa ainda precisa cadastrar:</strong>
+        </div>
+        <ul class="setup-missing-list" id="setupMissingList"></ul>
+      </div>
+      <div class="setup-actions">
+        <a class="btn btn-primary" id="btnSetupWhatsapp" target="_blank" rel="noopener">Falar com a empresa pelo WhatsApp</a>
+      </div>
+    </section>
+
     <form id="bookingForm" novalidate>
       <section class="step" data-step="1" hidden>
         <header class="step-head">

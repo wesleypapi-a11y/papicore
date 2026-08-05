@@ -56,8 +56,14 @@ const {
   updateLeadStatus
 } = require('../database/coreDatabase');
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
-const { createTenantDatabase } = require('../database/tenantDatabase');
-const { deleteTenantDatabase } = require('../database/tenantDatabase');
+const {
+  createTenantDatabase,
+  openTenantDatabase,
+  closeTenantDatabase,
+  isOpenTenantDatabase,
+  deleteTenantDatabase
+} = require('../database/tenantDatabase');
+const { computeSetupStatus } = require('../database/tenantSchema');
 const { AppError, isValidEmail, isValidPhone, isValidTime, todayStr, slugify, LEAD_STATUSES } = require('../utils/helpers');
 const { signToken } = require('./authController');
 const backupService = require('../services/backupService');
@@ -200,12 +206,33 @@ function dashboard(req, res) {
 
 function tenantWithStats(t) {
   const owner = getTenantOwner(t.id);
+  const setup = getTenantSetupStatus(t.database_name);
   return pluckTenant(t, {
     admin: owner ? { id: owner.id, name: owner.name, email: owner.email } : null,
     user_count: require('../database/coreDatabase').countTenantUsers(t.id),
     appointment_count: countTenantAppointments(t.database_name),
-    domains: listDomains(t.id)
+    domains: listDomains(t.id),
+    setup_status: setup.status,
+    setup_missing: setup.missing
   });
+}
+
+/* Estado de configuração da agenda de um tenant (PENDING/READY). Usa a
+   conexão em cache quando já aberta; se abriu agora, fecha ao final para não
+   segurar arquivos abertos. */
+function getTenantSetupStatus(databaseName) {
+  if (!tenantDatabaseExists(databaseName)) return { status: 'PENDING', missing: ['banco de dados'] };
+  const wasOpen = isOpenTenantDatabase(databaseName);
+  let db;
+  try {
+    db = openTenantDatabase(databaseName);
+    return computeSetupStatus(db);
+  } catch (err) {
+    console.error('[papi-core] Falha ao calcular setup_status de', databaseName, err.message);
+    return { status: 'PENDING', missing: ['banco de dados'] };
+  } finally {
+    if (db && !wasOpen) closeTenantDatabase(databaseName);
+  }
 }
 
 function listTenantsHandler(req, res) {

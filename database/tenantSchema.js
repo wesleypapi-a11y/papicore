@@ -205,8 +205,8 @@ CREATE TABLE IF NOT EXISTS financial_entries (
 
 const SEED_MODALITIES = [
   { id: 1, name: 'Lavagem na unidade', slug: 'in-store', description: 'Você traz o veículo até a nossa unidade e nós cuidamos de tudo por aqui.', fee: 0 },
-  { id: 2, name: 'Leva e traz', slug: 'pickup', description: 'Buscamos o veículo no endereço informado, realizamos o serviço e devolvemos no mesmo local.', fee: 20 },
-  { id: 3, name: 'Delivery', slug: 'delivery', description: 'Levamos toda a estrutura até você e realizamos o serviço no seu endereço.', fee: 30 }
+  { id: 2, name: 'Leva e traz', slug: 'pickup', description: 'Buscamos o veículo no endereço informado, realizamos o serviço e devolvemos no mesmo local.', fee: 0 },
+  { id: 3, name: 'Delivery', slug: 'delivery', description: 'Levamos toda a estrutura até você e realizamos o serviço no seu endereço.', fee: 0 }
 ];
 
 /* Catálogo completo do primeiro cliente (Torque Detail). */
@@ -511,12 +511,27 @@ function upgradeSchema(db) {
 
 /*
  * seedDefaults: popula dados mínimos de uma empresa recém-criada.
- * fullCatalog = true insere também o catálogo completo (modalidades, categorias e
- * serviços) — usado para o primeiro cliente / migrações que não possuem app.db.
- * fullCatalog = false cria apenas modalidades e categorias padrão genéricas.
+ * Este seed é NEUTRO — nunca contém dados, textos, imagens ou preços de
+ * nenhum cliente específico (ex.: Torque Detail). Dados de marca ficam
+ * apenas no script exclusivo scripts/seedTorqueDetail.js.
+ *
+ * Opções:
+ *   companyName: nome comercial vindo do cadastro (obrigatório usar o do
+ *                formulário; nunca um placeholder).
+ *   phone/whatsapp: contatos reais informados; nunca o e-mail do admin.
+ *   unit: primeira unidade real informada no formulário "Nova empresa".
+ *   fullCatalog: true insere o catálogo de marca (USO EXCLUSIVO do seed da
+ *                Torque Detail / migração do tenant padrão).
+ *   createDefaultUnit: true cria uma unidade neutra SEM placeholders (usado
+ *                      apenas pelo bootstrap da Torque Detail; empresas novas
+ *                      sempre enviam dados reais).
+ *
+ * Empresas novas NÃO recebem serviços: começam com setup_status PENDING e o
+ * site público mostra a tela de configuração pendente até o administrador
+ * cadastrar unidade/modalidades/serviços/horários.
  */
 function seedDefaults(db, opts = {}) {
-  const { companyName, phone, whatsapp, fullCatalog, unit } = opts;
+  const { companyName, phone, whatsapp, fullCatalog, unit, createDefaultUnit } = opts;
 
   db.prepare(
     `INSERT INTO company_settings
@@ -538,7 +553,7 @@ function seedDefaults(db, opts = {}) {
   const unitCount = db.prepare('SELECT COUNT(*) AS total FROM units').get().total;
   /* Primeira unidade com dados reais vindos do formulário "Nova empresa".
      Nunca usa placeholders nem o e-mail do administrador como telefone. */
-  if (unit && unit.name && unit.phone) {
+  if (unit && unit.name) {
     const working = Array.isArray(unit.working_days)
       ? JSON.stringify(unit.working_days)
       : (unit.working_days || JSON.stringify([1, 2, 3, 4, 5, 6]));
@@ -560,7 +575,7 @@ function seedDefaults(db, opts = {}) {
       unit.address_zipcode || null,
       unit.address_reference || null,
       unit.maps_link || null,
-      unit.phone,
+      unit.phone || null,
       unit.opening_time || '08:00',
       unit.closing_time || '17:00',
       unit.lunch_start || '12:00',
@@ -570,22 +585,15 @@ function seedDefaults(db, opts = {}) {
       working,
       unit.active === undefined ? 1 : unit.active
     );
-  } else if (unitCount === 0) {
-    /* Fallback legado (migração do tenant padrão / testes) sem unidade
-       informada. O fluxo de implantação via painel do desenvolvedor sempre
-       envia os dados reais da primeira unidade e nunca chega aqui. */
+  } else if (createDefaultUnit && unitCount === 0) {
+    /* Bootstrap do tenant inicial (Torque Detail): unidade neutra, sem
+       endereço/telefone placeholder. Empresas novas nunca chegam aqui. */
     const insertUnit = db.prepare(`
       INSERT INTO units
         (name, address, phone, opening_time, closing_time, appointment_interval, lunch_start, lunch_end, working_days, active)
-      VALUES (?, ?, ?, '08:00', '17:00', 60, '12:00', '13:00', ?, 1)
+      VALUES (?, '', '', '08:00', '17:00', 60, '12:00', '13:00', ?, 1)
     `);
-    const working = JSON.stringify([1, 2, 3, 4, 5, 6]);
-    insertUnit.run(
-      `${companyName || 'Minha Empresa'} — Centro`,
-      'Rua das Flores, 123 — Centro',
-      phone || '(00) 00000-0000',
-      working
-    );
+    insertUnit.run(companyName || 'Minha Empresa', JSON.stringify([1, 2, 3, 4, 5, 6]));
   }
 
   seedModalities(db);
@@ -604,11 +612,49 @@ function seedDefaults(db, opts = {}) {
   }
 }
 
+/*
+ * Estado de configuração do tenant (onboarding), calculado a partir de dados
+ * reais — nunca de branding/logo. Um tenant está READY quando tem:
+ *   - pelo menos uma unidade ativa;
+ *   - pelo menos uma forma de atendimento ativa;
+ *   - pelo menos um serviço ativo;
+ *   - horário de funcionamento configurado.
+ * Enquanto PENDING, o site público exibe a tela "Agenda em configuração" e o
+ * painel do desenvolvedor/administrador mostra o checklist pendente.
+ */
+function computeSetupStatus(db) {
+  const missing = [];
+
+  const activeUnits = db.prepare('SELECT COUNT(*) AS total FROM units WHERE active = 1').get().total;
+  if (!activeUnits) missing.push('unidade');
+
+  const activeModalities = db.prepare('SELECT COUNT(*) AS total FROM service_modalities WHERE active = 1').get().total;
+  if (!activeModalities) missing.push('formas de atendimento');
+
+  const activeServices = db.prepare('SELECT COUNT(*) AS total FROM services WHERE active = 1').get().total;
+  if (!activeServices) missing.push('serviços');
+
+  const settings = db.prepare('SELECT * FROM company_settings WHERE id = 1').get();
+  const hasHours = Boolean(
+    settings &&
+    settings.default_opening_time &&
+    settings.default_closing_time &&
+    settings.default_closing_time > settings.default_opening_time
+  );
+  if (!hasHours) missing.push('horários');
+
+  return {
+    status: missing.length === 0 ? 'READY' : 'PENDING',
+    missing
+  };
+}
+
 module.exports = {
   createTables,
   upgradeSchema,
   seedDefaults,
   seedCatalog,
+  computeSetupStatus,
   SEED_MODALITIES,
   SEED_CATEGORIES,
   SEED_SERVICES,

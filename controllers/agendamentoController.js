@@ -1,4 +1,5 @@
 const { getDb } = require('../database/tenantDatabase');
+const { computeSetupStatus } = require('../database/tenantSchema');
 const { storedFilePath } = require('../utils/assetStorage');
 const {
   getAvailability,
@@ -39,6 +40,8 @@ function getPublicSettings(req, res) {
   const tenantId = req.tenantFromDomain ? req.tenantFromDomain.id : null;
   const hasPixQr = tenantId ? Boolean(storedFilePath(tenantId, 'pix_qr')) : false;
 
+  const setup = computeSetupStatus(db);
+
   return res.json({
     company_name: s.company_name,
     phone: s.phone,
@@ -55,7 +58,9 @@ function getPublicSettings(req, res) {
     pix_code: s.pix_code || null,
     pix_company_name: s.pix_company_name || null,
     payment_methods_enabled: parsePaymentMethods(s.payment_methods_enabled),
-    pix_qr_url: hasPixQr ? `/api/payment/pix-qr?v=${ts}` : null
+    pix_qr_url: hasPixQr ? `/api/payment/pix-qr?v=${ts}` : null,
+    setup_status: setup.status,
+    setup_missing: setup.missing
   });
 }
 

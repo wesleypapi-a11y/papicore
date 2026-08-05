@@ -162,8 +162,20 @@
     const wa = digits(state.settings.whatsapp || state.settings.phone || '');
     const waLink = $('footerWa');
     if (waLink && wa) waLink.href = 'https://wa.me/' + wa;
+    const setupWa = $('btnSetupWhatsapp');
+    if (setupWa && wa) setupWa.href = 'https://wa.me/' + wa;
     const bookingWa = $('btnWhatsapp');
     if (bookingWa) bookingWa.textContent = `Falar com a ${companyName} pelo WhatsApp`;
+
+    /* Agenda ainda em configuração: a empresa não cadastrou unidade,
+       modalidades, serviços e/ou horários. Mostra a tela de preparação e
+       esconde o fluxo de agendamento — nunca etapas vazias com apenas
+       Voltar/Continuar. */
+    if (state.settings.setup_status === 'PENDING') {
+      showSetupScreen();
+      if (window.loadTenantBranding) window.loadTenantBranding();
+      return;
+    }
 
     if (state.modality && !state.modalities.some((m) => m.id === state.modality.id)) state.modality = null;
     if (state.unit && !state.units.some((u) => u.id === state.unit.id)) state.unit = null;
@@ -178,6 +190,49 @@
     /* Por último: aplica a logo/favicon enviados pelo desenvolvedor, se
        houver, sobrepondo os padrões já definidos acima. */
     if (window.loadTenantBranding) window.loadTenantBranding();
+  }
+
+  /* Esconde o formulário e o progresso, exibindo a tela "Estamos preparando
+     a agenda desta empresa" para o cliente. */
+  function showSetupScreen() {
+    const form = $('bookingForm');
+    const progressWrap = $('progressWrap');
+    const pageProgress = $('pageProgress');
+    if (form) form.hidden = true;
+    if (progressWrap) progressWrap.hidden = true;
+    if (pageProgress) pageProgress.hidden = true;
+    const setup = $('setupScreen');
+    if (setup) setup.hidden = false;
+    const nav = $('navRow');
+    if (nav) nav.hidden = true;
+
+    const missing = state.settings.setup_missing || [];
+    const labels = {
+      unidade: 'Unidade de atendimento',
+      'formas de atendimento': 'Formas de atendimento',
+      'serviços': 'Serviços',
+      'horários': 'Horário de funcionamento'
+    };
+    const banner = $('setupBanner');
+    const list = $('setupMissingList');
+    if (list) {
+      list.innerHTML = missing
+        .map((key) => `<li class="setup-missing-item">${labels[key] || key}</li>`)
+        .join('');
+    }
+    if (banner) banner.hidden = missing.length === 0;
+
+    const phone = digits(state.settings.whatsapp || state.settings.phone || '');
+    const wa = $('btnSetupWhatsapp');
+    if (wa) {
+      if (phone) {
+        wa.href = 'https://wa.me/' + phone;
+      } else {
+        wa.hidden = true;
+      }
+    }
+
+    window.scrollTo({ top: 0 });
   }
 
   function renderProgress() {
@@ -278,6 +333,10 @@
   function renderModalities() {
     const grid = $('modalityGrid');
     grid.innerHTML = '';
+    if (!state.modalities.length) {
+      grid.innerHTML = '<div class="empty-state">Nenhuma forma de atendimento disponível no momento.</div>';
+      return;
+    }
     const firstId = state.modalities.length ? state.modalities[0].id : null;
     state.modalities.forEach((m) => {
       const isFeatured = m.id === firstId;
@@ -368,6 +427,10 @@
       return;
     }
     block.hidden = false;
+    if (!state.units.length) {
+      grid.innerHTML = '<div class="empty-state">Nenhuma unidade de atendimento cadastrada no momento.</div>';
+      return;
+    }
     state.units.forEach((u) => {
       const card = document.createElement('button');
       card.type = 'button';
@@ -514,6 +577,10 @@
       const sections = data.catalog.filter((c) => c.services.length > 0);
       subtitle.textContent = `${state.modality.name} · ${CATEGORY_META[state.vehicle.category].label}`;
       el.innerHTML = '';
+      if (!data.catalog.some((c) => c.services.length > 0)) {
+        el.innerHTML = '<div class="empty-state">Nenhum serviço disponível para esta forma de atendimento no momento.</div>';
+        return;
+      }
       sections.forEach((cat) => {
         const section = document.createElement('div');
         section.className = 'catalog-section';

@@ -1,5 +1,6 @@
 const path = require('path');
 const { getDb } = require('../database/tenantDatabase');
+const { computeSetupStatus } = require('../database/tenantSchema');
 const {
   ASSETS_DIR,
   storedFilePath
@@ -39,6 +40,11 @@ function get(req, res) {
   const stored = tenantId ? storedFilePath(tenantId, 'pix_qr') : null;
   s.pix_qr_path = stored ? path.relative(ASSETS_DIR, stored).split(path.sep).join('/') : null;
   s.pix_qr_url = stored ? `/api/payment/pix-qr?v=${encodeURIComponent(s.updated_at || '')}` : null;
+
+  const setup = computeSetupStatus(db);
+  s.setup_status = setup.status;
+  s.setup_missing = setup.missing;
+
   return res.json(s);
 }
 

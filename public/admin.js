@@ -353,6 +353,33 @@
 
   /* ---------- dashboard ---------- */
 
+  /* Checklist de configuração pendente da agenda: mostra o que falta para o
+     site público sair do modo "Estamos preparando a agenda" e oferece atalhos
+     para as abas que resolvem cada item. */
+  function setupBanner(missing) {
+    const steps = {
+      unidade: { label: 'Unidades', tab: 'units' },
+      'formas de atendimento': { label: 'Formas de atendimento', tab: 'modalities' },
+      serviços: { label: 'Serviços', tab: 'services' },
+      horários: { label: 'Horários', tab: 'settings' },
+      'banco de dados': { label: 'Configurações', tab: 'settings' }
+    };
+    const items = (missing || []).length
+      ? missing.map((key) => {
+          const s = steps[key] || { label: key, tab: null };
+          const inner = `${escapeHtml(s.label)}`;
+          return `<li class="setup-missing-item">${s.tab
+            ? `<button type="button" class="linklike" data-setup-tab="${s.tab}">${inner}</button>`
+            : `<span>${inner}</span>`}</li>`;
+        }).join('')
+      : '<li class="setup-missing-item">Configure unidade, atendimento, serviços e horários</li>';
+    return `
+      <div class="setup-banner">
+        <div class="setup-banner-head"><strong>Agenda ainda em configuração</strong><span>O site público mostra "Estamos preparando a agenda desta empresa" até estes itens serem cadastrados:</span></div>
+        <ul class="setup-missing-list">${items}</ul>
+      </div>`;
+  }
+
   async function renderDashboard() {
     const data = await api('/api/admin/dashboard');
     const el = $('view-dashboard');
@@ -360,6 +387,7 @@
       <div class="admin-header">
         <div><h1>Dashboard</h1><div class="sub">${toDateBR(todayStr())} · Olá, ${escapeHtml(state.user ? state.user.name : '')}</div></div>
       </div>
+      ${data.setup_status === 'PENDING' ? setupBanner(data.setup_missing) : ''}
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-value">${data.today}</div><div class="stat-label">Hoje</div></div>
         <div class="stat-card"><div class="stat-value">${data.week}</div><div class="stat-label">Esta semana</div></div>
@@ -391,6 +419,9 @@
           </table></div>` : '<div class="empty-state">Nenhum agendamento futuro.</div>'}
       </div>
     `;
+    el.querySelectorAll('[data-setup-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => showView(btn.dataset.setupTab));
+    });
   }
 
   /* ---------- agenda ---------- */
