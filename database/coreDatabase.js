@@ -1075,6 +1075,43 @@ function migratePublicApiV1() {
   db.exec(API_DDL);
 }
 
+/* v1.1 — api_request_logs.tenant_id precisa aceitar NULL: requisições NÃO
+   autenticadas (401 por chave inválida/ausente) ainda devem ser registradas
+   para monitoramento de abuso, sem tenant resolvido. Recria a tabela apenas
+   se ela foi criada com NOT NULL. */
+function migrateApiRequestLogsTenantNullable() {
+  const cols = db.prepare('PRAGMA table_info(api_request_logs)').all();
+  const tenantCol = cols.find((c) => c.name === 'tenant_id');
+  if (!tenantCol) return;
+  if (Number(tenantCol.notnull) !== 1) return;
+  const tx = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE api_request_logs_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        api_key_id TEXT REFERENCES api_keys(id) ON DELETE SET NULL,
+        key_prefix TEXT,
+        method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status_code INTEGER,
+        duration_ms INTEGER,
+        ip TEXT,
+        user_agent TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+      INSERT INTO api_request_logs_new
+        (id, tenant_id, api_key_id, key_prefix, method, path, status_code, duration_ms, ip, user_agent, created_at)
+        SELECT id, tenant_id, api_key_id, key_prefix, method, path, status_code, duration_ms, ip, user_agent, created_at
+        FROM api_request_logs;
+      DROP TABLE api_request_logs;
+      ALTER TABLE api_request_logs_new RENAME TO api_request_logs;
+      CREATE INDEX IF NOT EXISTS idx_api_request_logs_tenant ON api_request_logs(tenant_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_api_request_logs_created ON api_request_logs(created_at);
+    `);
+  });
+  tx();
+}
+
 function runMigrations() {
   if (!migrationApplied('plans_v1')) {
     migratePlansV1();
@@ -1107,6 +1144,10 @@ function runMigrations() {
   if (!migrationApplied('public_api_v1')) {
     migratePublicApiV1();
     markMigrationApplied('public_api_v1');
+  }
+  if (!migrationApplied('api_request_logs_tenant_nullable')) {
+    migrateApiRequestLogsTenantNullable();
+    markMigrationApplied('api_request_logs_tenant_nullable');
   }
 }
 
