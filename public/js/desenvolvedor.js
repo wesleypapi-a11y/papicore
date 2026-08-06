@@ -15,7 +15,7 @@
   function openModal(){if(!$('#modal').open)$('#modal').showModal()}
   function roleLabel(r){return {developer:'Desenvolvedor',owner:'Proprietário',admin:'Administrador',employee:'Funcionário'}[r]||r}
   /* Botões de ação compactos (somente ícones), mesmo padrão usado no admin do tenant. */
-  const ICONS={accept:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>',cancel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>',edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',delete:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',detail:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',backup:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M20 21H4"/></svg>',restore:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>',login:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/></svg>',star:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>'};
+  const ICONS={accept:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>',cancel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>',edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',delete:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',detail:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',backup:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M20 21H4"/></svg>',restore:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>',login:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/></svg>',star:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>'};
   function iconBtn(icon,cls,action,id,label){return `<button type="button" class="action-btn action-btn-${cls}" data-action="${action}" data-id="${id}" title="${label}" aria-label="${label}">${ICONS[icon]}</button>`}
   async function boot(){if(!state.token)return logout();try{state.user=await api('/api/developer/me');$('#loginView').classList.add('hidden');$('#appView').classList.remove('hidden');$('#developerName').textContent=state.user.name;buildNav();await render()}catch{logout()}}
   function buildNav(){ $('#nav').innerHTML=views.map(([id,name])=>`<button class="nav-button ${id===state.view?'active':''}" data-view="${id}">${name}</button>`).join('');$('#nav').onclick=e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;$('#sidebar').classList.remove('open');buildNav();render()}}
@@ -207,7 +207,7 @@
   }
 
   /* ---------- Aba "API" ---------- */
-  const API_TABS=[['overview','Visão geral'],['keys','Chaves de API'],['webhooks','Webhooks'],['logs','Logs']];
+  const API_TABS=[['overview','Visão geral'],['endpoints','Endpoints'],['keys','Chaves de API'],['webhooks','Webhooks'],['logs','Logs']];
   const API_KEY_STATUS_LABELS={ACTIVE:'Ativa',REVOKED:'Revogada',EXPIRED:'Expirada',SUSPENDED:'Suspensa'};
   const API_SCOPE_LABELS={'settings:read':'Configurações','catalog:read':'Catálogo','availability:read':'Disponibilidade','appointments:read':'Agendamentos (leitura)','appointments:write':'Agendamentos (escrita)','customers:read':'Clientes','packages:read':'Pacotes'};
   const API_WEBHOOK_EVENT_LABELS={'appointment.created':'Agendamento criado','appointment.updated':'Agendamento atualizado','appointment.completed':'Agendamento concluído','appointment.cancelled':'Agendamento cancelado','package.sold':'Pacote vendido'};
@@ -223,9 +223,43 @@
     $('#content').querySelector('.tabs').onclick=e=>{const b=e.target.closest('[data-atab]');if(!b)return;state.apiTab=b.dataset.atab;apiView()};
     const bodyEl=$('#apiBody');
     if(activeTab==='overview')return renderApiOverview(bodyEl);
+    if(activeTab==='endpoints')return renderApiEndpoints(bodyEl);
     if(activeTab==='webhooks')return renderApiWebhooks(bodyEl);
     if(activeTab==='logs')return renderApiLogs(bodyEl);
     return renderApiKeys(bodyEl);
+  }
+
+  async function renderApiEndpoints(bodyEl){
+    let spec;
+    try{spec=await (await fetch('/api/v1/openapi.json')).json();}
+    catch(e){bodyEl.innerHTML='<div class="panel error">Não foi possível carregar a documentação da API.</div>';return}
+    const rows=[];
+    for(const [path,item] of Object.entries(spec.paths||{})){
+      for(const [method,op] of Object.entries(item||{})){
+        if(!['get','post','put','patch','delete'].includes(method))continue;
+        const scope=(op.security&&op.security[0]&&op.security[0].bearerAuth)||[];
+        const fullRoute='/api/v1'+path.replace(/\{([^}]+)\}/g,':$1');
+        const desc=op.summary||op.description||'';
+        const detail=(op.description&&op.description!==op.summary)?op.description:'';
+        rows.push(`<tr>
+          <td><span class="method method-${method}">${method.toUpperCase()}</span></td>
+          <td><code class="route">${esc(fullRoute)}</code></td>
+          <td><b>${esc(desc)}</b>${detail?`<br><small class="muted">${esc(detail)}</small>`:''}</td>
+          <td>${apiScopeChips(scope)}</td>
+          <td><div class="row-actions">
+            <button type="button" class="action-btn action-btn-neutral" data-copy-route="${esc(method.toUpperCase()+' '+fullRoute)}" data-copy-desc="${esc(desc)}" title="Copiar rota e descrição" aria-label="Copiar rota e descrição">${ICONS.copy}</button>
+          </div></td>
+        </tr>`);
+      }
+    }
+    bodyEl.innerHTML=`
+      <div class="toolbar"><a class="primary" style="width:auto;text-decoration:none;" href="/api/v1/openapi.json" target="_blank" rel="noopener">Abrir especificação OpenAPI (JSON)</a></div>
+      <p class="muted">Todas as rotas usam <code>Authorization: Bearer &lt;chave&gt;</code>. Requisições de escrita (POST) exigem o cabeçalho <code>Idempotency-Key</code>. Clique no ícone de copiar para levar a rota e a descrição a outra ferramenta/IA.</p>
+      ${table(['Método','Rota','O que faz','Escopo','Ações'],rows)}`;
+    bodyEl.querySelector('.table-wrap').onclick=e=>{
+      const b=e.target.closest('[data-copy-route]');if(!b)return;
+      copyText(`${b.dataset.copyRoute}\nO que faz: ${b.dataset.copyDesc||''}`);
+    };
   }
 
   async function renderApiOverview(bodyEl){
