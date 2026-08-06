@@ -8,6 +8,7 @@ const {
   countOverlaps,
   getSettings
 } = require('../services/appointmentService');
+const packageService = require('../services/packageService');
 const {
   AppError,
   STATUSES,
@@ -85,6 +86,7 @@ function getAppointment(req, res) {
 }
 
 function createAppointment(req, res) {
+  const db = getDb();
   const data = validateAppointmentInput(req.body, { allowStatus: true });
   const settings = getSettings();
   const capacity = data.unit ? (data.unit.capacity || 1) : (settings.capacity || 1);
@@ -99,7 +101,31 @@ function createAppointment(req, res) {
   }
 
   const appointment = insertAppointment(data);
-  return res.status(201).json(appointment);
+
+  /* Pacote de serviços (Fase 1): reserva o crédito ao criar o agendamento. */
+  const serviceIds = data.services.map((s) => s.id);
+  if (req.body.customer_package_id) {
+    packageService.validateCoverage(db, req.body.customer_package_id, serviceIds);
+    packageService.reserveForAppointment(db, {
+      customerPackageId: req.body.customer_package_id,
+      serviceIds,
+      appointmentId: appointment.id,
+      reason: `Reserva no agendamento ${appointment.appointment_code}`,
+      userId: req.user ? req.user.id : null
+    });
+  }
+
+  const fresh = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointment.id);
+  if (data.status === 'completed') {
+    packageService.consumeForAppointment(db, { appointmentId: appointment.id, reason: 'Consumo na conclusão do agendamento', userId: req.user ? req.user.id : null });
+  } else if (data.status === 'cancelled' || data.status === 'rejected') {
+    packageService.releaseForAppointment(db, { appointmentId: appointment.id, reason: 'Liberação por status final não ativo do agendamento', userId: req.user ? req.user.id : null });
+  }
+
+  const result = db
+    .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
+    .get(appointment.id);
+  return res.status(201).json(result);
 }
 
 function updateAppointment(req, res) {
@@ -187,14 +213,53 @@ function updateAppointment(req, res) {
     existing.id
   );
 
+  /* Pacote de serviços (Fase 1):
+     - se o serviço mudou e havia crédito reservado, libera e limpa o vínculo;
+     - se um pacote foi selecionado na edição, valida cobertura e reserva;
+     - conclusão consome; cancelamento/recusa libera. */
+  const oldServiceIds = [];
+  if (existing.services_json) {
+    const parsed = JSON.parse(existing.services_json);
+    if (Array.isArray(parsed)) oldServiceIds.push(...parsed.map((s) => Number(s.id)));
+  }
+  if (!oldServiceIds.length && existing.service_id) oldServiceIds.push(Number(existing.service_id));
+  const newServiceIds = data.services.map((s) => Number(s.id));
+  const serviceChanged = oldServiceIds.length !== newServiceIds.length ||
+    oldServiceIds.some((id, i) => id !== newServiceIds[i]);
+
+  if (existing.package_credit_status === 'RESERVED' && serviceChanged) {
+    packageService.resetAppointmentPackage(db, {
+      appointmentId: existing.id,
+      reason: 'Serviço alterado no agendamento',
+      userId: req.user ? req.user.id : null
+    });
+  }
+  if (req.body.customer_package_id) {
+    packageService.validateCoverage(db, req.body.customer_package_id, newServiceIds);
+    packageService.reserveForAppointment(db, {
+      customerPackageId: req.body.customer_package_id,
+      serviceIds: newServiceIds,
+      appointmentId: existing.id,
+      reason: `Reserva no agendamento ${existing.appointment_code}`,
+      userId: req.user ? req.user.id : null
+    });
+  }
+
+  const current = db.prepare('SELECT * FROM appointments WHERE id = ?').get(existing.id);
+  if (data.status === 'completed' && existing.status !== 'completed') {
+    if (current.payment_source === 'PACKAGE') {
+      packageService.consumeForAppointment(db, { appointmentId: existing.id, reason: 'Consumo na conclusão do agendamento', userId: req.user ? req.user.id : null });
+    } else {
+      registerEntryOnCompletion(db, current);
+    }
+  }
+  if (data.status === 'cancelled' && existing.status !== 'cancelled') {
+    packageService.releaseForAppointment(db, { appointmentId: existing.id, reason: 'Liberação por cancelamento do agendamento', userId: req.user ? req.user.id : null });
+  }
+
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(existing.id);
-
-  /* Conclusão pelo formulário de edição também gera a entrada automática. */
-  if (data.status === 'completed' && existing.status !== 'completed') {
-    registerEntryOnCompletion(db, appointment);
-  }
 
   return res.json(appointment);
 }
@@ -210,10 +275,18 @@ function updateStatus(req, res) {
   db.prepare("UPDATE appointments SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?")
     .run(status, req.params.id);
 
-  /* Ao concluir um serviço, registra automaticamente no Financeiro o valor do
-     agendamento como entrada (se ainda não houver lançamento vinculado). */
+  /* Pacote de serviços (Fase 1):
+     - conclusão consome o crédito reservado (sem lançamento financeiro);
+     - cancelamento libera o crédito reservado. */
   if (status === 'completed' && existing.status !== 'completed') {
-    registerEntryOnCompletion(db, existing);
+    if (existing.payment_source === 'PACKAGE') {
+      packageService.consumeForAppointment(db, { appointmentId: existing.id, reason: 'Consumo na conclusão do agendamento', userId: req.user ? req.user.id : null });
+    } else {
+      registerEntryOnCompletion(db, existing);
+    }
+  }
+  if (status === 'cancelled' && existing.status !== 'cancelled' && existing.package_credit_status === 'RESERVED') {
+    packageService.releaseForAppointment(db, { appointmentId: existing.id, reason: 'Liberação por cancelamento do agendamento', userId: req.user ? req.user.id : null });
   }
 
   const appointment = db
@@ -226,8 +299,12 @@ function updateStatus(req, res) {
  * Cria a entrada financeira automática ao concluir um agendamento.
  * Vincula o lançamento ao appointment_id e ignora caso o valor seja zero
  * (preço estimado sem valor definido) ou o lançamento já exista.
+ * Agendamentos pagos com pacote (payment_source = PACKAGE) não geram entrada:
+ * a receita já foi lançada na venda do pacote.
  */
 function registerEntryOnCompletion(db, appointment) {
+  if (appointment.payment_source === 'PACKAGE') return;
+
   const linked = db
     .prepare('SELECT id FROM financial_entries WHERE appointment_id = ? AND type = ?')
     .get(appointment.id, 'entrada');
@@ -315,6 +392,14 @@ function rejectAppointment(req, res) {
     req.params.id
   );
 
+  if (existing.package_credit_status === 'RESERVED') {
+    packageService.releaseForAppointment(db, {
+      appointmentId: existing.id,
+      reason: 'Liberação por recusa do agendamento',
+      userId: req.user ? req.user.id : null
+    });
+  }
+
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(req.params.id);
@@ -323,8 +408,15 @@ function rejectAppointment(req, res) {
 
 function deleteAppointment(req, res) {
   const db = getDb();
-  const existing = db.prepare('SELECT id FROM appointments WHERE id = ?').get(req.params.id);
+  const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
+  if (existing.package_credit_status === 'RESERVED') {
+    packageService.releaseForAppointment(db, {
+      appointmentId: existing.id,
+      reason: 'Liberação por exclusão do agendamento',
+      userId: req.user ? req.user.id : null
+    });
+  }
   db.prepare('DELETE FROM appointments WHERE id = ?').run(req.params.id);
   return res.json({ success: true });
 }

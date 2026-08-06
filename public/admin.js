@@ -31,6 +31,25 @@
     qrcode: 'Pix (QR Code)'
   };
   const PAYMENT_METHOD_KEYS = ['local', 'card', 'pix', 'qrcode'];
+  const PACKAGE_STATUS_LABELS = {
+    ACTIVE: 'Ativo',
+    EXHAUSTED: 'Esgotado',
+    EXPIRED: 'Expirado',
+    CANCELLED: 'Cancelado',
+    SUSPENDED: 'Suspenso'
+  };
+  const PACKAGE_TX_LABELS = {
+    PURCHASE: 'Compra',
+    RESERVE: 'Reserva',
+    CONSUME: 'Consumo',
+    RELEASE: 'Liberação',
+    MANUAL_DEBIT: 'Débito manual',
+    MANUAL_CREDIT: 'Crédito manual',
+    CANCEL_PACKAGE: 'Cancelamento do pacote',
+    EXPIRE: 'Expiração',
+    TRANSFER: 'Transferência'
+  };
+  const PACKAGE_BADGES = { ACTIVE: 'confirmed', EXHAUSTED: 'pending', EXPIRED: 'cancelled', CANCELLED: 'rejected', SUSPENDED: 'cancelled' };
   const LONG_SERVICE_THRESHOLD_MINUTES = 2 * 24 * 60;
   function isLongAppointment(a) {
     return Number(a && a.booked_duration_minutes || 0) > LONG_SERVICE_THRESHOLD_MINUTES;
@@ -163,6 +182,11 @@
 
   function badge(status) {
     return `<span class="badge badge-${status}">${STATUS_LABELS[status] || status}</span>`;
+  }
+
+  function packageBadge(status) {
+    const cls = PACKAGE_BADGES[status] || 'pending';
+    return `<span class="badge badge-${cls}">${PACKAGE_STATUS_LABELS[status] || status}</span>`;
   }
 
   function toast(msg, type) {
@@ -438,6 +462,7 @@
       appointments: 'Agendamentos',
       finances: 'Financeiro',
       services: 'Serviços e valores',
+      packages: 'Pacotes',
       units: 'Unidades',
       blocks: 'Bloqueios',
       modalities: 'Formas de atendimento',
@@ -453,6 +478,7 @@
       appointments: renderAppointments,
       finances: renderFinances,
       services: renderServices,
+      packages: renderPackages,
       units: renderUnits,
       blocks: renderBlocks,
       modalities: renderModalities,
@@ -1377,7 +1403,24 @@
     const catOpts = Object.keys(CATEGORY_LABELS).map((k) => `<option value="${k}">${CATEGORY_LABELS[k]}</option>`).join('');
     const statusOpts = STATUS_BADGES.map((s) => `<option value="${s}">${STATUS_LABELS[s]}</option>`).join('');
 
+    /* Pacotes vendidos utilizáveis (usados para escolher crédito no agendamento). */
+    state.customerPackages = await api('/api/admin/customer-packages').catch(() => []);
+
     const v = (field, def) => (appt && appt[field] != null ? appt[field] : def);
+
+    const packageOptsFor = (serviceId) => {
+      const usable = state.customerPackages.filter((cp) => cp.can_reserve);
+      return usable.map((cp) => {
+        let label = `${cp.package_name} — ${cp.totals ? cp.totals.available : 0} crédito(s)`;
+        if (serviceId && cp.balances) {
+          const bal = cp.balances.find((b) => b.service_id === serviceId);
+          if (bal) label = `${cp.package_name} — ${bal.available} × ${bal.service_name}`;
+          else return '';
+        }
+        if (cp.expires_at) label += ` · válido até ${toDateBR(cp.expires_at)}`;
+        return `<option value="${cp.id}">${escapeHtml(label)}</option>`;
+      }).filter(Boolean).join('');
+    };
 
     openModal(id ? 'Editar agendamento' : 'Novo agendamento', `
       <form id="apptForm" novalidate>
@@ -1388,6 +1431,12 @@
             <select id="apptUnit"><option value="">—</option>${unitOpts}</select></div>
           <div class="field span-2"><label>Serviço</label>
             <select id="apptService"><option value="">—</option>${serviceOpts}</select></div>
+          <div class="field span-2"><label>Pacote de serviços</label>
+            <select id="apptPackage">
+              <option value="">Sem pacote (pagamento normal)</option>
+              ${packageOptsFor('')}
+            </select>
+            <div class="muted" style="font-size:12px;">Ao selecionar um pacote, o serviço acima é reservado do saldo do cliente.</div></div>
           <div class="field">${fieldHtml('apptName', 'Nome', v('customer_name'), 'text', 'Cliente')}</div>
           <div class="field">${fieldHtml('apptPhone', 'Telefone', v('customer_phone'), 'text', '(00) 00000-0000')}</div>
           <div class="field">${fieldHtml('apptBrand', 'Marca', v('vehicle_brand'), 'text', 'Marca')}</div>
@@ -1430,9 +1479,26 @@
       $('apptCategory').value = appt.vehicle_category;
       $('apptStatus').value = appt.status;
       $('apptPayment').value = appt.payment_method || '';
+      if (appt.customer_package_id) {
+        const sel = $('apptPackage');
+        const existing = sel.querySelector(`option[value="${appt.customer_package_id}"]`);
+        if (!existing) {
+          const cp = state.customerPackages.find((x) => x.id === appt.customer_package_id);
+          sel.insertAdjacentHTML('beforeend', `<option value="${appt.customer_package_id}">${escapeHtml(cp ? cp.package_name : 'Pacote ' + appt.customer_package_id)}</option>`);
+        }
+        sel.value = String(appt.customer_package_id);
+      }
     } else if (prefill && prefill.unitId) {
       $('apptUnit').value = prefill.unitId;
     }
+    const refreshPackageOpts = () => {
+      const sel = $('apptPackage');
+      const current = appt && appt.customer_package_id ? String(appt.customer_package_id) : (sel.value || '');
+      const serviceId = Number($('apptService').value) || 0;
+      sel.innerHTML = `<option value="">Sem pacote (pagamento normal)</option>${packageOptsFor(serviceId)}`;
+      if (current && sel.querySelector(`option[value="${current}"]`)) sel.value = current;
+    };
+    $('apptService').addEventListener('change', refreshPackageOpts);
     const toggleManualEnd = () => {
       const on = $('apptManualEnd').checked;
       $('apptEndWrap').hidden = !on;
@@ -1458,7 +1524,8 @@
         start_time: $('apptTime').value,
         status: $('apptStatus').value,
         payment_method: $('apptPayment').value || null,
-        customer_notes: $('apptNotes').value || null
+        customer_notes: $('apptNotes').value || null,
+        customer_package_id: $('apptPackage').value ? Number($('apptPackage').value) : null
       };
       if (manualEnd) {
         body.manual_end = 1;
@@ -1886,6 +1953,536 @@
       }
       hideLoader();
     });
+  }
+
+  /* ---------- packages (Fase 1 — Pacotes de Serviços) ---------- */
+
+  function isPackageManager() {
+    return state.user && ['owner', 'admin'].includes(state.user.role);
+  }
+
+  function packageServiceLine(item) {
+    return `${escapeHtml(item.service_name)} × ${item.quantity}`;
+  }
+
+  async function renderPackages() {
+    await loadBase();
+    const isManager = isPackageManager();
+    const el = $('view-packages');
+    const [models, sold] = await Promise.all([
+      api('/api/admin/packages?includeInactive=true').catch(() => []),
+      api('/api/admin/customer-packages').catch(() => [])
+    ]);
+
+    const modelRows = models.map((p) => `
+      <tr>
+        <td><strong>${escapeHtml(p.name)}</strong><br/><span class="muted">${escapeHtml(p.description || '—')}</span></td>
+        <td>${money((p.price_cents || 0) / 100)}</td>
+        <td>${p.validity_days ? `${p.validity_days} dias` : 'Sem validade'}</td>
+        <td><span class="muted">${p.items.map(packageServiceLine).join('<br/>') || '—'}</span></td>
+        <td>${p.active ? badge('confirmed') : badge('cancelled')}</td>
+        <td><div class="appointment-actions">
+          ${actionButton('editPackage', p.id, { icon: 'edit', label: 'Editar pacote' })}
+          ${actionButton('togglePackage', p.id, { icon: p.active ? 'cancel' : 'accept', label: p.active ? 'Desativar pacote' : 'Ativar pacote' })}
+        </div></td>
+      </tr>`).join('');
+
+    const soldRows = sold.map((cp) => {
+      const exp = cp.expires_at ? toDateBR(cp.expires_at) : 'Sem validade';
+      const expiredNote = cp.expired ? `<br/><span class="muted" style="color:var(--red);">expirado</span>` : '';
+      return `
+      <tr>
+        <td><strong>${escapeHtml(cp.customer_name)}</strong><br/><span class="muted">${escapeHtml(cp.customer_phone || '')}</span></td>
+        <td>${escapeHtml(cp.package_name)}<br/><span class="muted">${money((cp.purchase_price_cents || 0) / 100)}${cp.discount_cents ? ` <span style="color:var(--green);">(−${money(cp.discount_cents / 100)})</span>` : ''}</span></td>
+        <td><strong>${cp.totals ? cp.totals.available : 0}</strong> disp. · ${cp.totals ? cp.totals.reserved : 0} reserv. · ${cp.totals ? cp.totals.consumed : 0} usad.</td>
+        <td>${exp}${expiredNote}</td>
+        <td>${packageBadge(cp.status)}</td>
+        <td><div class="appointment-actions">
+          ${actionButton('packageStatement', cp.id, { icon: 'detail', label: 'Extrato e saldos' })}
+          ${isManager ? actionButton('adjustPackage', cp.id, { icon: 'edit', label: 'Débito/crédito manual' }) : ''}
+          ${isManager ? actionButton('cancelPackage', cp.id, { icon: 'cancel', label: 'Cancelar pacote' }) : ''}
+        </div></td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="admin-header">
+        <div><h1>Pacotes de serviços</h1><div class="sub">Venda pacotes, acompanhe saldos por cliente e use créditos nos agendamentos</div></div>
+        <div class="header-actions">
+          ${isManager ? `<button class="btn btn-ghost" id="btnNewPackage">+ Novo pacote</button>` : ''}
+          ${isManager ? `<button class="btn btn-primary" id="btnSellPackage">+ Vender pacote</button>` : ''}
+        </div>
+      </div>
+      <div class="panel">
+        <h3 class="review-section-title">Modelos de pacote</h3>
+        ${models.length ? `<div class="table-wrap"><table>
+          <thead><tr><th>Pacote</th><th>Preço</th><th>Validade</th><th>Serviços</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody>${modelRows}</tbody>
+        </table></div>` : '<div class="empty-state">Nenhum modelo de pacote cadastrado.</div>'}
+      </div>
+      <div class="panel">
+        <h3 class="review-section-title">Pacotes vendidos</h3>
+        <div class="form-grid" style="grid-template-columns: 1fr 180px auto; margin-bottom: 12px;">
+          <div class="field">${fieldHtml('pkgSearch', 'Buscar', '', 'text', 'Cliente, pacote ou telefone')}</div>
+          <div class="field"><label for="pkgStatus">Status</label>
+            <select id="pkgStatus">
+              <option value="all">Todos</option>
+              <option value="ACTIVE">Ativo</option>
+              <option value="EXHAUSTED">Esgotado</option>
+              <option value="EXPIRED">Expirado</option>
+              <option value="CANCELLED">Cancelado</option>
+              <option value="SUSPENDED">Suspenso</option>
+            </select></div>
+          <div class="field"><button class="btn btn-ghost" id="pkgFilterBtn" style="margin-top:22px;">Filtrar</button></div>
+        </div>
+        ${sold.length ? `<div class="table-wrap"><table>
+          <thead><tr><th>Cliente</th><th>Pacote</th><th>Saldo</th><th>Validade</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody>${soldRows}</tbody>
+        </table></div>` : '<div class="empty-state">Nenhum pacote vendido.</div>'}
+      </div>
+    `;
+
+    if (isManager) {
+      $('btnNewPackage').addEventListener('click', () => openPackageModal());
+      $('btnSellPackage').addEventListener('click', () => openSellPackageModal());
+    }
+    const doFilter = () => {
+      const params = new URLSearchParams();
+      const s = ($('pkgSearch') ? $('pkgSearch').value : '').trim();
+      const st = $('pkgStatus') ? $('pkgStatus').value : 'all';
+      if (s) params.set('search', s);
+      if (st !== 'all') params.set('status', st);
+      renderPackagesWith(params);
+    };
+    $('pkgFilterBtn').addEventListener('click', doFilter);
+    $('pkgSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') doFilter(); });
+    $('pkgStatus').addEventListener('change', doFilter);
+    el.querySelectorAll('[data-action="editPackage"]').forEach((b) => b.addEventListener('click', () => openPackageModal(Number(b.dataset.id))));
+    el.querySelectorAll('[data-action="togglePackage"]').forEach((b) => b.addEventListener('click', () => togglePackage(Number(b.dataset.id), b.dataset.id)));
+    el.querySelectorAll('[data-action="packageStatement"]').forEach((b) => b.addEventListener('click', () => openPackageStatementModal(Number(b.dataset.id))));
+    el.querySelectorAll('[data-action="adjustPackage"]').forEach((b) => b.addEventListener('click', () => openAdjustPackageModal(Number(b.dataset.id))));
+    el.querySelectorAll('[data-action="cancelPackage"]').forEach((b) => b.addEventListener('click', () => cancelCustomerPackage(Number(b.dataset.id))));
+  }
+
+  /* Re-render da lista de vendidos aplicando filtros. */
+  async function renderPackagesWith(params) {
+    showLoader();
+    try {
+      const sold = await api('/api/admin/customer-packages?' + params.toString()).catch(() => []);
+      const isManager = isPackageManager();
+      const rows = sold.map((cp) => {
+        const exp = cp.expires_at ? toDateBR(cp.expires_at) : 'Sem validade';
+        const expiredNote = cp.expired ? `<br/><span class="muted" style="color:var(--red);">expirado</span>` : '';
+        return `
+        <tr>
+          <td><strong>${escapeHtml(cp.customer_name)}</strong><br/><span class="muted">${escapeHtml(cp.customer_phone || '')}</span></td>
+          <td>${escapeHtml(cp.package_name)}<br/><span class="muted">${money((cp.purchase_price_cents || 0) / 100)}</span></td>
+          <td><strong>${cp.totals ? cp.totals.available : 0}</strong> disp. · ${cp.totals ? cp.totals.reserved : 0} reserv. · ${cp.totals ? cp.totals.consumed : 0} usad.</td>
+          <td>${exp}${expiredNote}</td>
+          <td>${packageBadge(cp.status)}</td>
+          <td><div class="appointment-actions">
+            ${actionButton('packageStatement', cp.id, { icon: 'detail', label: 'Extrato e saldos' })}
+            ${isManager ? actionButton('adjustPackage', cp.id, { icon: 'edit', label: 'Débito/crédito manual' }) : ''}
+            ${isManager ? actionButton('cancelPackage', cp.id, { icon: 'cancel', label: 'Cancelar pacote' }) : ''}
+          </div></td>
+        </tr>`;
+      }).join('');
+      $('view-packages').querySelector('.table-wrap').innerHTML = `<table>
+        <thead><tr><th>Cliente</th><th>Pacote</th><th>Saldo</th><th>Validade</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+      $('view-packages').querySelectorAll('[data-action="packageStatement"]').forEach((b) => b.addEventListener('click', () => openPackageStatementModal(Number(b.dataset.id))));
+      $('view-packages').querySelectorAll('[data-action="adjustPackage"]').forEach((b) => b.addEventListener('click', () => openAdjustPackageModal(Number(b.dataset.id))));
+      $('view-packages').querySelectorAll('[data-action="cancelPackage"]').forEach((b) => b.addEventListener('click', () => cancelCustomerPackage(Number(b.dataset.id))));
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
+  }
+
+  /* ---------- modelo de pacote ---------- */
+
+  function packageItemsHtml(items) {
+    const rows = (items || []).map((it) => `
+      <div class="form-grid" data-item-row style="grid-template-columns: 1fr 120px 36px; gap: 8px;">
+        <div class="field"><select class="pkgItemService">
+          ${state.services.map((s) => `<option value="${s.id}" ${s.id === it.service_id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+        </select></div>
+        <div class="field"><input type="number" class="pkgItemQty" min="1" value="${it.quantity || 1}" /></div>
+        <button type="button" class="action-btn action-btn-danger pkgItemRemove" title="Remover" aria-label="Remover">×</button>
+      </div>`).join('');
+    return `<div id="pkgItemsWrap">${rows || '<div class="empty-state">Nenhum serviço adicionado.</div>'}</div>`;
+  }
+
+  async function openPackageModal(id) {
+    await loadBase();
+    let pkg = null;
+    if (id) {
+      const all = await api('/api/admin/packages?includeInactive=true').catch(() => []);
+      pkg = all.find((p) => p.id === id);
+    }
+    const v = (f, def) => (pkg && pkg[f] != null ? pkg[f] : def);
+
+    openModal(id ? 'Editar pacote' : 'Novo pacote', `
+      <form id="pkgForm" novalidate>
+        <div class="form-grid">
+          <div class="field">${fieldHtml('pkgName', 'Nome do pacote', v('name', ''), 'text', 'Ex.: Lavagem Premium')}</div>
+          <div class="field">${fieldHtml('pkgPrice', 'Preço (R$)', v('price_cents', '') ? String((v('price_cents') / 100).toFixed(2).replace('.', ',')) : '', 'text', '0,00')}</div>
+          <div class="field span-2"><label for="pkgDesc">Descrição</label>
+            <textarea id="pkgDesc" rows="2">${escapeHtml(v('description', ''))}</textarea></div>
+          <div class="field">${fieldHtml('pkgValidity', 'Validade (dias — vazio = sem validade)', v('validity_days', '') || '', 'number')}</div>
+          <div class="field"><label>&nbsp;</label>
+            <div class="checkbox-row" style="gap:16px;">
+              <label class="switch-row"><input type="checkbox" id="pkgVehicleBound" ${v('is_vehicle_bound', 0) ? 'checked' : ''} /><span>Vincular a um veículo</span></label>
+              <label class="switch-row"><input type="checkbox" id="pkgTransferable" ${v('is_transferable', 0) ? 'checked' : ''} /><span>Transferível</span></label>
+            </div></div>
+          <div class="field span-2"><label>Serviços do pacote</label>${packageItemsHtml(pkg ? pkg.items : [{ service_id: '', quantity: 1 }])}</div>
+          <div class="field span-2"><button type="button" class="btn btn-ghost" id="pkgAddItem">+ Adicionar serviço</button></div>
+        </div>
+      </form>
+    `, `
+      <button class="btn btn-ghost" data-close>Cancelar</button>
+      <button class="btn btn-primary" id="pkgSave">${id ? 'Salvar' : 'Criar pacote'}</button>
+    `);
+
+    $('pkgAddItem').addEventListener('click', () => {
+      const wrap = $('pkgItemsWrap');
+      const empty = wrap.querySelector('.empty-state');
+      if (empty) empty.remove();
+      wrap.insertAdjacentHTML('beforeend', `
+        <div class="form-grid" data-item-row style="grid-template-columns: 1fr 120px 36px; gap: 8px;">
+          <div class="field"><select class="pkgItemService">
+            ${state.services.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+          </select></div>
+          <div class="field"><input type="number" class="pkgItemQty" min="1" value="1" /></div>
+          <button type="button" class="action-btn action-btn-danger pkgItemRemove" title="Remover" aria-label="Remover">×</button>
+        </div>`);
+    });
+    $('pkgItemsWrap').addEventListener('click', (e) => {
+      if (e.target.classList.contains('pkgItemRemove')) {
+        const row = e.target.closest('[data-item-row]');
+        row.remove();
+        const rows = $('pkgItemsWrap').querySelectorAll('[data-item-row]');
+        if (!rows.length) $('pkgItemsWrap').innerHTML = '<div class="empty-state">Nenhum serviço adicionado.</div>';
+      }
+    });
+
+    $('pkgSave').addEventListener('click', async () => {
+      const rows = [...$('pkgItemsWrap').querySelectorAll('[data-item-row]')].map((r) => ({
+        service_id: Number(r.querySelector('.pkgItemService').value),
+        quantity: Number(r.querySelector('.pkgItemQty').value)
+      }));
+      const body = {
+        name: $('pkgName').value,
+        description: $('pkgDesc').value || null,
+        price: $('pkgPrice').value.trim() || '0',
+        validity_days: $('pkgValidity').value ? Number($('pkgValidity').value) : null,
+        is_vehicle_bound: $('pkgVehicleBound').checked ? 1 : 0,
+        is_transferable: $('pkgTransferable').checked ? 1 : 0,
+        items: rows
+      };
+      showLoader();
+      try {
+        await api(id ? '/api/admin/packages/' + id : '/api/admin/packages', {
+          method: id ? 'PUT' : 'POST',
+          body: JSON.stringify(body)
+        });
+        closeModal();
+        await renderPackages();
+        toast(id ? 'Pacote atualizado.' : 'Pacote criado.', 'success');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+      hideLoader();
+    });
+  }
+
+  async function togglePackage(id) {
+    const all = await api('/api/admin/packages?includeInactive=true').catch(() => []);
+    const pkg = all.find((p) => p.id === id);
+    if (!pkg) return;
+    confirmAction(`Deseja ${pkg.active ? 'desativar' : 'ativar'} o pacote "${pkg.name}"?`, '/api/admin/packages/' + id + '/active', 'PATCH', { active: pkg.active ? 0 : 1 }, renderPackages);
+  }
+
+  /* ---------- venda de pacote ---------- */
+
+  async function openSellPackageModal() {
+    await loadBase();
+    const [models, customers] = await Promise.all([
+      api('/api/admin/packages').catch(() => []),
+      api('/api/admin/customers?search=').catch(() => [])
+    ]);
+
+    openModal('Vender pacote', `
+      <form id="sellForm" novalidate>
+        <div class="form-grid">
+          <div class="field span-2"><label>Pacote</label>
+            <select id="sellPackage">
+              <option value="">Selecione o pacote</option>
+              ${models.map((p) => `<option value="${p.id}" data-price="${p.price_cents || 0}">${escapeHtml(p.name)} — ${money((p.price_cents || 0) / 100)}</option>`).join('')}
+            </select></div>
+          <div class="field span-2"><label>Cliente</label>
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="sellCustomerSearch" placeholder="Buscar cliente por nome, telefone ou e-mail..." style="flex:1;" />
+              <button type="button" class="btn btn-ghost" id="sellCustomerBtn">Buscar</button>
+            </div>
+            <div id="sellCustomerList" class="muted" style="margin-top:6px;">Nenhum cliente selecionado. Preencha os dados abaixo para cadastrar um novo.</div>
+            <div class="checkbox-row"><label class="switch-row"><input type="checkbox" id="sellNewCustomer" /><span>Novo cliente</span></label></div>
+          </div>
+          <div class="field">${fieldHtml('sellName', 'Nome', '', 'text', 'Nome do cliente')}</div>
+          <div class="field">${fieldHtml('sellPhone', 'Telefone', '', 'text', '(00) 00000-0000')}</div>
+          <div class="field">${fieldHtml('sellEmail', 'E-mail', '', 'email')}</div>
+          <div class="field">${fieldHtml('sellCpf', 'CPF', '', 'text')}</div>
+          <div class="field span-2"><label>Veículo (se o pacote exigir)</label>
+            <select id="sellVehicle"><option value="">Sem veículo</option></select>
+            <div class="checkbox-row"><label class="switch-row"><input type="checkbox" id="sellNewVehicle" /><span>Informar um veículo novo</span></label></div>
+          </div>
+          <div class="field">${fieldHtml('sellVBrand', 'Marca', '', 'text')}</div>
+          <div class="field">${fieldHtml('sellVModel', 'Modelo', '', 'text')}</div>
+          <div class="field">${fieldHtml('sellVPlate', 'Placa', '', 'text', 'ABC-1D23')}</div>
+          <div class="field">${fieldHtml('sellVYear', 'Ano', '', 'text')}</div>
+          <div class="field"><label for="sellVColor">Cor</label><input type="text" id="sellVColor" /></div>
+          <div class="field"><label for="sellVCategory">Categoria</label>
+            <select id="sellVCategory">
+              ${Object.keys(CATEGORY_LABELS).map((k) => `<option value="${k}">${CATEGORY_LABELS[k]}</option>`).join('')}
+            </select></div>
+          <div class="field">${fieldHtml('sellDiscount', 'Desconto (R$)', '', 'text', '0,00')}</div>
+          <div class="field"><label for="sellPayment">Forma de pagamento</label>
+            <select id="sellPayment">
+              <option value="">—</option>
+              ${PAYMENT_METHOD_KEYS.map((k) => `<option value="${k}">${PAYMENT_LABELS[k]}</option>`).join('')}
+            </select></div>
+          <div class="field"><label for="sellDate">Data da compra</label><input type="date" id="sellDate" value="${todayStr()}" /></div>
+          <div class="field span-2"><label for="sellNotes">Observações</label>
+            <textarea id="sellNotes" rows="2"></textarea></div>
+        </div>
+      </form>
+    `, `
+      <button class="btn btn-ghost" data-close>Cancelar</button>
+      <button class="btn btn-primary" id="sellSave">Vender pacote</button>
+    `);
+
+    let selectedCustomer = null;
+    const customerList = (list) => {
+      const el = $('sellCustomerList');
+      if (!list.length) {
+        el.innerHTML = 'Nenhum cliente encontrado.';
+        return;
+      }
+      el.innerHTML = list.map((c) => `
+        <label class="choice" style="display:flex; align-items:center; gap:8px; padding:6px 0; cursor:pointer;">
+          <input type="radio" name="sellCustomerRadio" value="${c.id}" data-name="${escapeHtml(c.name)}" data-phone="${escapeHtml(c.phone || '')}" />
+          <span><strong>${escapeHtml(c.name)}</strong> · ${escapeHtml(c.phone || 'sem telefone')}</span>
+        </label>`).join('');
+      el.querySelectorAll('input[name="sellCustomerRadio"]').forEach((r) => r.addEventListener('change', () => {
+        selectedCustomer = list.find((c) => c.id === Number(r.value));
+        $('sellName').value = selectedCustomer.name;
+        $('sellPhone').value = selectedCustomer.phone || '';
+        $('sellEmail').value = selectedCustomer.email || '';
+        $('sellCpf').value = selectedCustomer.cpf || '';
+        fillVehicles(selectedCustomer.id);
+      }));
+    };
+    const fillVehicles = async (customerId) => {
+      const cust = await api('/api/admin/customers/' + customerId).catch(() => null);
+      const sel = $('sellVehicle');
+      sel.innerHTML = '<option value="">Sem veículo</option>' + (cust && cust.vehicles ? cust.vehicles.map((v) =>
+        `<option value="${v.id}">${escapeHtml(v.model)} ${escapeHtml(v.plate || '')}</option>`).join('') : '');
+    };
+    const showNewCustomerFields = () => {
+      const isNew = $('sellNewCustomer').checked;
+      ['sellName', 'sellPhone', 'sellEmail', 'sellCpf'].forEach((f) => { $(f).disabled = !isNew; });
+    };
+    const showNewVehicleFields = () => {
+      const isNew = $('sellNewVehicle').checked;
+      ['sellVBrand', 'sellVModel', 'sellVPlate', 'sellVYear', 'sellVColor', 'sellVCategory'].forEach((f) => { $(f).disabled = !isNew; });
+      $('sellVehicle').disabled = isNew;
+    };
+
+    $('sellCustomerBtn').addEventListener('click', async () => {
+      const q = $('sellCustomerSearch').value.trim();
+      const list = await api('/api/admin/customers?search=' + encodeURIComponent(q)).catch(() => []);
+      customerList(list);
+    });
+    $('sellNewCustomer').addEventListener('change', () => {
+      selectedCustomer = null;
+      customerList([]);
+      $('sellCustomerList').innerHTML = 'Novo cliente. Preencha os dados abaixo.';
+      showNewCustomerFields();
+    });
+    $('sellNewVehicle').addEventListener('change', showNewVehicleFields);
+    showNewCustomerFields();
+    showNewVehicleFields();
+
+    $('sellSave').addEventListener('click', async () => {
+      const body = {
+        package_id: Number($('sellPackage').value),
+        payment_method: $('sellPayment').value || null,
+        purchased_at: $('sellDate').value || todayStr(),
+        notes: $('sellNotes').value || null,
+        discount: $('sellDiscount').value.trim() || null
+      };
+      if (selectedCustomer) body.customer_id = selectedCustomer.id;
+      else {
+        body.customer = {
+          name: $('sellName').value,
+          phone: $('sellPhone').value,
+          email: $('sellEmail').value || null,
+          cpf: $('sellCpf').value || null
+        };
+      }
+      if ($('sellNewVehicle').checked) {
+        body.vehicle = {
+          brand: $('sellVBrand').value,
+          model: $('sellVModel').value,
+          year: $('sellVYear').value,
+          plate: $('sellVPlate').value,
+          color: $('sellVColor').value,
+          category: $('sellVCategory').value
+        };
+      } else if ($('sellVehicle').value) {
+        body.vehicle_id = Number($('sellVehicle').value);
+      }
+      if (!body.package_id) { toast('Selecione o pacote.', 'error'); return; }
+      showLoader();
+      try {
+        const sold = await api('/api/admin/customer-packages', { method: 'POST', body: JSON.stringify(body) });
+        closeModal();
+        await renderPackages();
+        toast(`Pacote vendido a ${sold.customer ? sold.customer.name : ''}.`, 'success');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+      hideLoader();
+    });
+  }
+
+  /* ---------- extrato / ajuste / cancelamento ---------- */
+
+  async function openPackageStatementModal(id) {
+    showLoader();
+    try {
+      const stmt = await api('/api/admin/customer-packages/' + id + '/statement');
+      const cp = stmt.package;
+      const balanceRows = cp.balances.map((b) => `
+        <tr>
+          <td>${escapeHtml(b.service_name)}</td>
+          <td>${b.total}</td>
+          <td>${b.adjusted}</td>
+          <td>${b.reserved}</td>
+          <td>${b.consumed}</td>
+          <td><strong>${b.available}</strong></td>
+        </tr>`).join('');
+      const txRows = stmt.transactions.map((t) => `
+        <tr>
+          <td>${toDateBR(t.created_at ? t.created_at.slice(0, 10) : '')}</td>
+          <td>${PACKAGE_TX_LABELS[t.transaction_type] || t.transaction_type}</td>
+          <td>${escapeHtml(t.service_name)}</td>
+          <td>${t.quantity}</td>
+          <td>${t.appointment_code ? escapeHtml(t.appointment_code) : '—'}</td>
+          <td><span class="muted">${escapeHtml(t.reason || '')}</span></td>
+        </tr>`).join('');
+
+      openModal(`Pacote ${cp.package_name_snapshot}`, `
+        <div class="form-grid" style="margin-bottom:14px;">
+          <div class="field"><strong>Cliente</strong><div>${escapeHtml(cp.customer ? cp.customer.name : '')} · ${escapeHtml(cp.customer ? cp.customer.phone || '' : '')}</div></div>
+          <div class="field"><strong>Status</strong><div>${packageBadge(cp.status)}</div></div>
+          <div class="field"><strong>Validade</strong><div>${cp.expires_at ? toDateBR(cp.expires_at) : 'Sem validade'}${cp.expired ? ' <span style="color:var(--red);">(expirado)</span>' : ''}</div></div>
+          <div class="field"><strong>Compra</strong><div>${toDateBR(cp.purchased_at)} · ${money((cp.purchase_price_cents || 0) / 100)}</div></div>
+        </div>
+        <h3 class="review-section-title">Saldos por serviço</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Serviço</th><th>Total</th><th>Ajuste</th><th>Reservado</th><th>Consumido</th><th>Disponível</th></tr></thead>
+          <tbody>${balanceRows || '<tr><td colspan="6">Sem saldos.</td></tr>'}</tbody>
+        </table></div>
+        <h3 class="review-section-title">Movimentações</h3>
+        <div class="table-wrap" style="max-height:320px; overflow:auto;"><table>
+          <thead><tr><th>Data</th><th>Tipo</th><th>Serviço</th><th>Qtd</th><th>Agendamento</th><th>Motivo</th></tr></thead>
+          <tbody>${txRows || '<tr><td colspan="6">Sem movimentações.</td></tr>'}</tbody>
+        </table></div>
+      `, `<button class="btn btn-ghost" data-close>Fechar</button>`);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
+  }
+
+  async function openAdjustPackageModal(id) {
+    showLoader();
+    let cp = null;
+    try {
+      cp = await api('/api/admin/customer-packages/' + id);
+    } catch (e) {
+      toast(e.message, 'error');
+      hideLoader();
+      return;
+    }
+    hideLoader();
+
+    openModal(`Ajuste manual — ${cp.package_name_snapshot}`, `
+      <form id="adjustForm" novalidate>
+        <div class="form-grid">
+          <div class="field"><label for="adjService">Serviço</label>
+            <select id="adjService">
+              ${cp.balances.map((b) => `<option value="${b.service_id}">${escapeHtml(b.service_name)} (${b.available} disponíveis)</option>`).join('')}
+            </select></div>
+          <div class="field"><label for="adjType">Tipo</label>
+            <select id="adjType">
+              <option value="MANUAL_DEBIT">Débito</option>
+              <option value="MANUAL_CREDIT">Crédito</option>
+            </select></div>
+          <div class="field">${fieldHtml('adjQty', 'Quantidade', '', 'number')}</div>
+          <div class="field span-2"><label for="adjReason">Motivo (obrigatório)</label>
+            <textarea id="adjReason" rows="2" placeholder="Descreva o motivo do ajuste"></textarea></div>
+        </div>
+      </form>
+    `, `
+      <button class="btn btn-ghost" data-close>Cancelar</button>
+      <button class="btn btn-primary" id="adjSave">Aplicar ajuste</button>
+    `);
+
+    $('adjSave').addEventListener('click', async () => {
+      showLoader();
+      try {
+        await api('/api/admin/customer-packages/' + id + '/adjust', {
+          method: 'POST',
+          body: JSON.stringify({
+            service_id: Number($('adjService').value),
+            type: $('adjType').value,
+            quantity: Number($('adjQty').value),
+            reason: $('adjReason').value
+          })
+        });
+        closeModal();
+        await renderPackages();
+        toast('Ajuste aplicado.', 'success');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+      hideLoader();
+    });
+  }
+
+  async function cancelCustomerPackage(id) {
+    const all = await api('/api/admin/customer-packages').catch(() => []);
+    const cp = all.find((x) => x.id === id);
+    if (!cp) return;
+    const msg = cp.totals && cp.totals.reserved
+      ? 'Este pacote tem saldo reservado em agendamentos. Cancele ou conclua os agendamentos antes de cancelar o pacote.'
+      : `Cancelar o pacote "${cp.package_name}"? O saldo remanescente será zerado e registrado no histórico.`;
+    if (cp.totals && cp.totals.reserved) { toast(msg, 'error'); return; }
+    if (!confirm(msg)) return;
+    showLoader();
+    try {
+      await api('/api/admin/customer-packages/' + id + '/cancel', {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Cancelamento pelo painel administrativo' })
+      });
+      await renderPackages();
+      toast('Pacote cancelado.', 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
   }
 
   /* ---------- units ---------- */

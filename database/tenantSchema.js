@@ -201,6 +201,137 @@ CREATE TABLE IF NOT EXISTS financial_entries (
 );
 `;
 
+/* ---------- Pacotes de serviços (Fase 1) ---------- */
+
+const customersDDL = `
+CREATE TABLE IF NOT EXISTS customers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT,
+  cpf TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+`;
+
+const vehiclesDDL = `
+CREATE TABLE IF NOT EXISTS vehicles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  brand TEXT,
+  model TEXT NOT NULL,
+  year TEXT,
+  plate TEXT,
+  color TEXT,
+  category TEXT NOT NULL DEFAULT 'hatch',
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_vehicles_customer ON vehicles (customer_id);
+CREATE INDEX IF NOT EXISTS idx_vehicles_plate ON vehicles (plate);
+`;
+
+/* Modelo de pacote (oferta cadastrada pela empresa). */
+const servicePackagesDDL = `
+CREATE TABLE IF NOT EXISTS service_packages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  description TEXT,
+  price_cents INTEGER NOT NULL DEFAULT 0,
+  validity_days INTEGER,
+  is_vehicle_bound INTEGER NOT NULL DEFAULT 0,
+  is_transferable INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
+const servicePackageItemsDDL = `
+CREATE TABLE IF NOT EXISTS service_package_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  package_id INTEGER NOT NULL REFERENCES service_packages(id) ON DELETE CASCADE,
+  service_id INTEGER NOT NULL REFERENCES services(id),
+  quantity INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (package_id, service_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sp_items_package ON service_package_items (package_id);
+`;
+
+/* Pacote vendido (compra específica de um cliente). */
+const customerPackagesDDL = `
+CREATE TABLE IF NOT EXISTS customer_packages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL REFERENCES customers(id),
+  vehicle_id INTEGER REFERENCES vehicles(id),
+  package_id INTEGER NOT NULL REFERENCES service_packages(id),
+  package_name_snapshot TEXT NOT NULL,
+  price_cents_snapshot INTEGER NOT NULL,
+  purchase_price_cents INTEGER NOT NULL,
+  discount_cents INTEGER NOT NULL DEFAULT 0,
+  payment_method TEXT,
+  purchased_at TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  expires_at TEXT,
+  status TEXT NOT NULL,
+  notes TEXT,
+  created_by_user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_customer_packages_customer ON customer_packages (customer_id);
+CREATE INDEX IF NOT EXISTS idx_customer_packages_status ON customer_packages (status);
+`;
+
+/* Saldo por serviço de um pacote vendido. available é sempre calculado:
+   total + adjusted - reserved - consumed. */
+const customerPackageBalancesDDL = `
+CREATE TABLE IF NOT EXISTS customer_package_balances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_package_id INTEGER NOT NULL REFERENCES customer_packages(id) ON DELETE CASCADE,
+  service_id INTEGER NOT NULL REFERENCES services(id),
+  service_name_snapshot TEXT NOT NULL,
+  total_quantity INTEGER NOT NULL,
+  reserved_quantity INTEGER NOT NULL DEFAULT 0,
+  consumed_quantity INTEGER NOT NULL DEFAULT 0,
+  adjusted_quantity INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (customer_package_id, service_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cpb_customer_package ON customer_package_balances (customer_package_id);
+`;
+
+/* Movimentações do pacote. Histórico imutável — nunca apagar.
+   appointment_id é apenas uma referência suave (sem FK) para que o histórico
+   sobreviva à exclusão de um agendamento. */
+const packageTransactionsDDL = `
+CREATE TABLE IF NOT EXISTS package_transactions (
+  id TEXT PRIMARY KEY,
+  customer_package_id INTEGER NOT NULL REFERENCES customer_packages(id),
+  balance_id INTEGER NOT NULL REFERENCES customer_package_balances(id),
+  service_id INTEGER NOT NULL REFERENCES services(id),
+  appointment_id INTEGER,
+  transaction_type TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  balance_before INTEGER NOT NULL,
+  balance_after INTEGER NOT NULL,
+  reason TEXT,
+  created_by_user_id INTEGER,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pt_customer_package ON package_transactions (customer_package_id);
+CREATE INDEX IF NOT EXISTS idx_pt_balance ON package_transactions (balance_id);
+CREATE INDEX IF NOT EXISTS idx_pt_appointment ON package_transactions (appointment_id);
+CREATE INDEX IF NOT EXISTS idx_pt_created ON package_transactions (created_at);
+`;
+
 /* ---------- Dados padrão ---------- */
 
 const SEED_MODALITIES = [
@@ -393,6 +524,33 @@ function migrateSeedDurations(db) {
   applyDurations();
 }
 
+/* Fase 1 — Pacotes de serviços. As tabelas já são criadas em createTables
+   (CREATE TABLE IF NOT EXISTS); aqui garantimos índices de uso comum e o
+   backfill das colunas novas de agendamentos antigos (payment_source e
+   package_credit_status com valores padrão seguros). */
+function migrateServicePackagesV1(db) {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sp_items_package ON service_package_items (package_id);
+    CREATE INDEX IF NOT EXISTS idx_customer_packages_customer ON customer_packages (customer_id);
+    CREATE INDEX IF NOT EXISTS idx_customer_packages_status ON customer_packages (status);
+    CREATE INDEX IF NOT EXISTS idx_cpb_customer_package ON customer_package_balances (customer_package_id);
+    CREATE INDEX IF NOT EXISTS idx_pt_customer_package ON package_transactions (customer_package_id);
+    CREATE INDEX IF NOT EXISTS idx_pt_balance ON package_transactions (balance_id);
+    CREATE INDEX IF NOT EXISTS idx_pt_appointment ON package_transactions (appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_pt_created ON package_transactions (created_at);
+    CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
+    CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+    CREATE INDEX IF NOT EXISTS idx_vehicles_customer ON vehicles (customer_id);
+    CREATE INDEX IF NOT EXISTS idx_vehicles_plate ON vehicles (plate);
+    CREATE INDEX IF NOT EXISTS idx_appointments_package ON appointments (customer_package_id);
+    CREATE INDEX IF NOT EXISTS idx_financial_package ON financial_entries (customer_package_id);
+  `);
+
+  db.prepare("UPDATE appointments SET payment_source = 'NORMAL' WHERE payment_source IS NULL").run();
+  db.prepare("UPDATE appointments SET package_credit_status = 'NONE' WHERE package_credit_status IS NULL").run();
+  db.prepare("UPDATE appointments SET package_quantity = 0 WHERE package_quantity IS NULL").run();
+}
+
 /* ---------- Aplicação do schema ---------- */
 
 function createTables(db) {
@@ -400,6 +558,13 @@ function createTables(db) {
   if (!tableExists(db, 'appointments')) db.exec(appointmentsDDL('appointments'));
   if (!tableExists(db, 'blocked_schedules')) db.exec(blockedDDL('blocked_schedules'));
   db.exec(financialDDL);
+  db.exec(customersDDL);
+  db.exec(vehiclesDDL);
+  db.exec(servicePackagesDDL);
+  db.exec(servicePackageItemsDDL);
+  db.exec(customerPackagesDDL);
+  db.exec(customerPackageBalancesDDL);
+  db.exec(packageTransactionsDDL);
   db.exec(
     "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')))"
   );
@@ -460,6 +625,15 @@ function upgradeSchema(db) {
   ensureColumn(db, 'financial_entries', 'type', "TEXT NOT NULL DEFAULT 'entrada'");
   ensureColumn(db, 'financial_entries', 'appointment_id', 'INTEGER');
 
+  /* Pacotes de serviços (Fase 1): colunas de vínculo do agendamento com um
+     pacote vendido e com o saldo de um serviço específico. */
+  ensureColumn(db, 'financial_entries', 'customer_package_id', 'INTEGER');
+  ensureColumn(db, 'appointments', 'payment_source', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  ensureColumn(db, 'appointments', 'customer_package_id', 'INTEGER');
+  ensureColumn(db, 'appointments', 'package_balance_id', 'INTEGER');
+  ensureColumn(db, 'appointments', 'package_credit_status', "TEXT NOT NULL DEFAULT 'NONE'");
+  ensureColumn(db, 'appointments', 'package_quantity', 'INTEGER NOT NULL DEFAULT 0');
+
   /* appointments: rebuild quando schema antigo */
   if (!columnNames(db, 'appointments').includes('start_time')) {
     migrateAppointments(db);
@@ -489,6 +663,14 @@ function upgradeSchema(db) {
     markMigration(db, 'seed_durations_v1');
   }
 
+  /* Pacotes de serviços (Fase 1): as tabelas são criadas em createTables com
+     CREATE TABLE IF NOT EXISTS; a migração garante índices e registra o marco
+     em schema_migrations (refletido no manifest de backup). Idempotente. */
+  if (!migrationApplied(db, 'service_packages_v1')) {
+    migrateServicePackagesV1(db);
+    markMigration(db, 'service_packages_v1');
+  }
+
   /* índices */
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments (appointment_date);
@@ -502,6 +684,8 @@ function upgradeSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_financial_service ON financial_entries (service_id);
     CREATE INDEX IF NOT EXISTS idx_financial_customer ON financial_entries (customer_name);
     CREATE INDEX IF NOT EXISTS idx_financial_type ON financial_entries (type);
+    CREATE INDEX IF NOT EXISTS idx_appointments_package ON appointments (customer_package_id);
+    CREATE INDEX IF NOT EXISTS idx_financial_package ON financial_entries (customer_package_id);
   `);
 
   /* remove artefatos de migrações antigas que não tenham sido concluídas */

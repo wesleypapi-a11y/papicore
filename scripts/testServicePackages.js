@@ -1,0 +1,647 @@
+#!/usr/bin/env node
+/*
+ * testServicePackages.js
+ *
+ * Testes da Fase 1 — Pacotes de Serviços:
+ *   - migração (tabelas, colunas novas, marcos em schema_migrations);
+ *   - CRUD de modelos de pacote (validações e itens);
+ *   - venda a cliente: snapshots, saldos, transações PURCHASE e entrada
+ *     financeira única (valor convertido de centavos para REAL);
+ *   - reserva/consumo/liberação idempotentes e sem saldo negativo;
+ *   - ajuste manual (débito/crédito) com motivo obrigatório;
+ *   - cobertura: "Este pacote não cobre todos os serviços selecionados.";
+ *   - expiração (novas reservas bloqueadas, reservas ativas preservadas);
+ *   - cancelamento (bloqueado com saldo reservado; CANCEL_PACKAGE após);
+ *   - integração com agendamentos: criação (RESERVED), conclusão (CONSUMED
+ *     sem lançamento financeiro) e cancelamento (RELEASED).
+ *
+ * Roda em DATA_DIR temporário (não toca os dados reais):
+ *   node scripts/testServicePackages.js
+ *
+ * KEEP_DATA_DIR=1 preserva o diretório ao final para inspeção.
+ * Código de saída: 0 (ok) ou 1 (falha).
+ */
+
+'use strict';
+
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
+
+const TEST_DIR = process.env.TEST_DATA_DIR
+  ? path.resolve(process.env.TEST_DATA_DIR)
+  : fs.mkdtempSync(path.join(os.tmpdir(), 'papicore-packages-test-'));
+process.env.DATA_DIR = TEST_DIR;
+process.env.NODE_ENV = 'development';
+
+const core = require('../database/coreDatabase');
+const { openTenantDatabase, closeTenantDatabase, runWithTenant } = require('../database/tenantDatabase');
+const packageService = require('../services/packageService');
+const customerService = require('../services/customerService');
+const adminController = require('../controllers/adminController');
+const { todayStr, toDateStr, addDays, formatCurrencyFromCents } = require('../utils/helpers');
+
+const tests = [];
+function test(name, fn) {
+  tests.push({ name, fn });
+}
+let failures = 0;
+
+async function run() {
+  for (const t of tests) {
+    try {
+      await t.fn();
+      console.log(`  ok   ${t.name}`);
+    } catch (err) {
+      failures += 1;
+      console.error(`  FALHA ${t.name}\n        ${err && err.stack ? err.stack.split('\n').slice(0, 5).join('\n        ') : err}`);
+    }
+  }
+}
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg || 'assertion failed');
+}
+
+/* ---------- Helpers ---------- */
+
+let tenantName = null;
+let db = null;
+let serviceA = null;
+let serviceB = null;
+let serviceC = null;
+
+function withDb(fn) {
+  try {
+    return runWithTenant(db, fn);
+  } catch (err) {
+    throw err;
+  }
+}
+
+/* Serviço do tenant para novos pacotes (catálogo Torque ou criado). */
+function pickService() {
+  const s = db.prepare(
+    "SELECT * FROM services WHERE active = 1 AND price_type = 'fixed' AND available_at_unit = 1 ORDER BY id ASC LIMIT 1"
+  ).get();
+  assert(s, 'tenant precisa de ao menos 1 serviço fixo ativo');
+  return s;
+}
+
+function tomorrow() {
+  return toDateStr(addDays(new Date(), 1));
+}
+
+function dayPlus(n) {
+  return toDateStr(addDays(new Date(), n));
+}
+
+function appointmentBody(pkgId, service, extra = {}) {
+  const unit = db.prepare('SELECT * FROM units WHERE active = 1 ORDER BY id ASC LIMIT 1').get();
+  return {
+    modality_id: 1,
+    unit_id: unit ? unit.id : null,
+    service_ids: [service.id],
+    customer_name: 'Cliente Pacote Teste',
+    customer_phone: '(11) 98888-0000',
+    customer_email: 'pacote@teste.com.br',
+    customer_cpf: null,
+    vehicle_brand: 'Volkswagen',
+    vehicle_model: 'Gol',
+    vehicle_year: '2020',
+    vehicle_plate: 'ABC1234',
+    vehicle_color: 'Branco',
+    vehicle_category: 'hatch',
+    appointment_date: tomorrow(),
+    start_time: '09:00',
+    ...extra
+  };
+}
+
+function callController(fn, params, body, user) {
+  let result;
+  const res = {
+    status: (code) => {
+      res.statusCode = code;
+      return res;
+    },
+    json: (d) => {
+      result = d;
+      return res;
+    }
+  };
+  fn({ body: body || {}, params: params || {}, query: {}, user: user || { id: 999, name: 'Teste', role: 'owner' } }, res);
+  return { result, status: res.statusCode };
+}
+
+/* ---------- Testes ---------- */
+
+test('initCore + tenant Torque: migração de pacotes aplicada (tabelas, colunas, marcos)', () => {
+  core.initCore();
+  const coreTenant = core.getTenantById(1);
+  assert(coreTenant, 'tenant padrão torque-detail existe');
+  tenantName = coreTenant.database_name;
+  db = openTenantDatabase(tenantName);
+
+  withDb(() => {
+    const tables = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN
+       ('customers', 'vehicles', 'service_packages', 'service_package_items',
+        'customer_packages', 'customer_package_balances', 'package_transactions')`
+    ).all().map((r) => r.name);
+    for (const t of ['customers', 'vehicles', 'service_packages', 'service_package_items', 'customer_packages', 'customer_package_balances', 'package_transactions']) {
+      assert(tables.includes(t), `tabela ${t} deve existir`);
+    }
+
+    const cols = db.prepare(`PRAGMA table_info(appointments)`).all().map((c) => c.name);
+    for (const c of ['payment_source', 'customer_package_id', 'package_balance_id', 'package_credit_status', 'package_quantity']) {
+      assert(cols.includes(c), `appointments deve ter coluna ${c}`);
+    }
+    const finCols = db.prepare(`PRAGMA table_info(financial_entries)`).all().map((c) => c.name);
+    assert(finCols.includes('customer_package_id'), 'financial_entries deve ter customer_package_id');
+
+    const marker = db.prepare("SELECT name FROM schema_migrations WHERE name = 'service_packages_v1'").get();
+    assert(marker, 'migração service_packages_v1 registrada em schema_migrations');
+  });
+});
+
+test('cria modelo de pacote com 2 serviços + validade + vínculo a veículo', () => {
+  withDb(() => {
+    serviceA = pickService();
+    serviceB = pickService();
+    if (serviceB.id === serviceA.id) {
+      serviceB = db.prepare(
+        "SELECT * FROM services WHERE active = 1 AND price_type = 'fixed' AND available_at_unit = 1 AND id != ? ORDER BY id ASC LIMIT 1"
+      ).get(serviceA.id);
+    }
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Lavagem Premium',
+      description: 'Pacote completo de lavagem',
+      price: 'R$ 149,90',
+      validity_days: 90,
+      is_vehicle_bound: true,
+      items: [
+        { service_id: serviceA.id, quantity: 4 },
+        { service_id: serviceB.id, quantity: 2 }
+      ]
+    }, 1);
+
+    assert(pkg && pkg.id > 0, 'pacote criado');
+    assert(pkg.price_cents === 14990, `preço em centavos (veio ${pkg.price_cents})`);
+    assert(pkg.validity_days === 90, 'validade de 90 dias');
+    assert(pkg.items.length === 2, '2 itens no pacote');
+    assert(pkg.items.some((i) => i.service_id === serviceA.id && i.quantity === 4), 'item do serviço A (4)');
+    assert(pkg.items.some((i) => i.service_id === serviceB.id && i.quantity === 2), 'item do serviço B (2)');
+  });
+});
+
+test('validações do modelo: preço inválido, itens vazios, serviço duplicado', () => {
+  withDb(() => {
+    let threw = null;
+    try {
+      packageService.createServicePackage(db, { name: 'Nome X', price: 'abc', items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    } catch (e) { threw = e; }
+    assert(threw && /preço/i.test(threw.message), 'preço inválido deve falhar');
+
+    threw = null;
+    try {
+      packageService.createServicePackage(db, { name: 'Nome X', price: '50', items: [] }, 1);
+    } catch (e) { threw = e; }
+    assert(threw && /serviço/i.test(threw.message), 'itens vazios devem falhar');
+
+    threw = null;
+    try {
+      packageService.createServicePackage(db, {
+        name: 'Nome X',
+        price: '50',
+        items: [{ service_id: serviceA.id, quantity: 1 }, { service_id: serviceA.id, quantity: 2 }]
+      }, 1);
+    } catch (e) { threw = e; }
+    assert(threw && /duas vezes/i.test(threw.message), 'serviço duplicado deve falhar');
+  });
+});
+
+test('venda: snapshots, saldos PURCHASE e entrada financeira única (cents → REAL)', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Kit Mensal',
+      price: '300,00',
+      validity_days: 30,
+      items: [
+        { service_id: serviceA.id, quantity: 2 },
+        { service_id: serviceB.id, quantity: 1 }
+      ]
+    }, 1);
+
+    const sold = packageService.sellPackage(db, {
+      package_id: pkg.id,
+      customer: { name: 'João Silva', phone: '(11) 97777-1234', email: 'joao@teste.com' },
+      vehicle: { brand: 'Fiat', model: 'Argo', plate: 'XYZ-9876', color: 'Prata', year: '2021', category: 'hatch' },
+      payment_method: 'pix',
+      purchased_at: todayStr(),
+      notes: 'Venda na loja'
+    }, 1);
+
+    assert(sold.id > 0, 'pacote vendido com id');
+    assert(sold.package_name_snapshot === 'Kit Mensal', 'snapshot do nome');
+    assert(sold.price_cents_snapshot === 30000, 'snapshot do preço');
+    assert(sold.purchase_price_cents === 30000, 'preço de venda = preço do pacote');
+    assert(sold.status === 'ACTIVE', 'status ACTIVE');
+    assert(sold.expires_at === toDateStr(addDays(todayStr(), 30)), 'expira em 30 dias');
+    assert(sold.customer && sold.customer.name === 'João Silva', 'cliente vinculado');
+    assert(sold.vehicle && sold.vehicle.plate === 'XYZ9876', 'veículo vinculado');
+    assert(sold.balances.length === 2, '2 saldos');
+    const balA = sold.balances.find((b) => b.service_id === serviceA.id);
+    assert(balA && balA.total === 2 && balA.available === 2, 'saldo A: total 2, disponível 2');
+
+    const stmt = packageService.getPackageStatement(db, sold.id);
+    const purchases = stmt.transactions.filter((t) => t.transaction_type === 'PURCHASE');
+    assert(purchases.length === 2, 'uma transação PURCHASE por serviço');
+    assert(purchases.every((t) => t.balance_before === 0 && t.balance_after === t.quantity), 'PURCHASE de 0 → quantity');
+
+    const entries = db.prepare('SELECT * FROM financial_entries WHERE customer_package_id = ?').all(sold.id);
+    assert(entries.length === 1, 'exatamente 1 entrada financeira (dedup)');
+    assert(entries[0].amount === 300, `entrada = 300 REAL (veio ${entries[0].amount})`);
+    assert(entries[0].type === 'entrada', 'tipo entrada');
+    assert(entries[0].service_name.includes('Kit Mensal'), 'service_name descreve o pacote');
+
+    /* venda repetida no MESMO customer_package não cria nova entrada */
+    const before = db.prepare('SELECT COUNT(*) AS n FROM financial_entries WHERE customer_package_id = ?').get(sold.id).n;
+    const second = packageService.sellPackage(db, { package_id: pkg.id, customer_id: sold.customer_id, payment_method: 'pix' }, 1);
+    assert(second.id !== sold.id, 'nova venda gera novo customer_package');
+    assert(second.customer_id === sold.customer_id, 'mesmo cliente reutilizado');
+    assert(db.prepare('SELECT COUNT(*) AS n FROM financial_entries WHERE customer_package_id = ?').get(second.id).n === 1, 'nova entrada para o novo pacote');
+    assert(before === 1, 'entrada da 1ª venda permanece única');
+  });
+});
+
+test('venda com desconto: preço de venda e entrada corretos; zero reais não gera entrada', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Com Desconto',
+      price: '200,00',
+      items: [{ service_id: serviceA.id, quantity: 3 }]
+    }, 1);
+
+    const sold = packageService.sellPackage(db, {
+      package_id: pkg.id,
+      customer: { name: 'Maria Oliveira', phone: '(11) 96666-2222' },
+      discount: '50,00',
+      payment_method: 'local'
+    }, 1);
+    assert(sold.discount_cents === 5000 && sold.purchase_price_cents === 15000, 'desconto de R$ 50 aplicado');
+    const entry = db.prepare('SELECT * FROM financial_entries WHERE customer_package_id = ?').get(sold.id);
+    assert(entry.amount === 150, 'entrada = R$ 150 (cents → REAL)');
+
+    const zeroPkg = packageService.createServicePackage(db, {
+      name: 'Cortesia',
+      price: '0,00',
+      items: [{ service_id: serviceB.id, quantity: 1 }]
+    }, 1);
+    const soldZero = packageService.sellPackage(db, { package_id: zeroPkg.id, customer: { name: 'Cortesia', phone: '(11) 95555-3333' } }, 1);
+    assert(soldZero.purchase_price_cents === 0, 'venda gratuita');
+    const zeroEntries = db.prepare('SELECT COUNT(*) AS n FROM financial_entries WHERE customer_package_id = ?').get(soldZero.id).n;
+    assert(zeroEntries === 0, 'valor zero não gera entrada financeira');
+  });
+});
+
+test('reserva: incrementa reservado, é idempotente e recusa saldo insuficiente', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Reserva Teste',
+      price: '100,00',
+      items: [{ service_id: serviceA.id, quantity: 1 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Reserva', phone: '(11) 94444-1111' } }, 1);
+    const balA = sold.balances.find((b) => b.service_id === serviceA.id);
+
+    const r1 = packageService.reservePackageCredit(db, {
+      customerPackageId: sold.id,
+      serviceId: serviceA.id,
+      quantity: 1,
+      appointmentId: 1001,
+      reason: 'Reserva de teste'
+    }, 1);
+    assert(r1.created === true, '1ª reserva criada');
+    assert(r1.reservation.transaction_type === 'RESERVE' && r1.reservation.balance_before === 1 && r1.reservation.balance_after === 0,
+      'RESERVE de available 1 → 0');
+
+    const r2 = packageService.reservePackageCredit(db, {
+      customerPackageId: sold.id,
+      serviceId: serviceA.id,
+      quantity: 1,
+      appointmentId: 1001,
+      reason: 'Repetida'
+    }, 1);
+    assert(r2.created === false, 'reserva repetida para o mesmo agendamento não duplica');
+
+    const balAfter = db.prepare('SELECT * FROM customer_package_balances WHERE id = ?').get(balA.id);
+    assert(Number(balAfter.reserved_quantity) === 1, `reservado = 1 (veio ${balAfter.reserved_quantity})`);
+
+    let threw = null;
+    try {
+      packageService.reservePackageCredit(db, {
+        customerPackageId: sold.id,
+        serviceId: serviceA.id,
+        quantity: 1,
+        appointmentId: 1002
+      }, 1);
+    } catch (e) { threw = e; }
+    assert(threw && /saldo insuficiente/i.test(threw.message), 'saldo esgotado deve recusar nova reserva');
+  });
+});
+
+test('consumo: reserva → consume; duplicado é no-op; status EXHAUSTED no fim', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Consumo Teste',
+      price: '100,00',
+      items: [{ service_id: serviceA.id, quantity: 1 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Consumo', phone: '(11) 93333-2222' } }, 1);
+    packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 2001, reason: 'reserva' }, 1);
+
+    const c1 = packageService.consumePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 2001, reason: 'conclusão' }, 1);
+    assert(c1.created === true, 'consumo criado');
+
+    const bal = db.prepare('SELECT * FROM customer_package_balances WHERE customer_package_id = ? AND service_id = ?')
+      .get(sold.id, serviceA.id);
+    assert(Number(bal.reserved_quantity) === 0 && Number(bal.consumed_quantity) === 1, 'consumido 1, reservado 0');
+
+    const c2 = packageService.consumePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 2001 }, 1);
+    assert(c2.created === false, 'consumo duplicado é no-op');
+
+    const refreshed = packageService.getCustomerPackage(db, sold.id);
+    assert(refreshed.status === 'EXHAUSTED', `status EXHAUSTED após consumir tudo (veio ${refreshed.status})`);
+
+    let threw = null;
+    try {
+      packageService.consumePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 2002 }, 1);
+    } catch (e) { threw = e; }
+    assert(threw && /reserva/i.test(threw.message), 'consumir sem reserva deve falhar');
+  });
+});
+
+test('liberação: reserve → release devolve saldo; no-op quando já liberado/consumido', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Release Teste',
+      price: '100,00',
+      items: [{ service_id: serviceA.id, quantity: 2 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Release', phone: '(11) 92222-1111' } }, 1);
+    const balA = sold.balances.find((b) => b.service_id === serviceA.id);
+
+    packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 3001 }, 1);
+    const rel = packageService.releasePackageCredit(db, { balanceId: balA.id, appointmentId: 3001, reason: 'cancelamento' }, 1);
+    assert(rel.created === true, 'release criado');
+
+    const bal = db.prepare('SELECT * FROM customer_package_balances WHERE id = ?').get(balA.id);
+    assert(Number(bal.reserved_quantity) === 0, 'reservado zerado após release');
+    assert(packageService.availableOf(bal) === 2, `disponível volta a 2 (veio ${packageService.availableOf(bal)})`);
+
+    const rel2 = packageService.releasePackageCredit(db, { balanceId: balA.id, appointmentId: 3001 }, 1);
+    assert(rel2.created === false, 'release duplicado é no-op');
+
+    /* consumido não pode ser liberado */
+    packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 3002 }, 1);
+    packageService.consumePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 3002 }, 1);
+    const relAfterConsume = packageService.releasePackageCredit(db, { balanceId: balA.id, appointmentId: 3002 }, 1);
+    assert(relAfterConsume.created === false, 'crédito já consumido não é liberado');
+  });
+});
+
+test('ajuste manual: motivo obrigatório, débito sem saldo falha, crédito soma', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Ajuste Teste',
+      price: '100,00',
+      items: [{ service_id: serviceA.id, quantity: 1 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Ajuste', phone: '(11) 91111-0000' } }, 1);
+
+    let threw = null;
+    try {
+      packageService.manualAdjustment(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, type: 'MANUAL_DEBIT', reason: 'x', userId: 1 });
+    } catch (e) { threw = e; }
+    assert(threw && /motivo/i.test(threw.message), 'débito sem motivo válido falha');
+
+    threw = null;
+    try {
+      packageService.manualAdjustment(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 5, type: 'MANUAL_DEBIT', reason: 'Débito indevido de teste' , userId: 1});
+    } catch (e) { threw = e; }
+    assert(threw && /saldo insuficiente/i.test(threw.message), 'débito acima do saldo falha');
+
+    const credited = packageService.manualAdjustment(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 2, type: 'MANUAL_CREDIT', reason: 'Cortesia de teste', userId: 1 });
+    const bal = credited.balances.find((b) => b.service_id === serviceA.id);
+    assert(bal.adjusted === 2 && bal.available === 3, `crédito manual: ajustado 2, disponível 3 (veio ${bal.available})`);
+
+    const debited = packageService.manualAdjustment(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, type: 'MANUAL_DEBIT', reason: 'Correção de saldo', userId: 1 });
+    const bal2 = debited.balances.find((b) => b.service_id === serviceA.id);
+    assert(bal2.consumed === 1 && bal2.available === 2, 'débito manual consumido e disponível reduzido');
+
+    const stmt = packageService.getPackageStatement(db, sold.id);
+    const manuals = stmt.transactions.filter((t) => ['MANUAL_DEBIT', 'MANUAL_CREDIT'].includes(t.transaction_type));
+    assert(manuals.length === 2, 'transações MANUAL_* registradas no histórico');
+  });
+});
+
+test('cobertura: pacote que não cobre todos os serviços selecionados é recusado', () => {
+  withDb(() => {
+    serviceC = db.prepare(
+      "SELECT * FROM services WHERE active = 1 AND id NOT IN (?, ?) ORDER BY id ASC LIMIT 1"
+    ).get(serviceA.id, serviceB.id);
+    assert(serviceC, 'terceiro serviço disponível para o teste');
+
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Cobertura Teste',
+      price: '100,00',
+      items: [{ service_id: serviceA.id, quantity: 5 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Cobertura', phone: '(11) 90000-9999' } }, 1);
+
+    let threw = null;
+    try {
+      packageService.validateCoverage(db, sold.id, [serviceA.id, serviceC.id]);
+    } catch (e) { threw = e; }
+    assert(threw && /não cobre todos os serviços selecionados/i.test(threw.message),
+      'mensagem "Este pacote não cobre todos os serviços selecionados."');
+
+    const ok = packageService.validateCoverage(db, sold.id, [serviceA.id]);
+    assert(ok && ok.balances.length === 1, 'cobertura total aceita');
+  });
+});
+
+test('expiração: novas reservas bloqueadas, reservas ativas preservadas, status EXPIRED', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Expira Teste',
+      price: '100,00',
+      validity_days: 1,
+      items: [{ service_id: serviceA.id, quantity: 2 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, {
+      package_id: pkg.id,
+      customer: { name: 'Expira', phone: '(11) 98888-7777' }
+    }, 1);
+
+    /* reserva feita enquanto o pacote estava válido permanece */
+    packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 4001 }, 1);
+    assert(packageService.getCustomerPackage(db, sold.id).status === 'ACTIVE', 'pacote válido reserva normalmente');
+
+    /* simula o vencimento (expira ontem) mantendo a reserva ativa */
+    db.prepare("UPDATE customer_packages SET expires_at = ? WHERE id = ?")
+      .run(toDateStr(addDays(new Date(), -1)), sold.id);
+
+    const stillValid = packageService.getCustomerPackage(db, sold.id);
+    assert(stillValid.status === 'ACTIVE' && stillValid.totals.reserved === 1,
+      `com reserva ativa o pacote vencido segue ACTIVE (veio ${stillValid.status})`);
+
+    /* nova reserva bloqueada */
+    let threw = null;
+    try {
+      packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 4002 }, 1);
+    } catch (e) { threw = e; }
+    assert(threw && /expirado/i.test(threw.message), 'reserva nova em pacote vencido é bloqueada');
+
+    /* libera a reserva → status EXPIRED */
+    packageService.releasePackageCredit(db, { balanceId: stillValid.balances[0].id, appointmentId: 4001, reason: 'libera para expirar' }, 1);
+    const expired = packageService.getCustomerPackage(db, sold.id);
+    assert(expired.status === 'EXPIRED', `sem reservas o vencido vira EXPIRED (veio ${expired.status})`);
+
+    let threwReserve = null;
+    try {
+      packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 4003 }, 1);
+    } catch (e) { threwReserve = e; }
+    assert(threwReserve && /expirado/i.test(threwReserve.message), 'EXPIRED não pode ser usado');
+  });
+});
+
+test('cancelamento: bloqueado com reserva ativa; CANCEL_PACKAGE após liberar', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Cancela Teste',
+      price: '100,00',
+      items: [{ service_id: serviceA.id, quantity: 3 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Cancela', phone: '(11) 97777-6666' } }, 1);
+
+    packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 5001 }, 1);
+    let threw = null;
+    try {
+      packageService.cancelCustomerPackage(db, sold.id, 'Quero cancelar', 1);
+    } catch (e) { threw = e; }
+    assert(threw && /reservado/i.test(threw.message), 'cancelar com saldo reservado é bloqueado');
+
+    const balA = sold.balances.find((b) => b.service_id === serviceA.id);
+    packageService.releasePackageCredit(db, { balanceId: balA.id, appointmentId: 5001, reason: 'liberar antes de cancelar' }, 1);
+
+    const cancelled = packageService.cancelCustomerPackage(db, sold.id, 'Cliente pediu cancelamento', 1);
+    assert(cancelled.status === 'CANCELLED', 'status CANCELLED');
+
+    const stmt = packageService.getPackageStatement(db, sold.id);
+    const cancels = stmt.transactions.filter((t) => t.transaction_type === 'CANCEL_PACKAGE');
+    assert(cancels.length === 1, 'uma transação CANCEL_PACKAGE');
+    assert(cancels[0].balance_before === 3 && cancels[0].balance_after === 0, 'CANCEL_PACKAGE zera o saldo remanescente');
+
+    let threwReserve = null;
+    try {
+      packageService.reservePackageCredit(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, appointmentId: 5002 }, 1);
+    } catch (e) { threwReserve = e; }
+    assert(threwReserve && /cancelado/i.test(threwReserve.message), 'CANCELLED não pode ser usado');
+  });
+});
+
+test('agendamento com pacote: criação RESERVED; conclusão CONSUMED sem lançamento financeiro; cancelamento RELEASED', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Pacote Agenda',
+      price: '120,00',
+      items: [{ service_id: serviceA.id, quantity: 2 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Agenda', phone: '(11) 96666-5555' } }, 1);
+
+    const created = callController(adminController.createAppointment, null,
+      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id }), { id: 1, name: 'Admin', role: 'owner' });
+    const appt = created.result;
+    assert(appt && appt.id, 'agendamento criado');
+    assert(appt.payment_source === 'PACKAGE', `payment_source PACKAGE (veio ${appt.payment_source})`);
+    assert(appt.customer_package_id === sold.id, 'customer_package_id vinculado');
+    assert(appt.package_credit_status === 'RESERVED', `crédito RESERVED (veio ${appt.package_credit_status})`);
+    assert(Number(appt.package_quantity) === 1, 'package_quantity = 1');
+    assert(Number(appt.total_price) === 0, 'agendamento PACKAGE sem valor a receber');
+
+    const afterReserve = packageService.getCustomerPackage(db, sold.id);
+    assert(afterReserve.totals.reserved === 1, `reservado 1 (veio ${afterReserve.totals.reserved})`);
+
+    /* conclusão */
+    const done = callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' }, { id: 1, name: 'Admin', role: 'owner' });
+    assert(done.result.status === 'completed', 'concluído');
+    assert(done.result.package_credit_status === 'CONSUMED', `crédito CONSUMED (veio ${done.result.package_credit_status})`);
+    const entry = db.prepare('SELECT * FROM financial_entries WHERE appointment_id = ?').get(appt.id);
+    assert(!entry, 'agendamento PACKAGE NÃO gera entrada financeira na conclusão');
+    const afterConsume = packageService.getCustomerPackage(db, sold.id);
+    assert(afterConsume.totals.consumed === 1, 'consumido 1');
+
+    /* novo agendamento + cancelamento libera */
+    const created2 = callController(adminController.createAppointment, null,
+      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id, customer_phone: '(11) 96666-5555', start_time: '10:00', appointment_date: dayPlus(2) }), { id: 1, name: 'Admin', role: 'owner' });
+    const appt2 = created2.result;
+    const cancelled = callController(adminController.updateStatus, { id: appt2.id }, { status: 'cancelled' }, { id: 1, name: 'Admin', role: 'owner' });
+    assert(cancelled.result.package_credit_status === 'RELEASED', `crédito RELEASED (veio ${cancelled.result.package_credit_status})`);
+    const afterRelease = packageService.getCustomerPackage(db, sold.id);
+    assert(afterRelease.totals.reserved === 0, 'reservado zerado após cancelamento');
+  });
+});
+
+test('agendamento com pacote: excluir agendamento libera o crédito', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Pacote Exclui',
+      price: '80,00',
+      items: [{ service_id: serviceA.id, quantity: 1 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Exclui', phone: '(11) 95555-4444' } }, 1);
+
+    const created = callController(adminController.createAppointment, null,
+      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id, start_time: '11:00' }), { id: 1, name: 'Admin', role: 'owner' });
+    const appt = created.result;
+    assert(appt.package_credit_status === 'RESERVED', 'reserva feita');
+
+    const del = callController(adminController.deleteAppointment, { id: appt.id }, null, { id: 1, name: 'Admin', role: 'owner' });
+    assert(del.result.success === true, 'agendamento excluído');
+
+    const refreshed = packageService.getCustomerPackage(db, sold.id);
+    assert(refreshed.totals.reserved === 0 && refreshed.totals.available === 1,
+      'crédito devolvido após exclusão do agendamento');
+    const gone = db.prepare('SELECT id FROM appointments WHERE id = ?').get(appt.id);
+    assert(!gone, 'agendamento realmente removido');
+  });
+});
+
+test('cliente reutilizado por telefone; busca por nome retorna o cliente', () => {
+  withDb(() => {
+    const found = customerService.findCustomerByPhone(db, '(11) 97777-1234');
+    assert(found && found.name === 'João Silva', 'findCustomerByPhone encontra João (criado na venda)');
+
+    const list = customerService.searchCustomers(db, 'João');
+    assert(list.some((c) => c.name === 'João Silva'), 'busca por nome encontra João');
+  });
+});
+
+/* ---------- Execução ---------- */
+
+(async () => {
+  console.log(`[testServicePackages] DATA_DIR isolado: ${TEST_DIR}`);
+  await run();
+  try {
+    if (db) closeTenantDatabase(tenantName);
+  } catch (err) {
+    console.error('  aviso ao fechar banco:', err.message);
+  }
+  console.log(`\n${tests.length - failures}/${tests.length} testes passaram.`);
+  if (!process.env.KEEP_DATA_DIR) {
+    try { fs.rmSync(TEST_DIR, { recursive: true, force: true }); } catch { /* keep for debugging */ }
+  }
+  process.exit(failures ? 1 : 0);
+})();

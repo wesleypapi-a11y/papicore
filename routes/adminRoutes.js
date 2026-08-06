@@ -18,6 +18,7 @@ const financialController = require('../controllers/financialController');
 const brandingController = require('../controllers/brandingController');
 const pixController = require('../controllers/pixController');
 const adminContractController = require('../controllers/adminContractController');
+const packageController = require('../controllers/packageController');
 
 const router = express.Router();
 
@@ -56,6 +57,26 @@ router.patch('/appointments/:id/status', adminController.updateStatus);
 router.patch('/appointments/:id/accept', adminController.acceptAppointment);
 router.patch('/appointments/:id/reject', adminController.rejectAppointment);
 router.delete('/appointments/:id', adminController.deleteAppointment);
+
+/* Pacotes de serviços (Fase 1). */
+router.get('/packages', packageController.listPackages);
+router.post('/packages', packageController.createPackage);
+router.put('/packages/:id', packageController.updatePackage);
+router.patch('/packages/:id/active', packageController.setPackageActive);
+
+router.get('/customer-packages', packageController.listCustomerPackages);
+router.get('/customer-packages/:id', packageController.getCustomerPackage);
+router.get('/customer-packages/:id/statement', packageController.getPackageStatement);
+router.post('/customer-packages', packageController.sellPackage);
+router.post('/customer-packages/:id/adjust', packageController.adjustCustomerPackage);
+router.post('/customer-packages/:id/cancel', packageController.cancelCustomerPackage);
+
+router.get('/customers', packageController.listCustomers);
+router.get('/customers/:id', packageController.getCustomer);
+
+/* Reserva/liberação de crédito do pacote em um agendamento. */
+router.post('/appointments/:id/package/reserve', packageController.reserveForAppointment);
+router.post('/appointments/:id/package/release', packageController.releaseForAppointment);
 
 router.get('/blocked-schedules', blockedScheduleController.list);
 router.post('/blocked-schedules', blockedScheduleController.create);
