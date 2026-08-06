@@ -9,6 +9,7 @@ const {
   getSettings
 } = require('../services/appointmentService');
 const packageService = require('../services/packageService');
+const { enqueueEvent, EVENTS } = require('../services/whatsappService');
 const {
   AppError,
   STATUSES,
@@ -19,6 +20,22 @@ const {
   weekRange,
   normalizePhone
 } = require('../utils/helpers');
+
+/* Link para o painel usado no placeholder {{LINK_ADMIN}}. */
+function adminLink(req) {
+  const host = req && req.get ? req.get('host') : '';
+  return host ? `${req.protocol || 'https'}://${host}/admin` : '/admin';
+}
+
+/* Enfileira uma mensagem automática SEM derrubar a operação de negócio:
+   falha de WhatsApp nunca desfaz agendamento/confirmação/conclusão. */
+function enqueueWhatsapp(eventKey, appointment, req) {
+  try {
+    enqueueEvent(eventKey, appointment, { linkAdmin: adminLink(req) });
+  } catch (err) {
+    console.error(`[whatsapp] Erro ao enfileirar ${eventKey} (agendamento ${appointment && appointment.id}):`, err.message);
+  }
+}
 
 const APPOINTMENT_SELECT = `
   SELECT a.*, u.name AS unit_name, m.name AS modality_name, m.slug AS modality_slug
@@ -125,6 +142,14 @@ function createAppointment(req, res) {
   const result = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(appointment.id);
+
+  /* WhatsApp automático: enfileira depois da operação, nunca antes. */
+  if (data.status === 'confirmed') {
+    enqueueWhatsapp(EVENTS.CONFIRMED, result, req);
+  } else if (data.status === 'completed') {
+    enqueueWhatsapp(result.payment_source === 'PACKAGE' ? EVENTS.COMPLETED_PACKAGE : EVENTS.COMPLETED, result, req);
+  }
+
   return res.status(201).json(result);
 }
 
@@ -261,6 +286,19 @@ function updateAppointment(req, res) {
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(existing.id);
 
+  /* WhatsApp automático — sempre depois da operação de negócio concluída:
+     reagendamento quando data/horário/unidade/modalidade mudou; conclusão com
+     pacote (saldo pós-consumo) ou sem pacote; cancelamento após liberar. */
+  if (moved && existing.status !== 'cancelled') {
+    enqueueWhatsapp(EVENTS.RESCHEDULED, appointment, req);
+  }
+  if (data.status === 'completed' && existing.status !== 'completed') {
+    enqueueWhatsapp(appointment.payment_source === 'PACKAGE' ? EVENTS.COMPLETED_PACKAGE : EVENTS.COMPLETED, appointment, req);
+  }
+  if (data.status === 'cancelled' && existing.status !== 'cancelled') {
+    enqueueWhatsapp(EVENTS.CANCELLED, appointment, req);
+  }
+
   return res.json(appointment);
 }
 
@@ -292,6 +330,19 @@ function updateStatus(req, res) {
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(req.params.id);
+
+  /* WhatsApp automático — depois da operação concluída e apenas em transição
+     de status (idempotência garante um único envio por evento/agendamento). */
+  if (status === 'confirmed' && existing.status !== 'confirmed') {
+    enqueueWhatsapp(EVENTS.CONFIRMED, appointment, req);
+  }
+  if (status === 'completed' && existing.status !== 'completed') {
+    enqueueWhatsapp(appointment.payment_source === 'PACKAGE' ? EVENTS.COMPLETED_PACKAGE : EVENTS.COMPLETED, appointment, req);
+  }
+  if (status === 'cancelled' && existing.status !== 'cancelled') {
+    enqueueWhatsapp(EVENTS.CANCELLED, appointment, req);
+  }
+
   return res.json(appointment);
 }
 
@@ -360,10 +411,7 @@ function acceptAppointment(req, res) {
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
     .get(req.params.id);
 
-  const { notifyAppointmentConfirmed } = require('../services/whatsappService');
-  notifyAppointmentConfirmed(appointment).catch((err) => {
-    console.error('[whatsapp] Erro na confirmação ao cliente:', err.message);
-  });
+  enqueueWhatsapp(EVENTS.CONFIRMED, appointment, req);
 
   return res.json(appointment);
 }

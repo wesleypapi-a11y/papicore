@@ -463,6 +463,7 @@
       finances: 'Financeiro',
       services: 'Serviços e valores',
       packages: 'Pacotes',
+      whatsapp: 'WhatsApp',
       units: 'Unidades',
       blocks: 'Bloqueios',
       modalities: 'Formas de atendimento',
@@ -479,6 +480,7 @@
       finances: renderFinances,
       services: renderServices,
       packages: renderPackages,
+      whatsapp: renderWhatsapp,
       units: renderUnits,
       blocks: renderBlocks,
       modalities: renderModalities,
@@ -2826,6 +2828,186 @@
       }
       hideLoader();
     });
+  }
+
+  /* ---------- whatsapp ---------- */
+
+  const WHATSAPP_EVENT_LABELS = {
+    APPOINTMENT_REQUESTED_CUSTOMER: 'Novo agendamento (cliente)',
+    APPOINTMENT_REQUESTED_STORE: 'Novo agendamento (loja)',
+    APPOINTMENT_CONFIRMED: 'Confirmação',
+    APPOINTMENT_CANCELLED: 'Cancelamento',
+    APPOINTMENT_RESCHEDULED: 'Reagendamento',
+    APPOINTMENT_COMPLETED: 'Conclusão',
+    APPOINTMENT_COMPLETED_PACKAGE: 'Conclusão — pacote'
+  };
+
+  const WHATSAPP_STATUS_LABELS = {
+    PENDING: 'Aguardando',
+    PROCESSING: 'Enviando',
+    SENT: 'Enviada',
+    FAILED: 'Falhou',
+    SIMULATED: 'Simulada',
+    CANCELLED: 'Cancelada'
+  };
+
+  const WHATSAPP_STATUS_CLASS = {
+    PENDING: 'pending',
+    PROCESSING: 'pending',
+    SENT: 'confirmed',
+    FAILED: 'rejected',
+    SIMULATED: 'pending',
+    CANCELLED: 'cancelled'
+  };
+
+  async function renderWhatsapp() {
+    const el = $('view-whatsapp');
+    const tab = state.whatsappTab || 'mensagens';
+    el.innerHTML = `
+      <div class="admin-header">
+        <div><h1>WhatsApp</h1><div class="sub">Mensagens automáticas e histórico de envios</div></div>
+      </div>
+      <div class="tabs">
+        <button type="button" class="tab ${tab === 'mensagens' ? 'active' : ''}" data-whatsapp-tab="mensagens">Mensagens automáticas</button>
+        <button type="button" class="tab ${tab === 'historico' ? 'active' : ''}" data-whatsapp-tab="historico">Histórico</button>
+      </div>
+      <div id="whatsappTabBody"></div>
+    `;
+    el.querySelectorAll('[data-whatsapp-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (state.whatsappTab === btn.dataset.whatsappTab) return;
+        state.whatsappTab = btn.dataset.whatsappTab;
+        renderWhatsapp();
+      });
+    });
+    if (tab === 'historico') await renderWhatsappHistory($('whatsappTabBody'));
+    else await renderWhatsappTemplates($('whatsappTabBody'));
+  }
+
+  async function renderWhatsappTemplates(container) {
+    container.innerHTML = '<div class="panel"><p class="sub">Carregando…</p></div>';
+    let status;
+    let templates;
+    try {
+      [status, templates] = await Promise.all([
+        api('/api/admin/whatsapp/status'),
+        api('/api/admin/whatsapp/templates')
+      ]);
+    } catch (e) {
+      container.innerHTML = `<div class="panel"><p class="error">${escapeHtml(e.message)}</p></div>`;
+      return;
+    }
+    const mode = status.mock
+      ? '<span class="badge badge-pending">Modo simulado</span>'
+      : '<span class="badge badge-confirmed">Envio real ativo</span>';
+    container.innerHTML = `
+      <div class="panel">
+        <h3 class="review-section-title">Modo de envio</h3>
+        <p class="sub" style="margin-top:0;">${mode} — enquanto o WhatsApp não estiver habilitado na plataforma, as mensagens são <strong>simuladas</strong> (registradas no histórico, sem envio real).</p>
+      </div>
+      <div class="panel">
+        <h3 class="review-section-title">Mensagens automáticas</h3>
+        <p class="sub" style="margin-top:0;">Ligue ou desligue cada evento e personalize o texto. Placeholders disponíveis: <code>{{CLIENTE_NOME}}</code>, <code>{{DATA_AGENDAMENTO}}</code>, <code>{{HORARIO_AGENDAMENTO}}</code>, <code>{{SERVICO}}</code>, <code>{{VEICULO}}</code>, <code>{{VALOR}}</code>, <code>{{SALDO_PACOTE}}</code>, <code>{{LINK_ADMIN}}</code> e outros.</p>
+        ${templates.map((t) => `
+          <div class="whatsapp-template" data-template="${escapeHtml(t.event_key)}">
+            <div class="whatsapp-template-head">
+              <strong>${escapeHtml(t.name)}</strong>
+              <label class="switch-row" style="margin:0;"><input type="checkbox" class="wtEnabled" data-event="${escapeHtml(t.event_key)}" ${t.enabled ? 'checked' : ''} /><span>${t.enabled ? 'Ativa' : 'Desativada'}</span></label>
+            </div>
+            <textarea class="wtContent" data-event="${escapeHtml(t.event_key)}" rows="6" placeholder="Texto da mensagem">${escapeHtml(t.content)}</textarea>
+            <div class="whatsapp-template-actions">
+              <button type="button" class="btn btn-ghost btn-sm wtRestore" data-event="${escapeHtml(t.event_key)}">Restaurar modelo padrão</button>
+              <button type="button" class="btn btn-primary btn-sm wtSave" data-event="${escapeHtml(t.event_key)}">Salvar</button>
+            </div>
+          </div>`).join('')}
+      </div>
+    `;
+    container.querySelectorAll('.wtSave').forEach((b) => b.addEventListener('click', () => saveWhatsappTemplate(b.dataset.event)));
+    container.querySelectorAll('.wtRestore').forEach((b) => b.addEventListener('click', () => restoreWhatsappTemplate(b.dataset.event)));
+    container.querySelectorAll('.wtEnabled').forEach((c) => c.addEventListener('change', () => saveWhatsappTemplate(c.dataset.event)));
+  }
+
+  async function saveWhatsappTemplate(eventKey) {
+    const box = document.querySelector(`[data-template="${eventKey}"]`);
+    if (!box) return;
+    const content = box.querySelector('.wtContent').value;
+    const enabled = box.querySelector('.wtEnabled').checked;
+    showLoader();
+    try {
+      await api(`/api/admin/whatsapp/templates/${encodeURIComponent(eventKey)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content, enabled })
+      });
+      toast('Modelo de mensagem salvo.', 'success');
+      renderWhatsappTemplates($('whatsappTabBody'));
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
+  }
+
+  async function restoreWhatsappTemplate(eventKey) {
+    showLoader();
+    try {
+      await api(`/api/admin/whatsapp/templates/${encodeURIComponent(eventKey)}/restore`, { method: 'POST' });
+      toast('Modelo padrão restaurado.', 'success');
+      renderWhatsappTemplates($('whatsappTabBody'));
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
+  }
+
+  async function renderWhatsappHistory(container) {
+    container.innerHTML = '<div class="panel"><p class="sub">Carregando…</p></div>';
+    let rows;
+    try {
+      rows = await api('/api/admin/whatsapp/outbox');
+    } catch (e) {
+      container.innerHTML = `<div class="panel"><p class="error">${escapeHtml(e.message)}</p></div>`;
+      return;
+    }
+    if (!rows.length) {
+      container.innerHTML = '<div class="panel"><div class="empty-state">Nenhuma mensagem ainda. As mensagens simuladas e os envios aparecem aqui.</div></div>';
+      return;
+    }
+    const rowsHtml = rows.map((r) => `
+      <tr>
+        <td class="muted">${escapeHtml(r.created_at || '')}</td>
+        <td><strong>${escapeHtml(r.customer_name || '—')}</strong><br/><span class="muted">${escapeHtml(r.recipient || '')}</span></td>
+        <td>${escapeHtml(WHATSAPP_EVENT_LABELS[r.event_key] || r.event_label || r.event_key)}</td>
+        <td class="wa-msg">${escapeHtml(r.message_text || '').replace(/\n/g, '<br/>')}</td>
+        <td><span class="badge badge-${WHATSAPP_STATUS_CLASS[r.status] || 'pending'}">${WHATSAPP_STATUS_LABELS[r.status] || r.status}</span></td>
+        <td>${r.attempts}</td>
+        <td class="muted">${escapeHtml(r.last_error || '—')}</td>
+        <td><div class="appointment-actions">
+          ${['FAILED', 'SIMULATED'].includes(r.status)
+            ? `<button type="button" class="btn btn-ghost btn-sm waResend" data-id="${r.id}">Reenviar</button>`
+            : ''}
+        </div></td>
+      </tr>`).join('');
+    container.innerHTML = `
+      <div class="panel">
+        <h3 class="review-section-title">Histórico de mensagens</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Data</th><th>Cliente / telefone</th><th>Evento</th><th>Mensagem</th><th>Status</th><th>Tentativas</th><th>Erro</th><th>Ações</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table></div>
+      </div>
+    `;
+    container.querySelectorAll('.waResend').forEach((b) => b.addEventListener('click', () => resendWhatsapp(b.dataset.id)));
+  }
+
+  async function resendWhatsapp(id) {
+    showLoader();
+    try {
+      await api(`/api/admin/whatsapp/outbox/${id}/resend`, { method: 'POST' });
+      toast('Mensagem reenviada.', 'success');
+      renderWhatsappHistory($('whatsappTabBody'));
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    hideLoader();
   }
 
   /* ---------- settings ---------- */

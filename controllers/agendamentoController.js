@@ -187,11 +187,20 @@ function checkAvailability(req, res) {
 
 function createAppointmentPublic(req, res) {
   const appointment = createAppointment(req.body);
-  const { notifyStoreNewAppointment } = require('../services/whatsappService');
-  notifyStoreNewAppointment(appointment).catch((err) => {
-    console.error('[whatsapp] Erro no aviso de novo agendamento:', err.message);
-  });
+  const { enqueueEvent, EVENTS } = require('../services/whatsappService');
+  try {
+    enqueueEvent(EVENTS.REQUESTED_CUSTOMER, appointment, { linkAdmin: adminLink(req) });
+    enqueueEvent(EVENTS.REQUESTED_STORE, appointment, { linkAdmin: adminLink(req) });
+  } catch (err) {
+    console.error('[whatsapp] Erro ao enfileirar avisos de novo agendamento:', err.message);
+  }
   return res.status(201).json(appointment);
+}
+
+/* Link para o painel usado no placeholder {{LINK_ADMIN}}. */
+function adminLink(req) {
+  const host = req && req.get ? req.get('host') : '';
+  return host ? `${req.protocol || 'https'}://${host}/admin` : '/admin';
 }
 
 function getByCode(req, res) {

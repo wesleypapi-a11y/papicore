@@ -1899,3 +1899,44 @@ html.lock-desktop .modal-actions {
   border-radius: 0;
 }
 html.lock-desktop .modal-actions .btn { flex: none; }
+
+/* ---------- WhatsApp (mensagens automáticas) ---------- */
+
+.whatsapp-template {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 14px;
+  background: var(--surface);
+}
+.whatsapp-template-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.whatsapp-template textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.whatsapp-template-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.wa-msg {
+  max-width: 340px;
+  white-space: normal;
+  word-break: break-word;
+}

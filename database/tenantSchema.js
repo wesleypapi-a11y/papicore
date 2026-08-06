@@ -332,6 +332,175 @@ CREATE INDEX IF NOT EXISTS idx_pt_appointment ON package_transactions (appointme
 CREATE INDEX IF NOT EXISTS idx_pt_created ON package_transactions (created_at);
 `;
 
+/* ---------- WhatsApp (mensagens automáticas) ---------- */
+
+/* Modelos de mensagem automática, editáveis por tenant. O banco é por
+   empresa, então event_key é único globalmente dentro do tenant. */
+const whatsappMessageTemplatesDDL = `
+CREATE TABLE IF NOT EXISTS whatsapp_message_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_key TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
+/* Fila de envio (outbox). A operação de negócio é sempre concluída primeiro;
+   só depois a mensagem é gravada aqui e processada em segundo plano. O
+   idempotency_key (evento + id do agendamento) impede envios duplicados. */
+const whatsappOutboxDDL = `
+CREATE TABLE IF NOT EXISTS whatsapp_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_key TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  recipient_kind TEXT NOT NULL DEFAULT 'customer',
+  payload_json TEXT NOT NULL,
+  message_text TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  scheduled_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  sent_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_woutbox_status ON whatsapp_outbox (status);
+CREATE INDEX IF NOT EXISTS idx_woutbox_created ON whatsapp_outbox (created_at);
+`;
+
+/* Modelos padrão NEUTROS: nunca contêm nome, telefone ou textos de cliente
+   específico (ex.: Torque Detail). Usam apenas os placeholders permitidos. */
+const WHATSAPP_DEFAULT_TEMPLATES = [
+  {
+    event_key: 'APPOINTMENT_REQUESTED_CUSTOMER',
+    name: 'Novo agendamento — aviso ao cliente',
+    content: [
+      '*{{EMPRESA_NOME}}*',
+      'Sua solicitação de agendamento foi recebida!',
+      '',
+      'Olá, {{CLIENTE_NOME}}!',
+      'Código: *{{CODIGO_AGENDAMENTO}}*',
+      'Data: *{{DATA_AGENDAMENTO}}*',
+      'Horário: *{{HORARIO_AGENDAMENTO}}*',
+      'Serviço: {{SERVICO}}',
+      'Veículo: {{VEICULO}}',
+      'Unidade: {{UNIDADE}}',
+      'Modalidade: {{MODALIDADE}}',
+      'Valor: *{{VALOR}}*',
+      '',
+      'Nossa equipe analisará a disponibilidade e entrará em contato para confirmar.'
+    ].join('\n')
+  },
+  {
+    event_key: 'APPOINTMENT_REQUESTED_STORE',
+    name: 'Novo agendamento — aviso à loja',
+    content: [
+      '*{{EMPRESA_NOME}} — novo agendamento recebido*',
+      '',
+      'Código: {{CODIGO_AGENDAMENTO}}',
+      'Cliente: {{CLIENTE_NOME}}',
+      'Serviço: {{SERVICO}}',
+      'Veículo: {{VEICULO}}',
+      'Unidade: {{UNIDADE}}',
+      'Modalidade: {{MODALIDADE}}',
+      'Data: {{DATA_AGENDAMENTO}}',
+      'Horário: {{HORARIO_AGENDAMENTO}}',
+      'Valor: {{VALOR}}',
+      '',
+      'Acesse o painel para confirmar: {{LINK_ADMIN}}'
+    ].join('\n')
+  },
+  {
+    event_key: 'APPOINTMENT_CONFIRMED',
+    name: 'Confirmação de agendamento',
+    content: [
+      '*{{EMPRESA_NOME}}*',
+      '*Seu agendamento foi confirmado!*',
+      '',
+      'Olá, {{CLIENTE_NOME}}!',
+      'Código: *{{CODIGO_AGENDAMENTO}}*',
+      'Data: *{{DATA_AGENDAMENTO}}*',
+      'Horário: *{{HORARIO_AGENDAMENTO}}*',
+      'Serviço: {{SERVICO}}',
+      'Veículo: {{VEICULO}}',
+      'Unidade: {{UNIDADE}}',
+      'Modalidade: {{MODALIDADE}}',
+      'Valor: *{{VALOR}}*',
+      '',
+      'Agradecemos a preferência e esperamos você!'
+    ].join('\n')
+  },
+  {
+    event_key: 'APPOINTMENT_CANCELLED',
+    name: 'Cancelamento de agendamento',
+    content: [
+      '*{{EMPRESA_NOME}}*',
+      'Seu agendamento foi cancelado.',
+      '',
+      'Olá, {{CLIENTE_NOME}}!',
+      'O agendamento *{{CODIGO_AGENDAMENTO}}* de {{DATA_AGENDAMENTO}} às {{HORARIO_AGENDAMENTO}} foi cancelado.',
+      '',
+      'Caso precise reagendar, é só entrar em contato conosco.'
+    ].join('\n')
+  },
+  {
+    event_key: 'APPOINTMENT_RESCHEDULED',
+    name: 'Reagendamento de agendamento',
+    content: [
+      '*{{EMPRESA_NOME}}*',
+      'Seu agendamento foi reagendado!',
+      '',
+      'Olá, {{CLIENTE_NOME}}!',
+      'Novo horário do agendamento *{{CODIGO_AGENDAMENTO}}*:',
+      'Data: *{{DATA_AGENDAMENTO}}*',
+      'Horário: *{{HORARIO_AGENDAMENTO}}*',
+      'Serviço: {{SERVICO}}',
+      'Veículo: {{VEICULO}}',
+      'Unidade: {{UNIDADE}}',
+      'Modalidade: {{MODALIDADE}}',
+      '',
+      'Qualquer dúvida, é só falar com a gente.'
+    ].join('\n')
+  },
+  {
+    event_key: 'APPOINTMENT_COMPLETED',
+    name: 'Agendamento concluído',
+    content: [
+      '*{{EMPRESA_NOME}}*',
+      '*Seu veículo está pronto!*',
+      '',
+      'Olá, {{CLIENTE_NOME}}!',
+      'O agendamento *{{CODIGO_AGENDAMENTO}}* foi concluído.',
+      'Serviço: {{SERVICO}}',
+      'Veículo: {{VEICULO}}',
+      'Valor: *{{VALOR}}*',
+      '',
+      'Obrigado pela preferência!'
+    ].join('\n')
+  },
+  {
+    event_key: 'APPOINTMENT_COMPLETED_PACKAGE',
+    name: 'Agendamento concluído — pacote',
+    content: [
+      '*{{EMPRESA_NOME}}*',
+      '*Seu veículo está pronto!*',
+      '',
+      'Olá, {{CLIENTE_NOME}}!',
+      'O agendamento *{{CODIGO_AGENDAMENTO}}* foi concluído.',
+      'Serviço: {{SERVICO}}',
+      'Veículo: {{VEICULO}}',
+      '',
+      'Saldo restante do seu pacote:',
+      '{{SALDO_PACOTE}}',
+      '',
+      'Obrigado pela preferência!'
+    ].join('\n')
+  }
+];
+
 /* ---------- Dados padrão ---------- */
 
 const SEED_MODALITIES = [
@@ -551,6 +720,23 @@ function migrateServicePackagesV1(db) {
   db.prepare("UPDATE appointments SET package_quantity = 0 WHERE package_quantity IS NULL").run();
 }
 
+/* WhatsApp (mensagens automáticas): tabelas já nascem em createTables; aqui
+   garantimos índices e o seed dos modelos padrão NEUTROS (sem sobrescrever
+   edições do tenant — INSERT OR IGNORE). Idempotente via schema_migrations. */
+function migrateWhatsappV1(db) {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_woutbox_status ON whatsapp_outbox (status);
+    CREATE INDEX IF NOT EXISTS idx_woutbox_created ON whatsapp_outbox (created_at);
+  `);
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO whatsapp_message_templates (event_key, name, content, enabled)
+     VALUES (?, ?, ?, 1)`
+  );
+  for (const t of WHATSAPP_DEFAULT_TEMPLATES) {
+    insert.run(t.event_key, t.name, t.content);
+  }
+}
+
 /* ---------- Aplicação do schema ---------- */
 
 function createTables(db) {
@@ -565,6 +751,8 @@ function createTables(db) {
   db.exec(customerPackagesDDL);
   db.exec(customerPackageBalancesDDL);
   db.exec(packageTransactionsDDL);
+  db.exec(whatsappMessageTemplatesDDL);
+  db.exec(whatsappOutboxDDL);
   db.exec(
     "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')))"
   );
@@ -669,6 +857,12 @@ function upgradeSchema(db) {
   if (!migrationApplied(db, 'service_packages_v1')) {
     migrateServicePackagesV1(db);
     markMigration(db, 'service_packages_v1');
+  }
+
+  /* WhatsApp (mensagens automáticas): seed dos modelos padrão + marco. */
+  if (!migrationApplied(db, 'whatsapp_v1')) {
+    migrateWhatsappV1(db);
+    markMigration(db, 'whatsapp_v1');
   }
 
   /* índices */
@@ -842,6 +1036,7 @@ module.exports = {
   SEED_MODALITIES,
   SEED_CATEGORIES,
   SEED_SERVICES,
+  WHATSAPP_DEFAULT_TEMPLATES,
   tableExists,
   columnNames,
   ensureColumn

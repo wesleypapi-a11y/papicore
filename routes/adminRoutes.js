@@ -19,6 +19,7 @@ const brandingController = require('../controllers/brandingController');
 const pixController = require('../controllers/pixController');
 const adminContractController = require('../controllers/adminContractController');
 const packageController = require('../controllers/packageController');
+const whatsappController = require('../controllers/whatsappController');
 
 const router = express.Router();
 
@@ -109,5 +110,13 @@ router.get('/financials/entries', financialController.list);
 router.post('/financials/entries', financialController.create);
 router.put('/financials/entries/:id', financialController.update);
 router.delete('/financials/entries/:id', financialController.remove);
+
+/* WhatsApp — mensagens automáticas e histórico. */
+router.get('/whatsapp/status', whatsappController.getStatus);
+router.get('/whatsapp/templates', whatsappController.listTemplates);
+router.put('/whatsapp/templates/:eventKey', whatsappController.updateTemplate);
+router.post('/whatsapp/templates/:eventKey/restore', whatsappController.restoreTemplate);
+router.get('/whatsapp/outbox', whatsappController.listOutbox);
+router.post('/whatsapp/outbox/:id/resend', whatsappController.resendOutbox);
 
 module.exports = router;
