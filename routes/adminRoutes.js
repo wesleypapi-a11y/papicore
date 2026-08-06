@@ -118,6 +118,7 @@ router.put('/whatsapp/templates/:eventKey', whatsappController.updateTemplate);
 router.post('/whatsapp/templates/:eventKey/restore', whatsappController.restoreTemplate);
 router.get('/whatsapp/outbox', whatsappController.listOutbox);
 router.post('/whatsapp/outbox/:id/resend', whatsappController.resendOutbox);
+router.get('/whatsapp/history', whatsappController.getHistory);
 
 /* WhatsApp — conexão (Evolution API). */
 router.get('/whatsapp/connection', whatsappController.getConnection);

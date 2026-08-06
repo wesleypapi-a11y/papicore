@@ -15,6 +15,7 @@
 const { getDb } = require('../database/tenantDatabase');
 const packageService = require('../services/packageService');
 const customerService = require('../services/customerService');
+const webhookService = require('../services/webhookService');
 const { AppError, parseCurrencyToCents } = require('../utils/helpers');
 
 const MANAGER_ROLES = ['owner', 'admin'];
@@ -92,6 +93,8 @@ function sellPackage(req, res) {
   }
 
   const cp = packageService.sellPackage(db, payload, req.user.id);
+  /* Webhook de saída da API pública. */
+  webhookService.fire(req, webhookService.WEBHOOK_EVENTS.PACKAGE_SOLD, webhookService.buildPackageSoldPayload(cp));
   return res.status(201).json(cp);
 }
 

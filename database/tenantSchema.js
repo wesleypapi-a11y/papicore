@@ -365,10 +365,33 @@ CREATE TABLE IF NOT EXISTS whatsapp_outbox (
   last_error TEXT,
   scheduled_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   sent_at TEXT,
+  processed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_woutbox_status ON whatsapp_outbox (status);
 CREATE INDEX IF NOT EXISTS idx_woutbox_created ON whatsapp_outbox (created_at);
+`;
+
+/* Histórico imutável de mensagens processadas (uma linha por envio com
+   status final). A outbox é a fila; aqui fica o registro para auditoria. */
+const whatsappMessageHistoryDDL = `
+CREATE TABLE IF NOT EXISTS whatsapp_message_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  outbox_id INTEGER,
+  event_key TEXT,
+  recipient TEXT,
+  recipient_kind TEXT NOT NULL DEFAULT 'customer',
+  message_text TEXT,
+  status TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  triggered_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  sent_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_whistory_created ON whatsapp_message_history (created_at);
+CREATE INDEX IF NOT EXISTS idx_whistory_event ON whatsapp_message_history (event_key);
+CREATE INDEX IF NOT EXISTS idx_whistory_status ON whatsapp_message_history (status);
 `;
 
 /* Modelos padrão NEUTROS: nunca contêm nome, telefone ou textos de cliente
@@ -737,6 +760,14 @@ function migrateWhatsappV1(db) {
   }
 }
 
+/* WhatsApp v2 — histórico imutável de mensagens + processed_at na outbox.
+   A tabela whatsapp_message_history já nasce em createTables (CREATE TABLE
+   IF NOT EXISTS); aqui garantimos a coluna processed_at em bancos antigos. */
+function migrateWhatsappV2(db) {
+  db.exec(whatsappMessageHistoryDDL);
+  ensureColumn(db, 'whatsapp_outbox', 'processed_at', 'TEXT');
+}
+
 /* ---------- Aplicação do schema ---------- */
 
 function createTables(db) {
@@ -753,6 +784,7 @@ function createTables(db) {
   db.exec(packageTransactionsDDL);
   db.exec(whatsappMessageTemplatesDDL);
   db.exec(whatsappOutboxDDL);
+  db.exec(whatsappMessageHistoryDDL);
   db.exec(
     "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')))"
   );
@@ -863,6 +895,12 @@ function upgradeSchema(db) {
   if (!migrationApplied(db, 'whatsapp_v1')) {
     migrateWhatsappV1(db);
     markMigration(db, 'whatsapp_v1');
+  }
+
+  /* WhatsApp v2: histórico imutável + processed_at na outbox. */
+  if (!migrationApplied(db, 'whatsapp_v2')) {
+    migrateWhatsappV2(db);
+    markMigration(db, 'whatsapp_v2');
   }
 
   /* índices */

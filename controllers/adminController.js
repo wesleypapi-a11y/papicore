@@ -10,6 +10,7 @@ const {
 } = require('../services/appointmentService');
 const packageService = require('../services/packageService');
 const { enqueueEvent, EVENTS } = require('../services/whatsappService');
+const webhookService = require('../services/webhookService');
 const {
   AppError,
   STATUSES,
@@ -149,6 +150,9 @@ function createAppointment(req, res) {
   } else if (data.status === 'completed') {
     enqueueWhatsapp(result.payment_source === 'PACKAGE' ? EVENTS.COMPLETED_PACKAGE : EVENTS.COMPLETED, result, req);
   }
+
+  /* Webhook de saída da API pública. */
+  webhookService.fire(req, webhookService.WEBHOOK_EVENTS.APPOINTMENT_CREATED, webhookService.buildAppointmentPayload(result));
 
   return res.status(201).json(result);
 }
@@ -299,6 +303,9 @@ function updateAppointment(req, res) {
     enqueueWhatsapp(EVENTS.CANCELLED, appointment, req);
   }
 
+  /* Webhook de saída da API pública. */
+  webhookService.fire(req, webhookService.WEBHOOK_EVENTS.APPOINTMENT_UPDATED, webhookService.buildAppointmentPayload(appointment));
+
   return res.json(appointment);
 }
 
@@ -341,6 +348,13 @@ function updateStatus(req, res) {
   }
   if (status === 'cancelled' && existing.status !== 'cancelled') {
     enqueueWhatsapp(EVENTS.CANCELLED, appointment, req);
+  }
+
+  /* Webhook de saída da API pública (só em transições reais de status). */
+  if (status === 'completed' && existing.status !== 'completed') {
+    webhookService.fire(req, webhookService.WEBHOOK_EVENTS.APPOINTMENT_COMPLETED, webhookService.buildAppointmentPayload(appointment));
+  } else if (status === 'cancelled' && existing.status !== 'cancelled') {
+    webhookService.fire(req, webhookService.WEBHOOK_EVENTS.APPOINTMENT_CANCELLED, webhookService.buildAppointmentPayload(appointment));
   }
 
   return res.json(appointment);

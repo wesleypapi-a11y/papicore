@@ -435,16 +435,26 @@
   }
 
   async function loadBase() {
-    const [units, modalities, services, categories] = await Promise.all([
+    const [units, modalities, services, categories, settings] = await Promise.all([
       api('/api/admin/units').catch(() => []),
       api('/api/admin/modalities').catch(() => []),
       api('/api/admin/services').catch(() => []),
-      api('/api/admin/service-categories').catch(() => [])
+      api('/api/admin/service-categories').catch(() => []),
+      api('/api/admin/settings').catch(() => null)
     ]);
     state.units = units;
     state.modalities = modalities;
     state.services = services;
     state.categories = categories;
+    state.settings = settings;
+    applyBrandName(settings && settings.company_name);
+  }
+
+  /* Nome da empresa do cliente (Configurações > Geral) no lugar do "PapiCore"
+     fixo no topo do menu do painel — cada tenant vê o próprio nome ali. */
+  function applyBrandName(name) {
+    const label = (name && String(name).trim()) || 'PapiCore';
+    document.querySelectorAll('#sidebar .brand-name').forEach((el) => { el.textContent = label; });
   }
 
   async function showView(name) {
@@ -2900,6 +2910,20 @@
     const classes = { connected: 'confirmed', connecting: 'pending', disconnected: 'cancelled', error: 'rejected' };
     const statusBadge = `<span class="badge badge-${classes[conn.status] || 'pending'}">${labels[conn.status] || conn.status}</span>`;
 
+    const providerBadge = conn.provider === 'evolution'
+      ? '<span class="badge badge-confirmed">Envio real (Evolution)</span>'
+      : '<span class="badge badge-pending">Modo simulado (MOCK)</span>';
+
+    const auditRows = [
+      ['Conectado em', conn.connected_at],
+      ['Última conexão', conn.last_connection],
+      ['Última desconexão', conn.last_disconnect],
+      ['QR gerado em', conn.last_qr_generated]
+    ].filter(([, v]) => v);
+    const timestampsHtml = auditRows.length
+      ? `<p class="sub" style="margin:10px 0 0;">${auditRows.map(([k, v]) => `${k}: <strong>${escapeHtml(v)}</strong>`).join(' &nbsp;•&nbsp; ')}</p>`
+      : '';
+
     let body = '';
     if (!conn.settings_configured) {
       body = `
@@ -2926,6 +2950,7 @@
           <h3 class="review-section-title">Escaneie o QR Code para conectar</h3>
           <p class="sub" style="margin-top:0;">Abra o WhatsApp no seu celular, toque em <strong>Menu (⋮) &gt; Aparelhos conectados &gt; Conectar um aparelho</strong> e escaneie o código abaixo. Ele expira em poucos minutos.</p>
           ${conn.qr ? `<div class="wa-qr-wrap"><img class="wa-qr" src="${escapeHtml(conn.qr)}" alt="QR Code do WhatsApp" /></div>` : '<p class="sub">Gerando QR Code… aguarde e recarregue a página.</p>'}
+          ${conn.mode === 'simulation' ? '<p class="sub">Este é um <strong>QR de simulação</strong> (MODO SIMULAÇÃO) — nenhuma conta real é usada enquanto a plataforma não liberar a Evolution.</p>' : ''}
           <div class="actions">
             <button type="button" class="btn btn-ghost waReconnect">Gerar novo QR</button>
             <button type="button" class="btn btn-ghost waRefresh">Atualizar status</button>
@@ -2953,7 +2978,8 @@
       </div>
       <div class="panel">
         <h3 class="review-section-title">Modo de envio</h3>
-        <p class="sub" style="margin-top:0;">${conn.mode === 'evolution' ? '<span class="badge badge-confirmed">Envio real ativo</span>' : '<span class="badge badge-pending">Modo simulado</span>'} — as mensagens configuradas em <em>Mensagens automáticas</em> só saem de verdade quando a conexão estiver ativa.</p>
+        <p class="sub" style="margin-top:0;">${providerBadge} — as mensagens configuradas em <em>Mensagens automáticas</em> só saem de verdade quando a conexão estiver ativa.</p>
+        ${timestampsHtml}
       </div>
     `;
 
@@ -3058,43 +3084,72 @@
     hideLoader();
   }
 
-  async function renderWhatsappHistory(container) {
+  async function renderWhatsappHistory(container, filters = {}) {
     container.innerHTML = '<div class="panel"><p class="sub">Carregando…</p></div>';
     let rows;
     try {
-      rows = await api('/api/admin/whatsapp/outbox');
+      const qs = new URLSearchParams(filters).toString();
+      rows = await api(`/api/admin/whatsapp/history${qs ? '?' + qs : ''}`);
     } catch (e) {
       container.innerHTML = `<div class="panel"><p class="error">${escapeHtml(e.message)}</p></div>`;
       return;
     }
     if (!rows.length) {
-      container.innerHTML = '<div class="panel"><div class="empty-state">Nenhuma mensagem ainda. As mensagens simuladas e os envios aparecem aqui.</div></div>';
+      container.innerHTML = `
+        <div class="panel">
+          <div class="empty-state">Nenhuma mensagem ainda. As mensagens simuladas e os envios aparecem aqui.</div>
+        </div>`;
       return;
     }
     const rowsHtml = rows.map((r) => `
       <tr>
         <td class="muted">${escapeHtml(r.created_at || '')}</td>
-        <td><strong>${escapeHtml(r.customer_name || '—')}</strong><br/><span class="muted">${escapeHtml(r.recipient || '')}</span></td>
-        <td>${escapeHtml(WHATSAPP_EVENT_LABELS[r.event_key] || r.event_label || r.event_key)}</td>
+        <td><strong>${escapeHtml(r.recipient || '—')}</strong><br/><span class="muted">${escapeHtml(WHATSAPP_EVENT_LABELS[r.event_key] || r.event_label || r.event_key)}</span></td>
         <td class="wa-msg">${escapeHtml(r.message_text || '').replace(/\n/g, '<br/>')}</td>
         <td><span class="badge badge-${WHATSAPP_STATUS_CLASS[r.status] || 'pending'}">${WHATSAPP_STATUS_LABELS[r.status] || r.status}</span></td>
         <td>${r.attempts}</td>
-        <td class="muted">${escapeHtml(r.last_error || '—')}</td>
+        <td class="muted">${escapeHtml(r.error || '—')}</td>
+        <td>${escapeHtml(r.sent_at || '—')}</td>
         <td><div class="appointment-actions">
-          ${['FAILED', 'SIMULATED'].includes(r.status)
-            ? `<button type="button" class="btn btn-ghost btn-sm waResend" data-id="${r.id}">Reenviar</button>`
+          ${['FAILED', 'SIMULATED'].includes(r.status) && r.outbox_id
+            ? `<button type="button" class="btn btn-ghost btn-sm waResend" data-id="${r.outbox_id}">Reenviar</button>`
             : ''}
         </div></td>
       </tr>`).join('');
+    const eventOptions = Object.entries(WHATSAPP_EVENT_LABELS)
+      .map(([k, v]) => `<option value="${k}" ${filters.event_key === k ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
     container.innerHTML = `
       <div class="panel">
         <h3 class="review-section-title">Histórico de mensagens</h3>
+        <div class="form-grid" style="grid-template-columns: 1fr 1fr auto; margin-bottom:12px;">
+          <div class="field">
+            <label for="waHistStatus">Status</label>
+            <select id="waHistStatus">
+              <option value="">Todos</option>
+              ${Object.entries(WHATSAPP_STATUS_LABELS).filter(([k]) => ['SENT', 'SIMULATED', 'FAILED'].includes(k))
+                .map(([k, v]) => `<option value="${k}" ${filters.status === k ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label for="waHistEvent">Evento</label>
+            <select id="waHistEvent"><option value="">Todos</option>${eventOptions}</select>
+          </div>
+          <div class="field" style="align-self:end;">
+            <button type="button" class="btn btn-ghost" id="waHistFilter">Filtrar</button>
+          </div>
+        </div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Data</th><th>Cliente / telefone</th><th>Evento</th><th>Mensagem</th><th>Status</th><th>Tentativas</th><th>Erro</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Data</th><th>Destinatário / evento</th><th>Mensagem</th><th>Status</th><th>Tentativas</th><th>Erro</th><th>Enviado em</th><th>Ações</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table></div>
       </div>
     `;
+    container.querySelector('#waHistFilter').addEventListener('click', () => {
+      renderWhatsappHistory(container, {
+        status: container.querySelector('#waHistStatus').value,
+        event_key: container.querySelector('#waHistEvent').value
+      });
+    });
     container.querySelectorAll('.waResend').forEach((b) => b.addEventListener('click', () => resendWhatsapp(b.dataset.id)));
   }
 
@@ -3211,7 +3266,9 @@
       };
       try {
         showLoader();
-        await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(body) });
+        const saved = await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(body) });
+        state.settings = saved;
+        applyBrandName(saved && saved.company_name);
         toast('Configurações salvas.', 'success');
       } catch (e) {
         toast(e.message, 'error');

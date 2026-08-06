@@ -55,9 +55,7 @@ const {
   listLeads,
   updateLeadStatus,
   getPlatformEmailSettings,
-  upsertPlatformEmailSettings,
-  getEvolutionSettings,
-  upsertEvolutionSettings
+  upsertPlatformEmailSettings
 } = require('../database/coreDatabase');
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
 const {
@@ -73,7 +71,6 @@ const { signToken } = require('./authController');
 const backupService = require('../services/backupService');
 const restoreService = require('../services/restoreService');
 const planService = require('../services/planService');
-const evolutionService = require('../services/evolutionService');
 const whatsappService = require('../services/whatsappService');
 
 const VALID_STATUSES = ['ACTIVE', 'SUSPENDED', 'TRIAL', 'ARCHIVED'];
@@ -1325,10 +1322,10 @@ function updateLeadStatusHandler(req, res) {
 /* ---------- WhatsApp / Evolution API ---------- */
 
 /* Visão geral do painel do desenvolvedor: settings globais + estado de cada
-   empresa. Os campos do whatsappService refletem o provider ativo (Evolution
-   ou Graph/MOCK). */
+   empresa. O provider ativo (mock | evolution) é decidido pelo
+   whatsappService — nunca pelo controller. */
 function whatsappOverviewHandler(req, res) {
-  const overview = evolutionService.overview();
+  const overview = whatsappService.overview();
   return res.json({
     ...overview,
     api_key: overview.api_key_defined ? '••••••••' : '',
@@ -1337,7 +1334,7 @@ function whatsappOverviewHandler(req, res) {
 }
 
 function getEvolutionSettingsHandler(req, res) {
-  const s = evolutionService.getEvolutionSettings();
+  const s = whatsappService.getWhatsappSettings();
   return res.json({
     enabled: s.enabled,
     server_url: s.server_url,
@@ -1347,7 +1344,7 @@ function getEvolutionSettingsHandler(req, res) {
 
 function updateEvolutionSettingsHandler(req, res) {
   const { enabled, server_url, api_key } = req.body || {};
-  const current = evolutionService.getEvolutionSettings();
+  const current = whatsappService.getWhatsappSettings();
 
   /* URL de servidor validada (http/https), api_key sem espaços. */
   const url = String(server_url == null ? current.server_url : server_url).trim();
@@ -1357,13 +1354,14 @@ function updateEvolutionSettingsHandler(req, res) {
 
   /* API key em branco mantém a salva (mesmo padrão da integração de e-mail). */
   const key = String(api_key == null || api_key === '' ? current.api_key : api_key).trim();
-  const updated = upsertEvolutionSettings({
+  const updated = whatsappService.updateWhatsappSettings({
     enabled: Boolean(enabled),
     server_url: url,
     api_key: key
   });
 
-  logActivity(req.user.id, null, 'EVOLUTION_SETTINGS_CHANGED', `Configuração Evolution API atualizada (enabled=${Boolean(enabled)})`);
+  whatsappService.logWhatsapp(whatsappService.LOG_ACTIONS.SETTINGS_UPDATED, null,
+    { enabled: Boolean(enabled) }, req.user && req.user.id);
   return res.json({
     enabled: updated.enabled,
     server_url: updated.server_url,
@@ -1373,13 +1371,13 @@ function updateEvolutionSettingsHandler(req, res) {
 
 async function testEvolutionConnectionHandler(req, res) {
   const body = req.body || {};
-  const current = evolutionService.getEvolutionSettings();
+  const current = whatsappService.getWhatsappSettings();
   const override = {
     enabled: true,
     server_url: String(body.server_url === undefined ? current.server_url : body.server_url).trim(),
     api_key: String(body.api_key === undefined ? current.api_key : body.api_key).trim()
   };
-  const result = await evolutionService.testConnection(override);
+  const result = await whatsappService.testConnection(override);
   return res.json(result);
 }
 
@@ -1389,33 +1387,65 @@ function requireTenant(id) {
   return tenant;
 }
 
-/* Estado de conexão de uma empresa (atualiza junto com a Evolution). */
+/* Estado de conexão de uma empresa (atualiza junto com o provider ativo). */
 async function getTenantWhatsappHandler(req, res) {
   const tenant = requireTenant(req.params.tenantId);
-  const state = evolutionService.connectionState(tenant);
-  await evolutionService.refreshStatus(tenant).catch(() => {});
-  const refreshed = evolutionService.connectionState(tenant);
+  const state = whatsappService.connectionState(tenant);
+  await whatsappService.refreshStatus(tenant).catch(() => {});
+  const refreshed = whatsappService.connectionState(tenant);
   return res.json(refreshed);
 }
 
 async function tenantWhatsappConnectHandler(req, res) {
   const tenant = requireTenant(req.params.tenantId);
-  const result = await evolutionService.connect(tenant, { force: false });
+  const result = await whatsappService.connect(tenant, { force: false });
   if (result.error) throw new AppError(502, result.message || 'Falha ao conectar.');
   return res.json(result);
 }
 
 async function tenantWhatsappReconnectHandler(req, res) {
   const tenant = requireTenant(req.params.tenantId);
-  const result = await evolutionService.reconnect(tenant);
+  const result = await whatsappService.reconnect(tenant);
   if (result.error) throw new AppError(502, result.message || 'Falha ao reconectar.');
   return res.json(result);
 }
 
 async function tenantWhatsappDisconnectHandler(req, res) {
   const tenant = requireTenant(req.params.tenantId);
-  const result = await evolutionService.disconnect(tenant);
+  const result = await whatsappService.disconnect(tenant);
   return res.json(result);
+}
+
+/* Histórico de mensagens de uma empresa (lê a outbox/histórico do tenant).
+   Segue o padrão de abertura em cache (fecha só se abriu agora). */
+function getTenantWhatsappHistoryHandler(req, res) {
+  const tenant = requireTenant(req.params.tenantId);
+  if (!tenant.database_name) throw new AppError(404, 'Empresa sem banco de dados.');
+  const wasOpen = isOpenTenantDatabase(tenant.database_name);
+  let db;
+  try {
+    db = openTenantDatabase(tenant.database_name);
+    if (!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='whatsapp_outbox'").get()) {
+      return res.json([]);
+    }
+    const rows = db.prepare('SELECT * FROM whatsapp_outbox ORDER BY id DESC LIMIT 100').all();
+    return res.json(rows.map((r) => ({
+      id: r.id,
+      event_key: r.event_key,
+      event_label: whatsappService.EVENT_LABELS[r.event_key] || r.event_key,
+      recipient: r.recipient,
+      recipient_kind: r.recipient_kind,
+      status: r.status,
+      attempts: r.attempts,
+      last_error: r.last_error,
+      message_text: r.message_text,
+      created_at: r.created_at,
+      sent_at: r.sent_at,
+      processed_at: r.processed_at || ''
+    })));
+  } finally {
+    if (db && !wasOpen) closeTenantDatabase(tenant.database_name);
+  }
 }
 
 module.exports = {
@@ -1479,5 +1509,6 @@ module.exports = {
   getTenantWhatsappHandler,
   tenantWhatsappConnectHandler,
   tenantWhatsappReconnectHandler,
-  tenantWhatsappDisconnectHandler
+  tenantWhatsappDisconnectHandler,
+  getTenantWhatsappHistoryHandler
 };

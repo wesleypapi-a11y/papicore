@@ -21,6 +21,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
@@ -438,9 +439,113 @@ CREATE TABLE IF NOT EXISTS evolution_instances (
   owner_name TEXT,
   qr_base64 TEXT,
   last_error TEXT,
+  connected_at TEXT,
+  last_connection TEXT,
+  last_disconnect TEXT,
+  last_qr_generated TEXT,
+  webhook_token TEXT,
+   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
+/*
+ * API pública (aba "API" do Painel do Desenvolvedor + /api/v1).
+ *
+ * Segurança:
+ *   - A chave pura nunca é gravada: só o hash SHA-256 (key_hash) + prefixo
+ *     (key_prefix, primeiros caracteres para exibição). O valor completo é
+ *     mostrado UMA ÚNICA VEZ na criação e depois só pode ser rotacionado.
+ *   - Scopes em JSON array (ex.: ["availability:read","appointments:write"]).
+ *   - Status da chave: ACTIVE, REVOKED, EXPIRED, SUSPENDED.
+ *   - O secret dos webhooks também é armazenado e usado para assinar o
+ *     payload com HMAC-SHA256 (X-PapiCore-Signature). O secret de cada
+ *     webhook é exibido uma única vez na criação; nunca reenviado.
+ *   - A outbox de webhooks fica aqui (central) para o dispatcher poder
+ *     processar a fila de todos os tenants sem abrir N bancos.
+ */
+const API_DDL = `
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  last_used_at TEXT,
+  expires_at TEXT,
+  created_by_user_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
+
+CREATE TABLE IF NOT EXISTS api_webhooks (
+  id TEXT PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  events TEXT NOT NULL DEFAULT '[]',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by_user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_webhooks_tenant ON api_webhooks(tenant_id);
+
+CREATE TABLE IF NOT EXISTS api_webhook_outbox (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL REFERENCES api_webhooks(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  event TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  last_http_status INTEGER,
+  last_error TEXT,
+  delivered_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_webhook_outbox_pending ON api_webhook_outbox(status, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  idempotency_key TEXT NOT NULL,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  request_sha TEXT NOT NULL,
+  status_code INTEGER,
+  response_body TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (tenant_id, api_key_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS api_request_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+  api_key_id TEXT REFERENCES api_keys(id) ON DELETE SET NULL,
+  key_prefix TEXT,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  status_code INTEGER,
+  duration_ms INTEGER,
+  ip TEXT,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_request_logs_tenant ON api_request_logs(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_api_request_logs_created ON api_request_logs(created_at);
 `;
 
 /* Planos iniciais da plataforma. Os valores ficam fixos aqui (migration/seed)
@@ -749,6 +854,7 @@ function openCore() {
   db.exec(SITE_CONTENT_DDL);
   db.exec(CONTRACTS_DDL);
   db.exec(EVOLUTION_DDL);
+  db.exec(API_DDL);
   migrateBrandingThemeColumns();
   migrateUserPasswordChangedAtColumn();
   runMigrations();
@@ -951,6 +1057,24 @@ function migrateEvolutionV1() {
   db.exec(EVOLUTION_DDL);
 }
 
+/* v2 — colunas de auditoria da conexão em evolution_instances
+   (connected_at, last_connection, last_disconnect, last_qr_generated,
+   webhook_token). Adicionadas de forma idempotente em bancos já existentes. */
+function migrateEvolutionV2() {
+  db.exec(EVOLUTION_DDL);
+  ensureColumn('evolution_instances', 'connected_at', 'TEXT');
+  ensureColumn('evolution_instances', 'last_connection', 'TEXT');
+  ensureColumn('evolution_instances', 'last_disconnect', 'TEXT');
+  ensureColumn('evolution_instances', 'last_qr_generated', 'TEXT');
+  ensureColumn('evolution_instances', 'webhook_token', 'TEXT');
+}
+
+/* v1 — tabelas da API pública (criadas também no boot via API_DDL; esta
+   migração garante bancos core já existentes). */
+function migratePublicApiV1() {
+  db.exec(API_DDL);
+}
+
 function runMigrations() {
   if (!migrationApplied('plans_v1')) {
     migratePlansV1();
@@ -975,6 +1099,14 @@ function runMigrations() {
   if (!migrationApplied('evolution_v1')) {
     migrateEvolutionV1();
     markMigrationApplied('evolution_v1');
+  }
+  if (!migrationApplied('evolution_v2')) {
+    migrateEvolutionV2();
+    markMigrationApplied('evolution_v2');
+  }
+  if (!migrationApplied('public_api_v1')) {
+    migratePublicApiV1();
+    markMigrationApplied('public_api_v1');
   }
 }
 
@@ -1615,6 +1747,294 @@ function listLogs(limit = 100) {
   return db.prepare('SELECT * FROM activity_logs ORDER BY id DESC LIMIT ?').all(limit);
 }
 
+/* ---------- API pública ---------- */
+
+const API_KEY_STATUSES = ['ACTIVE', 'REVOKED', 'EXPIRED', 'SUSPENDED'];
+
+/* Gera uma chave de API no formato pk_live_<24 bytes base64url>. Retorna o
+   valor puro (exibido uma única vez), o hash SHA-256 e o prefixo de exibição. */
+function generateApiKey() {
+  const secret = crypto.randomBytes(24).toString('base64url');
+  const apiKey = `pk_live_${secret}`;
+  return {
+    apiKey,
+    keyHash: sha256hex(apiKey),
+    keyPrefix: apiKey.slice(0, 12)
+  };
+}
+
+function sha256hex(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+/* Gera um secret aleatório para assinatura HMAC de webhook. */
+function generateWebhookSecret() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+function createApiKey(data) {
+  db.prepare(
+    `INSERT INTO api_keys (id, tenant_id, name, key_hash, key_prefix, scopes, status, expires_at, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    data.id,
+    data.tenant_id,
+    data.name,
+    data.key_hash,
+    data.key_prefix,
+    JSON.stringify(data.scopes || []),
+    data.status || 'ACTIVE',
+    data.expires_at || null,
+    data.created_by_user_id ?? null
+  );
+  return getApiKeyById(data.id);
+}
+
+function getApiKeyById(id) {
+  return db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id);
+}
+
+function getApiKeyByHash(keyHash) {
+  return db.prepare('SELECT * FROM api_keys WHERE key_hash = ?').get(keyHash);
+}
+
+function listApiKeys({ tenantId, limit = 200 } = {}) {
+  const rows = tenantId
+    ? db.prepare('SELECT * FROM api_keys WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?').all(tenantId, limit)
+    : db.prepare('SELECT * FROM api_keys ORDER BY created_at DESC LIMIT ?').all(limit);
+  return rows.map(sanitizeApiKey);
+}
+
+/* Chaves + nome da empresa (painel do desenvolvedor). */
+function listApiKeysAll({ limit = 200 } = {}) {
+  return db
+    .prepare(
+      `SELECT k.*, t.name AS tenant_name, t.slug AS tenant_slug
+       FROM api_keys k LEFT JOIN tenants t ON t.id = k.tenant_id
+       ORDER BY k.created_at DESC LIMIT ?`
+    )
+    .all(limit)
+    .map(sanitizeApiKey);
+}
+
+function sanitizeApiKey(row) {
+  return { ...row, key_hash: undefined };
+}
+
+function updateApiKey(id, fields) {
+  /* key_hash/key_prefix são atualizados apenas na rotação (nunca via PATCH
+     do painel, que restringe os campos aceitos no controller). */
+  const allowed = ['name', 'scopes', 'status', 'expires_at', 'key_hash', 'key_prefix'];
+  const sets = [];
+  const params = [];
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(key === 'scopes' ? JSON.stringify(fields[key]) : fields[key]);
+    }
+  }
+  if (!sets.length) return getApiKeyById(id);
+  sets.push("updated_at = datetime('now', 'localtime')");
+  params.push(id);
+  db.prepare(`UPDATE api_keys SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getApiKeyById(id);
+}
+
+function deleteApiKey(id) {
+  db.prepare('DELETE FROM api_keys WHERE id = ?').run(id);
+}
+
+/* Atualiza last_used_at SEM gravar na audit trail (evita ruído). */
+function touchApiKey(id) {
+  db.prepare("UPDATE api_keys SET last_used_at = datetime('now', 'localtime') WHERE id = ?").run(id);
+}
+
+function countApiKeysByTenant(tenantId) {
+  return db.prepare('SELECT COUNT(*) AS total FROM api_keys WHERE tenant_id = ?').get(tenantId).total;
+}
+
+/* ---------- Webhooks da API ---------- */
+
+function createApiWebhook(data) {
+  db.prepare(
+    `INSERT INTO api_webhooks (id, tenant_id, name, url, secret, events, active, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    data.id,
+    data.tenant_id,
+    data.name,
+    data.url,
+    data.secret,
+    JSON.stringify(data.events || []),
+    data.active === undefined ? 1 : data.active ? 1 : 0,
+    data.created_by_user_id ?? null
+  );
+  return getApiWebhookById(data.id);
+}
+
+function getApiWebhookById(id) {
+  return db.prepare('SELECT * FROM api_webhooks WHERE id = ?').get(id);
+}
+
+function listApiWebhooks({ tenantId } = {}) {
+  if (tenantId) {
+    return db.prepare('SELECT * FROM api_webhooks WHERE tenant_id = ? ORDER BY created_at DESC').all(tenantId);
+  }
+  return db.prepare('SELECT * FROM api_webhooks ORDER BY created_at DESC').all();
+}
+
+function updateApiWebhook(id, fields) {
+  const allowed = ['name', 'url', 'events', 'active', 'secret'];
+  const sets = [];
+  const params = [];
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(key === 'events' ? JSON.stringify(fields[key]) : fields[key]);
+    }
+  }
+  if (!sets.length) return getApiWebhookById(id);
+  sets.push("updated_at = datetime('now', 'localtime')");
+  params.push(id);
+  db.prepare(`UPDATE api_webhooks SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  return getApiWebhookById(id);
+}
+
+function deleteApiWebhook(id) {
+  db.prepare('DELETE FROM api_webhooks WHERE id = ?').run(id);
+}
+
+function apiWebhookMatches(webhook, event) {
+  const events = JSON.parse(webhook.events || '[]');
+  return webhook.active === 1 && events.includes(event);
+}
+
+/* ---------- Outbox de webhooks ---------- */
+
+function insertWebhookOutbox(data) {
+  db.prepare(
+    `INSERT INTO api_webhook_outbox
+       (id, webhook_id, tenant_id, event, payload, signature, status, next_attempt_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?)`
+  ).run(
+    data.id,
+    data.webhook_id,
+    data.tenant_id,
+    data.event,
+    data.payload,
+    data.signature,
+    data.next_attempt_at || new Date().toISOString()
+  );
+  return data.id;
+}
+
+function getWebhookOutboxById(id) {
+  return db.prepare('SELECT * FROM api_webhook_outbox WHERE id = ?').get(id);
+}
+
+function listWebhookOutbox({ tenantId, limit = 100 } = {}) {
+  const rows = tenantId
+    ? db.prepare('SELECT * FROM api_webhook_outbox WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?').all(tenantId, limit)
+    : db.prepare('SELECT * FROM api_webhook_outbox ORDER BY created_at DESC LIMIT ?').all(limit);
+  return rows.map((r) => ({ ...r, payload: undefined }));
+}
+
+/* Linhas prontas para nova tentativa (PENDING e next_attempt_at <= agora). */
+function listWebhookOutboxDue(nowIso, limit = 25) {
+  return db
+    .prepare(
+      `SELECT * FROM api_webhook_outbox
+       WHERE status = 'PENDING' AND next_attempt_at <= ?
+       ORDER BY next_attempt_at ASC LIMIT ?`
+    )
+    .all(nowIso, limit);
+}
+
+function countWebhookOutboxPending() {
+  return db.prepare("SELECT COUNT(*) AS total FROM api_webhook_outbox WHERE status = 'PENDING'").get().total;
+}
+
+function claimWebhookOutbox(id) {
+  const res = db.prepare(
+    `UPDATE api_webhook_outbox
+     SET status = 'PROCESSING', attempts = attempts + 1, updated_at = datetime('now', 'localtime')
+     WHERE id = ? AND status = 'PENDING'`
+  ).run(id);
+  return res.changes > 0;
+}
+
+function markWebhookOutboxResult(id, fields) {
+  const sets = [];
+  const params = [];
+  for (const key of ['status', 'last_http_status', 'last_error', 'delivered_at', 'next_attempt_at']) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  sets.push("updated_at = datetime('now', 'localtime')");
+  params.push(id);
+  db.prepare(`UPDATE api_webhook_outbox SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+}
+
+/* ---------- Idempotência da API ---------- */
+
+function getApiIdempotencyKey(tenantId, apiKeyId, idempotencyKey) {
+  return db
+    .prepare('SELECT * FROM api_idempotency_keys WHERE tenant_id = ? AND api_key_id = ? AND idempotency_key = ?')
+    .get(tenantId, apiKeyId, idempotencyKey);
+}
+
+function insertApiIdempotencyKey(data) {
+  db.prepare(
+    `INSERT INTO api_idempotency_keys (tenant_id, api_key_id, idempotency_key, method, path, request_sha)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(data.tenant_id, data.api_key_id, data.idempotency_key, data.method, data.path, data.request_sha);
+}
+
+function completeApiIdempotencyKey(id, { statusCode, responseBody }) {
+  db.prepare('UPDATE api_idempotency_keys SET status_code = ?, response_body = ? WHERE id = ?')
+    .run(statusCode, responseBody, id);
+}
+
+/* ---------- Logs de requisições da API ---------- */
+
+function insertApiRequestLog(data) {
+  db.prepare(
+    `INSERT INTO api_request_logs
+       (tenant_id, api_key_id, key_prefix, method, path, status_code, duration_ms, ip, user_agent)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    data.tenant_id,
+    data.api_key_id || null,
+    data.key_prefix || null,
+    data.method,
+    data.path,
+    data.status_code || null,
+    data.duration_ms || null,
+    data.ip || null,
+    data.user_agent ? String(data.user_agent).slice(0, 200) : null
+  );
+}
+
+function listApiRequestLogs({ tenantId, limit = 100, offset = 0 } = {}) {
+  const rows = tenantId
+    ? db.prepare('SELECT * FROM api_request_logs WHERE tenant_id = ? ORDER BY id DESC LIMIT ? OFFSET ?').all(tenantId, limit, offset)
+    : db.prepare('SELECT * FROM api_request_logs ORDER BY id DESC LIMIT ? OFFSET ?').all(limit, offset);
+  return rows.map((r) => ({ ...r, api_key_id: undefined }));
+}
+
+function listApiRequestLogsAll({ limit = 100, offset = 0 } = {}) {
+  return db
+    .prepare(
+      `SELECT l.*, t.name AS tenant_name, t.slug AS tenant_slug
+       FROM api_request_logs l LEFT JOIN tenants t ON t.id = l.tenant_id
+       ORDER BY l.id DESC LIMIT ? OFFSET ?`
+    )
+    .all(limit, offset)
+    .map((r) => ({ ...r, api_key_id: undefined }));
+}
+
 /* ---------- Backups ---------- */
 
 const BACKUP_RUN_FIELDS = [
@@ -2202,6 +2622,11 @@ function getEvolutionInstanceByDatabaseName(databaseName) {
   return db.prepare('SELECT * FROM evolution_instances WHERE database_name = ?').get(databaseName);
 }
 
+function getEvolutionInstanceByInstanceName(instanceName) {
+  if (!String(instanceName || '').trim()) return null;
+  return db.prepare('SELECT * FROM evolution_instances WHERE instance_name = ?').get(String(instanceName).trim());
+}
+
 function upsertEvolutionInstance(tenantId, fields) {
   const existing = getEvolutionInstance(tenantId);
   const merged = { ...(existing || {}), ...fields };
@@ -2210,23 +2635,32 @@ function upsertEvolutionInstance(tenantId, fields) {
       `UPDATE evolution_instances SET
          database_name = ?, instance_name = ?, status = ?, owner_number = ?,
          owner_name = ?, qr_base64 = ?, last_error = ?,
+         connected_at = ?, last_connection = ?, last_disconnect = ?,
+         last_qr_generated = ?, webhook_token = ?,
          updated_at = datetime('now', 'localtime')
        WHERE tenant_id = ?`
     ).run(
       merged.database_name, merged.instance_name, merged.status,
       merged.owner_number || null, merged.owner_name || null,
-      merged.qr_base64 || null, merged.last_error || null, tenantId
+      merged.qr_base64 || null, merged.last_error || null,
+      merged.connected_at || null, merged.last_connection || null,
+      merged.last_disconnect || null, merged.last_qr_generated || null,
+      merged.webhook_token || null, tenantId
     );
     return getEvolutionInstance(tenantId);
   }
   const info = db.prepare(
     `INSERT INTO evolution_instances
-       (tenant_id, database_name, instance_name, status, owner_number, owner_name, qr_base64, last_error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       (tenant_id, database_name, instance_name, status, owner_number, owner_name, qr_base64, last_error,
+        connected_at, last_connection, last_disconnect, last_qr_generated, webhook_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     tenantId, merged.database_name, merged.instance_name, merged.status,
     merged.owner_number || null, merged.owner_name || null,
-    merged.qr_base64 || null, merged.last_error || null
+    merged.qr_base64 || null, merged.last_error || null,
+    merged.connected_at || null, merged.last_connection || null,
+    merged.last_disconnect || null, merged.last_qr_generated || null,
+    merged.webhook_token || null
   );
   return getEvolutionInstance(info.lastInsertRowid);
 }
@@ -2342,6 +2776,39 @@ module.exports = {
   /* logs */
   logActivity,
   listLogs,
+  /* API pública */
+  API_KEY_STATUSES,
+  generateApiKey,
+  sha256hex,
+  generateWebhookSecret,
+  createApiKey,
+  getApiKeyById,
+  getApiKeyByHash,
+  listApiKeys,
+  listApiKeysAll,
+  updateApiKey,
+  deleteApiKey,
+  touchApiKey,
+  countApiKeysByTenant,
+  createApiWebhook,
+  getApiWebhookById,
+  listApiWebhooks,
+  updateApiWebhook,
+  deleteApiWebhook,
+  apiWebhookMatches,
+  insertWebhookOutbox,
+  getWebhookOutboxById,
+  listWebhookOutbox,
+  listWebhookOutboxDue,
+  countWebhookOutboxPending,
+  claimWebhookOutbox,
+  markWebhookOutboxResult,
+  getApiIdempotencyKey,
+  insertApiIdempotencyKey,
+  completeApiIdempotencyKey,
+  insertApiRequestLog,
+  listApiRequestLogs,
+  listApiRequestLogsAll,
   /* backups */
   insertBackupRun,
   updateBackupRun,
@@ -2398,6 +2865,7 @@ module.exports = {
   upsertEvolutionSettings,
   getEvolutionInstance,
   getEvolutionInstanceByDatabaseName,
+  getEvolutionInstanceByInstanceName,
   upsertEvolutionInstance,
   deleteEvolutionInstance
 };

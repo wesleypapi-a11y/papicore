@@ -15,6 +15,7 @@ const developerController = require('../controllers/developerController');
 const brandingController = require('../controllers/brandingController');
 const siteContentController = require('../controllers/siteContentController');
 const contractController = require('../controllers/developerContractController');
+const apiKeyController = require('../controllers/apiKeyController');
 const { requireDeveloper } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -74,6 +75,7 @@ router.get('/whatsapp/settings', developerController.getEvolutionSettingsHandler
 router.put('/whatsapp/settings', developerController.updateEvolutionSettingsHandler);
 router.post('/whatsapp/test-connection', developerController.testEvolutionConnectionHandler);
 router.get('/whatsapp/tenants/:tenantId', developerController.getTenantWhatsappHandler);
+router.get('/whatsapp/tenants/:tenantId/history', developerController.getTenantWhatsappHistoryHandler);
 router.post('/whatsapp/tenants/:tenantId/connect', developerController.tenantWhatsappConnectHandler);
 router.post('/whatsapp/tenants/:tenantId/reconnect', developerController.tenantWhatsappReconnectHandler);
 router.post('/whatsapp/tenants/:tenantId/disconnect', developerController.tenantWhatsappDisconnectHandler);
@@ -179,5 +181,24 @@ router.put('/contract-templates/:id', contractController.updateTemplateHandler);
 router.post('/contract-templates/:id/duplicate', contractController.duplicateTemplateHandler);
 router.post('/contract-templates/:id/default', contractController.setTemplateDefaultHandler);
 router.post('/contract-templates/:id/active', contractController.setTemplateActiveHandler);
+
+/* API pública — chaves, webhooks e logs (aba "API" do painel). */
+router.get('/api/overview', apiKeyController.apiOverviewHandler);
+
+router.get('/api/keys', apiKeyController.listKeysHandler);
+router.post('/api/keys', apiKeyController.createKeyHandler);
+router.post('/api/keys/:id/rotate', apiKeyController.rotateKeyHandler);
+router.patch('/api/keys/:id', apiKeyController.updateKeyHandler);
+router.delete('/api/keys/:id', apiKeyController.deleteKeyHandler);
+
+router.get('/api/webhooks', apiKeyController.listWebhooksHandler);
+router.post('/api/webhooks', apiKeyController.createWebhookHandler);
+router.put('/api/webhooks/:id', apiKeyController.updateWebhookHandler);
+router.delete('/api/webhooks/:id', apiKeyController.deleteWebhookHandler);
+router.post('/api/webhooks/:id/test', apiKeyController.testWebhookHandler);
+router.post('/api/webhooks/outbox/:outboxId/redeliver', apiKeyController.redeliverWebhookHandler);
+
+router.get('/api/webhooks/logs', apiKeyController.listWebhookLogsHandler);
+router.get('/api/logs', apiKeyController.listRequestLogsHandler);
 
 module.exports = router;

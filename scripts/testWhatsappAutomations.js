@@ -361,9 +361,12 @@ test('idempotência: duplo clique na conclusão não duplica o envio', async () 
 
 test('falha de envio NÃO desfaz a conclusão (outbox fica FAILED, agendamento concluído)', async () => {
   const originalFetch = global.fetch;
+  /* Força o provider real (Evolution) contra um servidor fake para o envio
+     falhar de verdade — o MOCK nunca falha por construção. */
   process.env.WHATSAPP_ENABLED = 'true';
-  process.env.WHATSAPP_TOKEN = 'token-invalido';
-  process.env.WHATSAPP_PHONE_NUMBER_ID = 'id-invalido';
+  process.env.WHATSAPP_PROVIDER = 'evolution';
+  process.env.WHATSAPP_MAX_RETRIES = '1';
+  core.upsertEvolutionSettings({ enabled: true, server_url: 'http://127.0.0.1:9999', api_key: 'test-key' });
   global.fetch = async () => ({
     ok: false,
     status: 400,
@@ -389,8 +392,9 @@ test('falha de envio NÃO desfaz a conclusão (outbox fica FAILED, agendamento c
     assert(entry, 'entrada financeira NÃO é desfeita pela falha de WhatsApp');
   } finally {
     process.env.WHATSAPP_ENABLED = 'false';
-    delete process.env.WHATSAPP_TOKEN;
-    delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    delete process.env.WHATSAPP_PROVIDER;
+    delete process.env.WHATSAPP_MAX_RETRIES;
+    core.upsertEvolutionSettings({ enabled: false });
     global.fetch = originalFetch;
   }
 });

@@ -64,6 +64,8 @@ const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const developerRoutes = require('./routes/developerRoutes');
 const commercialRoutes = require('./routes/commercialRoutes');
+const publicApiRoutes = require('./routes/publicApiRoutes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
 
@@ -150,6 +152,34 @@ app.use('/api/developer', developerRoutes);
    publicRoutes, cujo domainTenantMiddleware bloquearia (404) qualquer
    requisição vinda de um host sem tenant cadastrado — como papicore.com.br. */
 app.use('/api/public', commercialRoutes);
+
+/* Webhooks da Evolution API: rota pública sem auth/tenant, a validação é
+   feita por token dentro do whatsappService. Registrada antes de
+   resolveTenantByHost para não depender do domínio/host da requisição. */
+app.use('/api/webhooks/whatsapp', webhookRoutes);
+
+/* API pública /api/v1 — autenticada por chave de API. Registrada antes de
+   publicRoutes: o tenant vem da chave (apiKeyMiddleware), NÃO do domínio da
+   requisição, então não pode passar pelo domainTenantMiddleware. */
+app.use('/api/v1', publicApiRoutes);
+
+/* Documentação interativa da API pública (ReDoc). Pública e sem tenant —
+   apenas a spec de /api/v1/openapi.json, sem nenhum dado de cliente. */
+app.get('/api/docs', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PapiCore API — Documentação</title>
+  <style>body{margin:0;padding:0}</style>
+</head>
+<body>
+  <redoc spec-url="/api/v1/openapi.json"></redoc>
+  <script src="https://cdn.jsdelivr.net/npm/redoc@2.1.5/bundles/redoc.standalone.js"></script>
+</body>
+</html>`);
+});
 
 /* Identifica a empresa pelo domínio da requisição em toda a API
    (usado no login para validar que o usuário pertence à empresa do domínio). */

@@ -3,7 +3,7 @@
   const TOKEN_KEY='papi_developer_token';
   const $=(s)=>document.querySelector(s), esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const state={token:sessionStorage.getItem(TOKEN_KEY)||'',user:null,view:'dashboard',tenants:[],plans:[]};
-  const views=[['dashboard','Dashboard'],['tenants','Empresas'],['plans','Planos e Assinaturas'],['financial','Financeiro'],['contracts','Contratos'],['domains','Domínios'],['users','Usuários'],['leads','Leads comerciais'],['site','Site'],['evolution','Evolution API'],['logs','Logs'],['backups','Backups e Recuperação'],['settings','Configurações']];
+  const views=[['dashboard','Dashboard'],['tenants','Empresas'],['plans','Planos e Assinaturas'],['financial','Financeiro'],['contracts','Contratos'],['domains','Domínios'],['users','Usuários'],['leads','Leads comerciais'],['site','Site'],['evolution','Evolution API'],['api','API'],['logs','Logs'],['backups','Backups e Recuperação'],['settings','Configurações']];
   const LEAD_STATUSES=[['new','Novo'],['contacted','Contatado'],['demo_scheduled','Demonstração marcada'],['proposal_sent','Proposta enviada'],['customer','Cliente'],['lost','Perdido']];
   const SITE_IMAGE_SLOTS=[['logo','Logo (cabeçalho e rodapé)'],['favicon','Favicon / ícone do app (PWA)'],['hero','Mockup do hero'],['demo_agenda','Demonstração — Agenda'],['demo_servicos','Demonstração — Serviços'],['demo_unidades','Demonstração — Unidades'],['demo_financeiro','Demonstração — Financeiro'],['demo_painel','Demonstração — Painel administrativo']];
   async function api(url,opt={}){const headers={'Content-Type':'application/json',...(opt.headers||{})};if(state.token)headers.Authorization='Bearer '+state.token;const r=await fetch(url,{...opt,headers});if(r.status===401&&url!=='/api/developer/login')logout();const data=(r.headers.get('content-type')||'').includes('json')?await r.json():null;if(!r.ok)throw new Error(data?.error||'Não foi possível concluir a operação.');return data}
@@ -19,7 +19,7 @@
   function iconBtn(icon,cls,action,id,label){return `<button type="button" class="action-btn action-btn-${cls}" data-action="${action}" data-id="${id}" title="${label}" aria-label="${label}">${ICONS[icon]}</button>`}
   async function boot(){if(!state.token)return logout();try{state.user=await api('/api/developer/me');$('#loginView').classList.add('hidden');$('#appView').classList.remove('hidden');$('#developerName').textContent=state.user.name;buildNav();await render()}catch{logout()}}
   function buildNav(){ $('#nav').innerHTML=views.map(([id,name])=>`<button class="nav-button ${id===state.view?'active':''}" data-view="${id}">${name}</button>`).join('');$('#nav').onclick=e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;$('#sidebar').classList.remove('open');buildNav();render()}}
-  async function render(){const label=views.find(v=>v[0]===state.view)?.[1]||'';$('#pageTitle').textContent=label;loading();try{await ({dashboard,tenants,plans,financial,contracts,domains,users,leads,site,evolution,logs,backups,settings}[state.view]||dashboard)()}catch(e){$('#content').innerHTML=`<div class="panel error">${esc(e.message)}</div>`}}
+  async function render(){const label=views.find(v=>v[0]===state.view)?.[1]||'';$('#pageTitle').textContent=label;loading();try{await ({dashboard,tenants,plans,financial,contracts,domains,users,leads,site,evolution,apiView,logs,backups,settings}[state.view]||dashboard)()}catch(e){$('#content').innerHTML=`<div class="panel error">${esc(e.message)}</div>`}}
   function money(v){return 'R$ '+Number(v||0).toFixed(2)}
   function financialTypeLabel(t){return {MONTHLY:'Mensalidade',PACKAGE:'Pacote parcelado',PERCENTAGE:'Porcentagem'}[t]||t}
   function financialStatusBadge(e){if(e.status==='PAID')return '<span class="status status-paid">Pago</span>';if(e.status==='CANCELED')return '<span class="status status-canceled">Cancelado</span>';if(e.is_overdue)return '<span class="status status-overdue">Atrasado</span>';return '<span class="status status-pending">Pendente</span>'}
@@ -204,6 +204,213 @@
       }
       evolution();
     }catch(err){toast(err.message)}
+  }
+
+  /* ---------- Aba "API" ---------- */
+  const API_TABS=[['overview','Visão geral'],['keys','Chaves de API'],['webhooks','Webhooks'],['logs','Logs']];
+  const API_KEY_STATUS_LABELS={ACTIVE:'Ativa',REVOKED:'Revogada',EXPIRED:'Expirada',SUSPENDED:'Suspensa'};
+  const API_SCOPE_LABELS={'settings:read':'Configurações','catalog:read':'Catálogo','availability:read':'Disponibilidade','appointments:read':'Agendamentos (leitura)','appointments:write':'Agendamentos (escrita)','customers:read':'Clientes','packages:read':'Pacotes'};
+  const API_WEBHOOK_EVENT_LABELS={'appointment.created':'Agendamento criado','appointment.updated':'Agendamento atualizado','appointment.completed':'Agendamento concluído','appointment.cancelled':'Agendamento cancelado','package.sold':'Pacote vendido'};
+  function apiKeyStatusBadge(s){const map={ACTIVE:'status-paid',REVOKED:'status-canceled',EXPIRED:'status-overdue',SUSPENDED:'status-pending'};return `<span class="status ${map[s]||''}">${API_KEY_STATUS_LABELS[s]||esc(s)}</span>`}
+  function apiWebhookStatusBadge(a){return a?'<span class="status status-paid">Ativo</span>':'<span class="status status-canceled">Inativo</span>'}
+  function apiScopeChips(scopes){return (scopes||[]).map(s=>`<span class="chip">${esc(API_SCOPE_LABELS[s]||s)}</span>`).join(' ')}
+  function apiEventChips(events){return (events||[]).map(e=>`<span class="chip">${esc(API_WEBHOOK_EVENT_LABELS[e]||e)}</span>`).join(' ')}
+  function apiDatetime(v){return v?new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(v)):'—'}
+
+  async function apiView(){
+    const activeTab=state.apiTab||'overview';
+    $('#content').innerHTML=`<div class="tabs">${API_TABS.map(([id,label])=>`<button type="button" data-atab="${id}" class="${id===activeTab?'active':''}">${esc(label)}</button>`).join('')}</div><div id="apiBody"></div>`;
+    $('#content').querySelector('.tabs').onclick=e=>{const b=e.target.closest('[data-atab]');if(!b)return;state.apiTab=b.dataset.atab;apiView()};
+    const bodyEl=$('#apiBody');
+    if(activeTab==='overview')return renderApiOverview(bodyEl);
+    if(activeTab==='webhooks')return renderApiWebhooks(bodyEl);
+    if(activeTab==='logs')return renderApiLogs(bodyEl);
+    return renderApiKeys(bodyEl);
+  }
+
+  async function renderApiOverview(bodyEl){
+    const d=await api('/api/developer/api/overview');
+    const cards=[['Chaves de API',d.keys_count],['Webhooks',d.webhooks_count],['Webhooks pendentes',d.pending_webhooks],['Empresas com chave',d.tenants_with_keys],['Empresas',d.tenant_count]];
+    const reqRows=(d.recent_requests||[]).map(r=>`<tr><td>${apiDatetime(r.created_at)}</td><td><code>${esc(r.method)}</code></td><td><code>${esc(r.path)}</code></td><td><span class="status ${r.status_code<400?'status-paid':'status-overdue'}">${r.status_code}</span></td><td>${r.tenant_name?esc(r.tenant_name):'—'}</td></tr>`);
+    const webRows=(d.recent_webhooks||[]).map(w=>`<tr><td>${apiDatetime(w.created_at)}</td><td>${esc(w.event)}</td><td>${esc(w.status)}</td><td>${w.attempts}</td><td><code>${esc(w.webhook_url||'')}</code></td></tr>`);
+    bodyEl.innerHTML=`
+      <section class="cards">${cards.map(c=>`<article class="card"><span class="muted">${c[0]}</span><strong>${c[1]??0}</strong></article>`).join('')}</section>
+      <div class="panel"><h2>Escopos disponíveis</h2><p class="muted">Cada chave pode combinar escopos de leitura e escrita. A chave nunca é exibida novamente depois da criação.</p><div class="chips">${apiScopeChips(d.scopes)}</div></div>
+      <div class="section-head"><h3>Eventos de webhook</h3></div>
+      <div class="panel">${apiEventChips(d.webhook_events)}</div>
+      <div class="section-head"><h3>Requisições recentes</h3></div>
+      ${table(['Data','Método','Rota','Status','Empresa'],reqRows)}
+      <div class="section-head"><h3>Entregas de webhook recentes</h3></div>
+      ${table(['Data','Evento','Status','Tentativas','URL'],webRows)}
+    `;
+  }
+
+  async function loadApiBase(){
+    const [keys,webhooks,tenants]=await Promise.all([api('/api/developer/api/keys'),api('/api/developer/api/webhooks'),api('/api/developer/tenants')]);
+    state.apiKeys=keys;state.apiWebhooks=webhooks;state.tenants=tenants;
+  }
+
+  async function renderApiKeys(bodyEl){
+    await loadApiBase();
+    const rows=(state.apiKeys||[]).map(k=>{
+      const t=(state.tenants||[]).find(x=>x.id===k.tenant_id)||{};
+      return `<tr>
+        <td><code>${esc(k.key_prefix)}…</code><br><small class="muted">${esc(k.name)}</small></td>
+        <td>${esc(t.name||k.tenant_id)}</td>
+        <td>${apiScopeChips(k.scopes)}</td>
+        <td>${apiKeyStatusBadge(k.status)}</td>
+        <td>${k.expires_at?date(k.expires_at):'Sem expiração'}</td>
+        <td>${apiDatetime(k.last_used_at)}</td>
+        <td><div class="row-actions">
+          <button type="button" class="action-btn action-btn-warn" data-apiaction="rotate" data-id="${k.id}" title="Rotacionar chave" aria-label="Rotacionar chave">${ICONS.restore}</button>
+          <button type="button" class="action-btn action-btn-edit" data-apiaction="edit" data-id="${k.id}" title="Editar chave" aria-label="Editar chave">${ICONS.edit}</button>
+          <button type="button" class="action-btn action-btn-danger" data-apiaction="delete" data-id="${k.id}" title="Excluir chave" aria-label="Excluir chave">${ICONS.delete}</button>
+        </div></td>
+      </tr>`;
+    });
+    bodyEl.innerHTML=`
+      <div class="toolbar"><button id="newApiKey" class="primary">Nova chave de API</button></div>
+      <p class="muted">As chaves identificam o tenant automaticamente no cabeçalho <code>Authorization: Bearer pk_live_...</code>. A chave completa é exibida apenas uma vez, ao criar ou rotacionar.</p>
+      ${table(['Chave','Empresa','Escopos','Status','Expiração','Último uso','Ações'],rows)}`;
+    $('#newApiKey').onclick=()=>openApiKeyForm();
+    bodyEl.querySelector('.table-wrap').onclick=e=>{const b=e.target.closest('[data-apiaction]');if(b)apiKeyAction(b)};
+  }
+
+  async function apiKeyAction(btn){
+    const id=btn.dataset.id,action=btn.dataset.apiaction;
+    const key=(state.apiKeys||[]).find(k=>String(k.id)===id)||{};
+    try{
+      if(action==='rotate'){if(!confirm(`Rotacionar a chave "${key.name||''}"? A chave atual deixará de funcionar imediatamente.`))return;const d=await api(`/api/developer/api/keys/${id}/rotate`,{method:'POST'});showSecretModal('Nova chave de API',d.api_key,`Guarde agora. Não será possível exibi-la novamente.`);return}
+      if(action==='delete'){if(!confirm(`Excluir a chave "${key.name||''}"?`))return;await api(`/api/developer/api/keys/${id}`,{method:'DELETE'});toast('Chave excluída.');return}
+      if(action==='edit')return openApiKeyForm(key);
+    }catch(err){toast(err.message)}finally{if(action!=='edit')apiView()}
+  }
+
+  function openApiKeyForm(key){
+    const isEdit=Boolean(key&&key.id);
+    const tenantOptions=state.tenants.map(t=>`<option value="${t.id}" ${key&&key.tenant_id===t.id?'selected':''}>${esc(t.name)}</option>`).join('');
+    $('#modalBody').innerHTML=`
+      <h2>${isEdit?'Editar chave de API':'Nova chave de API'}</h2>
+      <form id="apiKeyForm" class="grid-form">
+        <label class="wide">Nome<input name="name" value="${esc(key?.name||'')}" placeholder="Ex.: Integração do site"></label>
+        <label class="wide">Empresa<select name="tenant_id" ${isEdit?'disabled':''}>${tenantOptions}</select></label>
+        <label class="wide" style="align-items:flex-start;">Escopos<span id="scopeBox" class="checkbox-group">${ALL_SCOPES_UI(key?.scopes)}</span></label>
+        <label class="wide">Expiração (opcional)<input name="expires_at" type="date" value="${esc(key?.expires_at||'')}"></label>
+        ${isEdit?`<label class="wide">Status<select name="status">${['ACTIVE','SUSPENDED','REVOKED'].map(s=>`<option ${key.status===s?'selected':''}>${s}</option>`).join('')}</select></label>`:''}
+        <div class="actions wide"><button type="submit" class="primary">${isEdit?'Salvar':'Criar chave'}</button><button type="button" data-close>Cancelar</button></div>
+      </form>`;
+    openModal();
+    $('#modalBody').querySelector('[data-close]').onclick=()=>$('#modal').close();
+    $('#apiKeyForm').onsubmit=async e=>{
+      e.preventDefault();const btn=e.submitter;btn.disabled=true;
+      const raw=Object.fromEntries(new FormData(e.target));
+      const payload={name:raw.name,scopes:Array.from($('#scopeBox').querySelectorAll('input:checked')).map(c=>c.value)};
+      if(isEdit){if(raw.status)payload.status=raw.status;payload.expires_at=raw.expires_at||null;}
+      else{payload.tenant_id=Number(state.tenants.find(t=>String(t.id)===String(raw.tenant_id))?.id);payload.expires_at=raw.expires_at||null;}
+      try{
+        if(isEdit){await api(`/api/developer/api/keys/${key.id}`,{method:'PATCH',body:JSON.stringify(payload)});toast('Chave atualizada.');$('#modal').close();}
+        else{const d=await api('/api/developer/api/keys',{method:'POST',body:JSON.stringify(payload)});$('#modal').close();showSecretModal('Chave de API criada',d.api_key,'Use esta chave no cabeçalho Authorization das requisições à API pública. Ela não será exibida novamente.')}
+      }catch(err){toast(err.message)}finally{btn.disabled=false}
+    };
+  }
+
+  async function renderApiWebhooks(bodyEl){
+    await loadApiBase();
+    const rows=(state.apiWebhooks||[]).map(w=>{
+      const t=(state.tenants||[]).find(x=>x.id===w.tenant_id)||{};
+      return `<tr>
+        <td><b>${esc(w.name)}</b><br><small class="muted">${esc(t.name||w.tenant_id)}</small></td>
+        <td><code>${esc(w.url)}</code></td>
+        <td>${apiEventChips(w.events)}</td>
+        <td>${apiWebhookStatusBadge(w.active)}</td>
+        <td><div class="row-actions">
+          <button type="button" class="action-btn action-btn-success" data-apiwaction="test" data-id="${w.id}" title="Enviar teste" aria-label="Enviar teste">${ICONS.detail}</button>
+          <button type="button" class="action-btn action-btn-edit" data-apiwaction="edit" data-id="${w.id}" title="Editar webhook" aria-label="Editar webhook">${ICONS.edit}</button>
+          <button type="button" class="action-btn action-btn-danger" data-apiwaction="delete" data-id="${w.id}" title="Excluir webhook" aria-label="Excluir webhook">${ICONS.delete}</button>
+        </div></td>
+      </tr>`;
+    });
+    bodyEl.innerHTML=`
+      <div class="toolbar"><button id="newWebhook" class="primary">Novo webhook</button></div>
+      <p class="muted">O PapiCore assina cada entrega com HMAC-SHA256 no cabeçalho <code>X-PapiCore-Signature: sha256=&lt;hex&gt;</code> usando o secret exibido uma única vez na criação. Falhas são tentadas de novo com backoff exponencial.</p>
+      ${table(['Webhook','URL','Eventos','Status','Ações'],rows)}`;
+    $('#newWebhook').onclick=()=>openWebhookForm();
+    bodyEl.querySelector('.table-wrap').onclick=e=>{const b=e.target.closest('[data-apiwaction]');if(b)apiWebhookAction(b)};
+  }
+
+  async function apiWebhookAction(btn){
+    const id=btn.dataset.id,action=btn.dataset.apiwaction;
+    const wh=(state.apiWebhooks||[]).find(w=>String(w.id)===id)||{};
+    try{
+      if(action==='test'){const r=await api(`/api/developer/api/webhooks/${id}/test`,{method:'POST'});if(r.delivered)toast('Webhook entregue com sucesso no teste.');else toast(r.error||'Teste falhou.');return}
+      if(action==='delete'){if(!confirm(`Excluir o webhook "${wh.name||''}"?`))return;await api(`/api/developer/api/webhooks/${id}`,{method:'DELETE'});toast('Webhook excluído.');return}
+      if(action==='edit')return openWebhookForm(wh);
+    }catch(err){toast(err.message)}finally{if(action!=='edit')apiView()}
+  }
+
+  function openWebhookForm(wh){
+    const isEdit=Boolean(wh&&wh.id);
+    const tenantOptions=state.tenants.map(t=>`<option value="${t.id}" ${wh&&wh.tenant_id===t.id?'selected':''}>${esc(t.name)}</option>`).join('');
+    $('#modalBody').innerHTML=`
+      <h2>${isEdit?'Editar webhook':'Novo webhook'}</h2>
+      <form id="webhookForm" class="grid-form">
+        <label class="wide">Nome<input name="name" value="${esc(wh?.name||'')}" placeholder="Ex.: Notificações do sistema"></label>
+        <label class="wide">Empresa<select name="tenant_id" ${isEdit?'disabled':''}>${tenantOptions}</select></label>
+        <label class="wide">URL de destino<input name="url" value="${esc(wh?.url||'')}" placeholder="https://seu-servidor.com.br/hooks/papi"></label>
+        <label class="wide" style="align-items:flex-start;">Eventos<span id="webhookEventBox" class="checkbox-group">${ALL_WEBHOOK_EVENTS_UI(wh?.events)}</span></label>
+        ${isEdit?`<label class="wide" style="display:flex;align-items:center;gap:8px;"><input type="checkbox" name="active" style="width:auto;" ${wh.active?'checked':''}><span>Webhook ativo</span></label>`:''}
+        <div class="actions wide"><button type="submit" class="primary">${isEdit?'Salvar':'Criar webhook'}</button><button type="button" data-close>Cancelar</button></div>
+      </form>`;
+    openModal();
+    $('#modalBody').querySelector('[data-close]').onclick=()=>$('#modal').close();
+    $('#webhookForm').onsubmit=async e=>{
+      e.preventDefault();const btn=e.submitter;btn.disabled=true;
+      const raw=Object.fromEntries(new FormData(e.target));
+      const payload={name:raw.name,url:raw.url,events:Array.from($('#webhookEventBox').querySelectorAll('input:checked')).map(c=>c.value)};
+      if(isEdit){payload.active=raw.active==='on';}
+      else{payload.tenant_id=Number(state.tenants.find(t=>String(t.id)===String(raw.tenant_id))?.id);payload.active=true;}
+      try{
+        if(isEdit){await api(`/api/developer/api/webhooks/${wh.id}`,{method:'PUT',body:JSON.stringify(payload)});toast('Webhook atualizado.');$('#modal').close();}
+        else{const d=await api('/api/developer/api/webhooks',{method:'POST',body:JSON.stringify(payload)});$('#modal').close();showSecretModal('Secret do webhook',d.secret,'Use este secret para verificar a assinatura HMAC-SHA256 do cabeçalho X-PapiCore-Signature. Ele não será exibido novamente.')}
+      }catch(err){toast(err.message)}finally{btn.disabled=false}
+    };
+  }
+
+  async function renderApiLogs(bodyEl){
+    const [whLogs,reqLogs]=await Promise.all([api('/api/developer/api/webhooks/logs?limit=100'),api('/api/developer/api/logs?limit=100')]);
+    const whRows=(whLogs||[]).map(w=>`<tr>
+      <td>${apiDatetime(w.created_at)}</td>
+      <td>${esc(w.event)}</td>
+      <td><span class="status ${w.status==='DELIVERED'?'status-paid':w.status==='FAILED'?'status-overdue':'status-pending'}">${esc(w.status)}</span></td>
+      <td>${w.attempts}</td>
+      <td><code>${esc(w.webhook_url||'')}</code></td>
+      <td>${w.last_error?`<small class="muted" title="${esc(w.last_error)}">${esc(w.last_error.length>40?w.last_error.slice(0,40)+'…':w.last_error)}</small>`:'—'}</td>
+      <td>${w.status==='FAILED'||w.status==='PENDING'?`<button type="button" class="action-btn action-btn-edit" data-apilogaction="redeliver" data-id="${w.id}" title="Reenviar" aria-label="Reenviar">${ICONS.restore}</button>`:''}</td>
+    </tr>`);
+    const reqRows=(reqLogs||[]).map(r=>`<tr><td>${apiDatetime(r.created_at)}</td><td><code>${esc(r.method)}</code></td><td><code>${esc(r.path)}</code></td><td><span class="status ${r.status_code<400?'status-paid':'status-overdue'}">${r.status_code}</span></td><td>${r.tenant_name?esc(r.tenant_name):'—'}</td><td>${esc(r.api_key_name||'')}</td><td>${r.duration_ms}ms</td></tr>`);
+    bodyEl.innerHTML=`
+      <div class="section-head"><h3>Entregas de webhook (outbox)</h3></div>
+      <div id="apiWhLogsTable"></div>
+      <div class="section-head"><h3>Requisições à API pública</h3></div>
+      <div id="apiReqLogsTable"></div>`;
+    $('#apiWhLogsTable').innerHTML=table(['Data','Evento','Status','Tentativas','URL','Erro','Ações'],whRows);
+    $('#apiReqLogsTable').innerHTML=table(['Data','Método','Rota','Status','Empresa','Chave','Duração'],reqRows);
+    $('#apiWhLogsTable').onclick=e=>{const b=e.target.closest('[data-apilogaction]');if(!b)return;apiLogAction(b)};
+  }
+
+  async function apiLogAction(btn){
+    try{const r=await api(`/api/developer/api/webhooks/outbox/${btn.dataset.id}/redeliver`,{method:'POST'});if(r.delivered)toast('Webhook entregue no reenvio.');else toast(r.error||'Falha no reenvio.');}catch(err){toast(err.message)}finally{apiView()}
+  }
+
+  const ALL_SCOPES_UI=selected=>['settings:read','catalog:read','availability:read','appointments:read','appointments:write','customers:read','packages:read'].map(s=>`<label class="checkbox-inline"><input type="checkbox" value="${s}" ${(selected||[]).includes(s)?'checked':''}> ${esc(API_SCOPE_LABELS[s]||s)}</label>`).join('');
+  const ALL_WEBHOOK_EVENTS_UI=selected=>['appointment.created','appointment.updated','appointment.completed','appointment.cancelled','package.sold'].map(e=>`<label class="checkbox-inline"><input type="checkbox" value="${e}" ${(selected||[]).includes(e)?'checked':''}> ${esc(API_WEBHOOK_EVENT_LABELS[e]||e)}</label>`).join('');
+
+  function showSecretModal(title,value,hint){
+    $('#modalBody').innerHTML=`<h2>${esc(title)}</h2><p class="muted">${esc(hint)}</p><div style="position:relative;margin:12px 0;"><input id="secretValue" readonly value="${esc(value)}" style="font-family:monospace;padding:10px;padding-right:84px;width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--bg);"><button type="button" id="copySecret" class="action-btn action-btn-edit" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);">Copiar</button></div><div class="actions"><button type="button" data-close>Fechar</button></div>`;
+    openModal();
+    const copyBtn=$('#copySecret');
+    if(copyBtn)copyBtn.onclick=()=>{navigator.clipboard.writeText(value).then(()=>toast('Copiado.')).catch(()=>{})};
+    $('#modalBody').querySelector('[data-close]').onclick=()=>$('#modal').close();
   }
 
   /* ---------- Aba "Contratos" ---------- */

@@ -194,6 +194,9 @@ function createAppointmentPublic(req, res) {
   } catch (err) {
     console.error('[whatsapp] Erro ao enfileirar avisos de novo agendamento:', err.message);
   }
+  /* Webhook de saída da API pública. */
+  const webhookService = require('../services/webhookService');
+  webhookService.fire(req, webhookService.WEBHOOK_EVENTS.APPOINTMENT_CREATED, webhookService.buildAppointmentPayload(appointment));
   return res.status(201).json(appointment);
 }
 
