@@ -9,6 +9,7 @@
 
 const { getDb } = require('../database/tenantDatabase');
 const whatsappService = require('../services/whatsappService');
+const evolutionService = require('../services/evolutionService');
 const { AppError } = require('../utils/helpers');
 
 function getStatus(req, res) {
@@ -89,11 +90,42 @@ async function resendOutbox(req, res) {
   return res.json(db.prepare('SELECT * FROM whatsapp_outbox WHERE id = ?').get(row.id));
 }
 
+/* ---------- Conexão (Evolution API) ---------- */
+
+function getConnection(req, res) {
+  const state = evolutionService.connectionState(req.tenant);
+  return res.json({
+    ...state,
+    mode: evolutionService.getStatus().mock ? 'simulation' : 'evolution'
+  });
+}
+
+async function connectConnection(req, res) {
+  const result = await evolutionService.connect(req.tenant);
+  if (result.error) throw new AppError(502, result.message || 'Falha ao conectar o WhatsApp.');
+  return res.json(result);
+}
+
+async function reconnectConnection(req, res) {
+  const result = await evolutionService.reconnect(req.tenant);
+  if (result.error) throw new AppError(502, result.message || 'Falha ao reconectar o WhatsApp.');
+  return res.json(result);
+}
+
+async function disconnectConnection(req, res) {
+  const result = await evolutionService.disconnect(req.tenant);
+  return res.json(result);
+}
+
 module.exports = {
   getStatus,
   listTemplates,
   updateTemplate,
   restoreTemplate,
   listOutbox,
-  resendOutbox
+  resendOutbox,
+  getConnection,
+  connectConnection,
+  reconnectConnection,
+  disconnectConnection
 };

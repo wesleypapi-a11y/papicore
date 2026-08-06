@@ -21,6 +21,7 @@ const { getDb } = require('../database/tenantDatabase');
 const { WHATSAPP_DEFAULT_TEMPLATES } = require('../database/tenantSchema');
 const { LONG_SERVICE_THRESHOLD_MINUTES } = require('./durationService');
 const packageService = require('./packageService');
+const evolutionService = require('./evolutionService');
 const {
   formatMoney,
   formatPhone,
@@ -315,6 +316,18 @@ async function processOutbox({ db = getDb(), limit = 50 } = {}) {
 }
 
 async function processOne(db, row) {
+  /* Evolution API habilitada e configurada: envio real passa por ela. */
+  if (evolutionService.getStatus().configured) {
+    const instanceName = evolutionService.instanceNameFromDb(db);
+    const result = await evolutionService.sendTextMessage(row.recipient, row.message_text, instanceName);
+    if (result.error) {
+      db.prepare("UPDATE whatsapp_outbox SET status = 'FAILED', last_error = ? WHERE id = ?")
+        .run(result.message || `Falha de envio (HTTP ${result.status}).`, row.id);
+      return 'FAILED';
+    }
+    db.prepare("UPDATE whatsapp_outbox SET status = 'SENT', sent_at = datetime('now', 'localtime') WHERE id = ?").run(row.id);
+    return 'SENT';
+  }
   if (!isWhatsappEnabled()) {
     db.prepare("UPDATE whatsapp_outbox SET status = 'SIMULATED', sent_at = datetime('now', 'localtime') WHERE id = ?").run(row.id);
     return 'SIMULATED';
@@ -417,10 +430,21 @@ function buildStoreNotificationMessage(a) {
 /* ---------- Status ---------- */
 
 function getStatus() {
+  const evolution = evolutionService.getStatus();
   return {
-    enabled: isWhatsappEnabled(),
-    configured: isConfigured(),
-    mock: !isWhatsappEnabled()
+    provider: evolution.enabled ? 'evolution' : 'graph',
+    enabled: evolution.enabled || isWhatsappEnabled(),
+    configured: evolution.enabled ? evolution.configured : isConfigured(),
+    mock: !(evolution.enabled || isWhatsappEnabled()),
+    evolution: {
+      enabled: evolution.enabled,
+      configured: evolution.configured,
+      server_url: evolution.server_url
+    },
+    graph: {
+      enabled: !evolution.enabled && isWhatsappEnabled(),
+      configured: isConfigured()
+    }
   };
 }
 

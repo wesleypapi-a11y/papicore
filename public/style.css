@@ -1901,7 +1901,6 @@ html.lock-desktop .modal-actions {
 html.lock-desktop .modal-actions .btn { flex: none; }
 
 /* ---------- WhatsApp (mensagens automáticas) ---------- */
-
 .whatsapp-template {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1939,4 +1938,18 @@ html.lock-desktop .modal-actions .btn { flex: none; }
   max-width: 340px;
   white-space: normal;
   word-break: break-word;
+}
+/* ---------- WhatsApp (conexão / QR Code) ---------- */
+.wa-qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0;
+}
+.wa-qr {
+  width: 240px;
+  height: 240px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: #fff;
 }

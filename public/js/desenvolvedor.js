@@ -3,7 +3,7 @@
   const TOKEN_KEY='papi_developer_token';
   const $=(s)=>document.querySelector(s), esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const state={token:sessionStorage.getItem(TOKEN_KEY)||'',user:null,view:'dashboard',tenants:[],plans:[]};
-  const views=[['dashboard','Dashboard'],['tenants','Empresas'],['plans','Planos e Assinaturas'],['financial','Financeiro'],['contracts','Contratos'],['domains','Domínios'],['users','Usuários'],['leads','Leads comerciais'],['site','Site'],['logs','Logs'],['backups','Backups e Recuperação'],['settings','Configurações']];
+  const views=[['dashboard','Dashboard'],['tenants','Empresas'],['plans','Planos e Assinaturas'],['financial','Financeiro'],['contracts','Contratos'],['domains','Domínios'],['users','Usuários'],['leads','Leads comerciais'],['site','Site'],['evolution','Evolution API'],['logs','Logs'],['backups','Backups e Recuperação'],['settings','Configurações']];
   const LEAD_STATUSES=[['new','Novo'],['contacted','Contatado'],['demo_scheduled','Demonstração marcada'],['proposal_sent','Proposta enviada'],['customer','Cliente'],['lost','Perdido']];
   const SITE_IMAGE_SLOTS=[['logo','Logo (cabeçalho e rodapé)'],['favicon','Favicon / ícone do app (PWA)'],['hero','Mockup do hero'],['demo_agenda','Demonstração — Agenda'],['demo_servicos','Demonstração — Serviços'],['demo_unidades','Demonstração — Unidades'],['demo_financeiro','Demonstração — Financeiro'],['demo_painel','Demonstração — Painel administrativo']];
   async function api(url,opt={}){const headers={'Content-Type':'application/json',...(opt.headers||{})};if(state.token)headers.Authorization='Bearer '+state.token;const r=await fetch(url,{...opt,headers});if(r.status===401&&url!=='/api/developer/login')logout();const data=(r.headers.get('content-type')||'').includes('json')?await r.json():null;if(!r.ok)throw new Error(data?.error||'Não foi possível concluir a operação.');return data}
@@ -19,7 +19,7 @@
   function iconBtn(icon,cls,action,id,label){return `<button type="button" class="action-btn action-btn-${cls}" data-action="${action}" data-id="${id}" title="${label}" aria-label="${label}">${ICONS[icon]}</button>`}
   async function boot(){if(!state.token)return logout();try{state.user=await api('/api/developer/me');$('#loginView').classList.add('hidden');$('#appView').classList.remove('hidden');$('#developerName').textContent=state.user.name;buildNav();await render()}catch{logout()}}
   function buildNav(){ $('#nav').innerHTML=views.map(([id,name])=>`<button class="nav-button ${id===state.view?'active':''}" data-view="${id}">${name}</button>`).join('');$('#nav').onclick=e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;$('#sidebar').classList.remove('open');buildNav();render()}}
-  async function render(){const label=views.find(v=>v[0]===state.view)?.[1]||'';$('#pageTitle').textContent=label;loading();try{await ({dashboard,tenants,plans,financial,contracts,domains,users,leads,site,logs,backups,settings}[state.view]||dashboard)()}catch(e){$('#content').innerHTML=`<div class="panel error">${esc(e.message)}</div>`}}
+  async function render(){const label=views.find(v=>v[0]===state.view)?.[1]||'';$('#pageTitle').textContent=label;loading();try{await ({dashboard,tenants,plans,financial,contracts,domains,users,leads,site,evolution,logs,backups,settings}[state.view]||dashboard)()}catch(e){$('#content').innerHTML=`<div class="panel error">${esc(e.message)}</div>`}}
   function money(v){return 'R$ '+Number(v||0).toFixed(2)}
   function financialTypeLabel(t){return {MONTHLY:'Mensalidade',PACKAGE:'Pacote parcelado',PERCENTAGE:'Porcentagem'}[t]||t}
   function financialStatusBadge(e){if(e.status==='PAID')return '<span class="status status-paid">Pago</span>';if(e.status==='CANCELED')return '<span class="status status-canceled">Cancelado</span>';if(e.is_overdue)return '<span class="status status-overdue">Atrasado</span>';return '<span class="status status-pending">Pendente</span>'}
@@ -134,6 +134,78 @@
   function refreshPageFavicon(){const l=document.getElementById('pageFavicon');if(l)l.href='/api/developer/login-favicon?v='+Date.now()}
   async function reloadLoginAssets(){loadLoginLogo();loadLoginFavicon();refreshPageFavicon()}
   function renderLoginAsset(kind,d){const box=$(kind==='logo'?'#loginLogoBox':'#loginFaviconBox');if(!box)return;const has=kind==='logo'?Boolean(d&&d.has_logo):Boolean(d&&d.has_favicon);const name=kind==='logo'?'Logo':'Favicon';const meta=kind==='logo'?'PNG, JPG ou WEBP (máx 3 MB)':'PNG ou ICO (máx 1 MB)';const src=kind==='logo'?(has?d.logo_url:'/assets/logo.png'):(has?d.favicon_url:'/assets/favicon.png');const accept=kind==='logo'?'.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp':'.png,.ico,image/png,image/x-icon,image/vnd.microsoft.icon';box.classList.remove('muted');box.innerHTML=`<div class="branding-card"><div class="branding-preview"><img src="${esc(src)}" alt="${name} da tela de login"></div><p class="muted">${name} — ${meta}</p><div class="branding-actions">${has?`<button type="button" data-login-remove="${kind}" class="danger">Remover</button>`:''}<label class="branding-upload">${has?'Substituir':'Enviar '+name.toLowerCase()}<input type="file" data-login-file="${kind}" accept="${accept}" hidden></label></div></div>`;const removeBtn=box.querySelector(`[data-login-remove="${kind}"]`);if(removeBtn)removeBtn.onclick=async()=>{try{await api(`/api/developer/settings/login-${kind}`,{method:'DELETE'});toast(name+' removida.');reloadLoginAssets()}catch(err){toast(err.message)}};const input=box.querySelector(`[data-login-file="${kind}"]`);input.onchange=async()=>{const file=input.files[0];if(!file)return;const label=input.closest('.branding-upload');const original=label.textContent;label.textContent='Enviando…';label.classList.add('disabled');try{const fd=new FormData();fd.append('file',file);await apiForm(`/api/developer/settings/login-${kind}`,fd);toast(name+' enviada.')}catch(err){toast(err.message)}finally{label.textContent=original;label.classList.remove('disabled');input.value='';reloadLoginAssets()}}}
+  /* ---------- Aba "Evolution API" (WhatsApp) ---------- */
+  const EVO_STATUS_LABELS={connected:'Conectado',connecting:'QR pendente',disconnected:'Desconectado',error:'Erro'};
+  const EVO_STATUS_CLASS={connected:'status-paid',connecting:'status-pending',disconnected:'status-canceled',error:'status-overdue'};
+  function evoStatusBadge(s){return `<span class="status ${EVO_STATUS_CLASS[s]||''}">${EVO_STATUS_LABELS[s]||esc(s)}</span>`}
+  async function evolution(){
+    const data=await api('/api/developer/whatsapp');
+    state.evolution=data;
+    const mock=data.whatsapp&&data.whatsapp.mock;
+    const modeBadge=mock?'<span class="status status-pending">Modo simulação</span>':`<span class="status status-paid">Envio real ativo (${esc(data.whatsapp?.provider||'evolution')})</span>`;
+    $('#content').innerHTML=`
+      <div class="form-section">
+        <h3>Integração WhatsApp — Evolution API</h3>
+        <p class="muted">Configure a URL do servidor Evolution e a API key. Com a integração ativa, cada empresa conecta o próprio WhatsApp (1 QR Code por empresa) e as mensagens automáticas passam a ser enviadas de verdade.</p>
+        <p class="muted" style="margin-top:0;">Status atual do envio: ${modeBadge}</p>
+        <form id="evoSettingsForm" class="grid-form">
+          <label>URL do servidor Evolution<input name="server_url" value="${esc(data.server_url)}" placeholder="https://evo.seudominio.com.br"></label>
+          <label>API key<input name="api_key" type="password" autocomplete="new-password" placeholder="${data.api_key?'Chave salva — deixe em branco para manter':'Cole a API key aqui'}"></label>
+          <label class="wide" style="display:flex;align-items:center;gap:8px;margin:6px 0;"><input type="checkbox" name="enabled" style="width:auto;" ${data.enabled?'checked':''}><span>Habilitar envio real pelo WhatsApp (Evolution)</span></label>
+          <div class="actions wide">
+            <button type="button" class="ghost" id="evoTest">Testar conexão</button>
+            <button class="primary" type="submit">Salvar configuração</button>
+          </div>
+        </form>
+        <div id="evoTestResult"></div>
+      </div>
+      <div class="section-head"><h3>Conexões por empresa</h3></div>
+      <div id="evoInstancesTable"></div>
+    `;
+    renderEvoInstances(data.instances||[]);
+    $('#evoInstancesTable').onclick=evoAction;
+    $('#evoSettingsForm').onsubmit=async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;try{const raw=Object.fromEntries(new FormData(e.target));await api('/api/developer/whatsapp/settings',{method:'PUT',body:JSON.stringify({enabled:raw.enabled==='on',server_url:raw.server_url,api_key:raw.api_key})});toast('Configuração salva.');evolution()}catch(err){toast(err.message)}finally{btn.disabled=false}};
+    $('#evoTest').onclick=async()=>{const box=$('#evoTestResult');const raw=Object.fromEntries(new FormData($('#evoSettingsForm')));box.innerHTML='<span class="muted">Testando…</span>';try{const r=await api('/api/developer/whatsapp/test-connection',{method:'POST',body:JSON.stringify({server_url:raw.server_url,api_key:raw.api_key})});box.innerHTML=r.ok?`<span class="status status-paid">Servidor acessível${r.instances&&r.instances.length?` — ${r.instances.length} instância(s) encontrada(s)`:' — sem instâncias ainda'}</span>`:`<span class="status status-overdue">Falha na conexão</span> <span class="muted">${esc(r.message)}</span>`}catch(err){box.innerHTML=`<span class="status status-overdue">Falha</span> <span class="muted">${esc(err.message)}</span>`}};
+  }
+  function renderEvoInstances(instances){
+    const rows=(instances||[]).map(i=>`<tr>
+      <td><b>${esc(i.name)}</b><br><small class="muted">${esc(i.slug||i.database_name||'')}</small></td>
+      <td><code>${esc(i.instance_name)}</code></td>
+      <td>${evoStatusBadge(i.status)}${i.last_error?`<br><small class="muted" title="${esc(i.last_error)}">${esc(i.last_error.length>40?i.last_error.slice(0,40)+'…':i.last_error)}</small>`:''}</td>
+      <td>${i.owner_number?esc(i.owner_number):'—'}</td>
+      <td><div class="row-actions">
+        ${i.status==='connected'?`<button type="button" class="action-btn action-btn-neutral" data-evo-action="reconnect" data-tenant-id="${i.tenant_id}" title="Reconectar (novo QR)" aria-label="Reconectar">${ICONS.restore}</button>`:''}
+        ${i.status==='connecting'&&i.qr_base64?`<button type="button" class="action-btn action-btn-edit" data-evo-action="qr" data-tenant-id="${i.tenant_id}" title="Ver QR Code" aria-label="Ver QR Code">${ICONS.detail}</button>`:''}
+        ${i.status==='disconnected'||i.status==='error'?`<button type="button" class="action-btn action-btn-success" data-evo-action="connect" data-tenant-id="${i.tenant_id}" title="Conectar (gerar QR)" aria-label="Conectar">${ICONS.accept}</button>`:''}
+        ${i.status==='connected'||i.status==='connecting'?`<button type="button" class="action-btn action-btn-warn" data-evo-action="disconnect" data-tenant-id="${i.tenant_id}" title="Desconectar" aria-label="Desconectar">${ICONS.cancel}</button>`:''}
+      </div></td>
+    </tr>`);
+    $('#evoInstancesTable').innerHTML=table(['Empresa','Instância','Status','Número','Ações'],rows);
+  }
+  async function evoAction(e){
+    const b=e.target.closest('[data-evo-action]');if(!b)return;
+    const id=b.dataset.tenantId,action=b.dataset.evoAction;
+    const data=state.evolution||{};
+    const inst=(data.instances||[]).find(x=>String(x.tenant_id)===id)||{};
+    try{
+      if(action==='qr'){
+        const conn=await api(`/api/developer/whatsapp/tenants/${id}`);
+        if(!conn.qr)return toast('Nenhum QR pendente. Clique em "Conectar" para gerar um novo.');
+        $('#modalBody').innerHTML=`<h2>QR Code — ${esc(inst.name||'')}</h2><div style="text-align:center;padding:14px 0;"><img src="${esc(conn.qr)}" alt="QR Code do WhatsApp" style="width:240px;height:240px;background:#fff;padding:8px;border:1px solid var(--line);border-radius:10px;"></div><p class="muted">Escaneie com WhatsApp &gt; Aparelhos conectados. O código expira em poucos minutos.</p><div class="actions"><button type="button" data-close>Fechar</button></div>`;
+        openModal();$('#modalBody').querySelector('[data-close]').onclick=()=>$('#modal').close();return;
+      }
+      if(action==='disconnect'){if(!confirm(`Desconectar o WhatsApp da empresa "${inst.name||id}"?`))return;}
+      if(action==='connect'||action==='reconnect'){
+        await api(`/api/developer/whatsapp/tenants/${id}/${action}`,{method:'POST'});
+        toast('QR Code gerado. Abra em "Ver QR Code" ou peça ao cliente para escanear no painel.');
+      }else if(action==='disconnect'){
+        await api(`/api/developer/whatsapp/tenants/${id}/disconnect`,{method:'POST'});
+        toast('WhatsApp desconectado.');
+      }
+      evolution();
+    }catch(err){toast(err.message)}
+  }
+
   /* ---------- Aba "Contratos" ---------- */
   const CONTRACT_TABS=[['settings','Configurações da contratada'],['templates','Modelos'],['new','Novo contrato'],['history','Contratos gerados']];
   const CONTRACT_TYPE_LABELS={SUBSCRIPTION:'Assinatura',RENEWAL:'Renovação',ADDENDUM:'Aditivo',CANCELLATION:'Distrato',CUSTOM:'Personalizado'};

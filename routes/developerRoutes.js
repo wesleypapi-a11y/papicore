@@ -68,6 +68,16 @@ router.get('/settings/login-favicon', brandingController.getLoginFaviconHandler)
 router.post('/settings/login-favicon', brandingController.uploadLoginFavicon);
 router.delete('/settings/login-favicon', brandingController.removeLoginFavicon);
 
+/* WhatsApp / Evolution API */
+router.get('/whatsapp', developerController.whatsappOverviewHandler);
+router.get('/whatsapp/settings', developerController.getEvolutionSettingsHandler);
+router.put('/whatsapp/settings', developerController.updateEvolutionSettingsHandler);
+router.post('/whatsapp/test-connection', developerController.testEvolutionConnectionHandler);
+router.get('/whatsapp/tenants/:tenantId', developerController.getTenantWhatsappHandler);
+router.post('/whatsapp/tenants/:tenantId/connect', developerController.tenantWhatsappConnectHandler);
+router.post('/whatsapp/tenants/:tenantId/reconnect', developerController.tenantWhatsappReconnectHandler);
+router.post('/whatsapp/tenants/:tenantId/disconnect', developerController.tenantWhatsappDisconnectHandler);
+
 /* Empresas */
 router.get('/tenants', developerController.listTenantsHandler);
 router.post('/tenants', developerController.createTenant);
@@ -138,8 +148,7 @@ router.get('/logs', developerController.logsHandler);
 
 /* Contratos — rotas de caminho fixo REGISTRADAS ANTES de /contracts/:id para
    nunca serem capturadas pelo parâmetro (ex.: "company-settings" e "meta"
-   não podem ser interpretados como um :id). */
-router.get('/contracts/company-settings', contractController.getCompanySettingsHandler);
+   não podem ser interpretados como um :id). */router.get('/contracts/company-settings', contractController.getCompanySettingsHandler);
 router.put('/contracts/company-settings', contractController.updateCompanySettingsHandler);
 router.get('/contracts/company-settings/logo', contractController.serveCompanyLogo);
 router.post('/contracts/company-settings/logo', contractController.uploadCompanyLogo);

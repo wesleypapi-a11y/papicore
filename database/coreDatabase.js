@@ -415,6 +415,34 @@ CREATE INDEX IF NOT EXISTS idx_contracts_replaces ON contracts(replaces_contract
 CREATE INDEX IF NOT EXISTS idx_contract_templates_slug ON contract_templates(slug);
 `;
 
+/* Integração com Evolution API (WhatsApp). As configurações do servidor são
+   globais (1 linha); cada empresa tem sua própria instância (1 QR por tenant).
+   A outbox em si fica no banco do tenant — aqui só o registro de conexão,
+   consultável pelo painel do desenvolvedor. */
+const EVOLUTION_DDL = `
+CREATE TABLE IF NOT EXISTS evolution_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled INTEGER NOT NULL DEFAULT 0,
+  server_url TEXT,
+  api_key TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS evolution_instances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+  database_name TEXT NOT NULL,
+  instance_name TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'disconnected',
+  owner_number TEXT,
+  owner_name TEXT,
+  qr_base64 TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
 /* Planos iniciais da plataforma. Os valores ficam fixos aqui (migration/seed)
    e NÃO são duplicados no front-end: depois da primeira criação, o painel do
    desenvolvedor pode alterar preço, limite e status. max_units = null
@@ -720,6 +748,7 @@ function openCore() {
   db.exec(COMMERCIAL_LEADS_DDL);
   db.exec(SITE_CONTENT_DDL);
   db.exec(CONTRACTS_DDL);
+  db.exec(EVOLUTION_DDL);
   migrateBrandingThemeColumns();
   migrateUserPasswordChangedAtColumn();
   runMigrations();
@@ -916,6 +945,12 @@ function migrateContractTemplateMinimumTermV1() {
   tx();
 }
 
+/* v1 — tabelas da integração Evolution API (criadas também no boot via
+   EVOLUTION_DDL; esta migração garante bancos core já existentes). */
+function migrateEvolutionV1() {
+  db.exec(EVOLUTION_DDL);
+}
+
 function runMigrations() {
   if (!migrationApplied('plans_v1')) {
     migratePlansV1();
@@ -936,6 +971,10 @@ function runMigrations() {
   if (!migrationApplied('contract_template_minimum_term_v1')) {
     migrateContractTemplateMinimumTermV1();
     markMigrationApplied('contract_template_minimum_term_v1');
+  }
+  if (!migrationApplied('evolution_v1')) {
+    migrateEvolutionV1();
+    markMigrationApplied('evolution_v1');
   }
 }
 
@@ -2110,6 +2149,92 @@ function countContracts(tenantId) {
   return row ? row.total : 0;
 }
 
+/* ---------- Integração Evolution API (WhatsApp) ---------- */
+
+/* Settings globais da Evolution. Valores de ambiente (EVOLUTION_ENABLED,
+   EVOLUTION_SERVER_URL, EVOLUTION_API_KEY) valem como padrão/override quando
+   definidos; o que é salvo no painel do desenvolvedor tem prioridade. */
+function getEvolutionSettings() {
+  const envBased = () => {
+    const settings = {
+      enabled: String(process.env.EVOLUTION_ENABLED || '').toLowerCase() === 'true',
+      server_url: String(process.env.EVOLUTION_SERVER_URL || '').trim(),
+      api_key: String(process.env.EVOLUTION_API_KEY || '').trim()
+    };
+    return settings;
+  };
+  if (!db) return envBased();
+  const row = db.prepare('SELECT * FROM evolution_settings WHERE id = 1').get();
+  const settings = {
+    enabled: row ? Boolean(row.enabled) : false,
+    server_url: (row && row.server_url) || '',
+    api_key: (row && row.api_key) || ''
+  };
+  if (String(process.env.EVOLUTION_ENABLED || '').toLowerCase() === 'true') settings.enabled = true;
+  if (String(process.env.EVOLUTION_SERVER_URL || '').trim()) settings.server_url = process.env.EVOLUTION_SERVER_URL.trim();
+  if (String(process.env.EVOLUTION_API_KEY || '').trim()) settings.api_key = process.env.EVOLUTION_API_KEY.trim();
+  return settings;
+}
+
+function upsertEvolutionSettings({ enabled, server_url, api_key }) {
+  const current = db.prepare('SELECT * FROM evolution_settings WHERE id = 1').get() || {};
+  db.prepare(
+    `INSERT INTO evolution_settings (id, enabled, server_url, api_key, updated_at)
+     VALUES (1, ?, ?, ?, datetime('now', 'localtime'))
+     ON CONFLICT(id) DO UPDATE SET
+       enabled = excluded.enabled,
+       server_url = excluded.server_url,
+       api_key = excluded.api_key,
+       updated_at = datetime('now', 'localtime')`
+  ).run(
+    enabled ? 1 : 0,
+    server_url == null ? (current.server_url || '') : String(server_url).trim(),
+    api_key == null ? (current.api_key || '') : String(api_key).trim()
+  );
+  return getEvolutionSettings();
+}
+
+function getEvolutionInstance(tenantId) {
+  return db.prepare('SELECT * FROM evolution_instances WHERE tenant_id = ?').get(tenantId);
+}
+
+function getEvolutionInstanceByDatabaseName(databaseName) {
+  return db.prepare('SELECT * FROM evolution_instances WHERE database_name = ?').get(databaseName);
+}
+
+function upsertEvolutionInstance(tenantId, fields) {
+  const existing = getEvolutionInstance(tenantId);
+  const merged = { ...(existing || {}), ...fields };
+  if (existing) {
+    db.prepare(
+      `UPDATE evolution_instances SET
+         database_name = ?, instance_name = ?, status = ?, owner_number = ?,
+         owner_name = ?, qr_base64 = ?, last_error = ?,
+         updated_at = datetime('now', 'localtime')
+       WHERE tenant_id = ?`
+    ).run(
+      merged.database_name, merged.instance_name, merged.status,
+      merged.owner_number || null, merged.owner_name || null,
+      merged.qr_base64 || null, merged.last_error || null, tenantId
+    );
+    return getEvolutionInstance(tenantId);
+  }
+  const info = db.prepare(
+    `INSERT INTO evolution_instances
+       (tenant_id, database_name, instance_name, status, owner_number, owner_name, qr_base64, last_error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    tenantId, merged.database_name, merged.instance_name, merged.status,
+    merged.owner_number || null, merged.owner_name || null,
+    merged.qr_base64 || null, merged.last_error || null
+  );
+  return getEvolutionInstance(info.lastInsertRowid);
+}
+
+function deleteEvolutionInstance(tenantId) {
+  db.prepare('DELETE FROM evolution_instances WHERE tenant_id = ?').run(tenantId);
+}
+
 /* ---------- Utilitários ---------- */
 
 function countTenantAppointments(databaseName) {
@@ -2267,5 +2392,12 @@ module.exports = {
   getContractByNumber,
   listContracts,
   updateContract,
-  countContracts
+  countContracts,
+  /* integração Evolution API (WhatsApp) */
+  getEvolutionSettings,
+  upsertEvolutionSettings,
+  getEvolutionInstance,
+  getEvolutionInstanceByDatabaseName,
+  upsertEvolutionInstance,
+  deleteEvolutionInstance
 };

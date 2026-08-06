@@ -2862,12 +2862,13 @@
 
   async function renderWhatsapp() {
     const el = $('view-whatsapp');
-    const tab = state.whatsappTab || 'mensagens';
+    const tab = state.whatsappTab || 'conexao';
     el.innerHTML = `
       <div class="admin-header">
-        <div><h1>WhatsApp</h1><div class="sub">Mensagens automáticas e histórico de envios</div></div>
+        <div><h1>WhatsApp</h1><div class="sub">Conexão com a conta, mensagens automáticas e histórico de envios</div></div>
       </div>
       <div class="tabs">
+        <button type="button" class="tab ${tab === 'conexao' ? 'active' : ''}" data-whatsapp-tab="conexao">Conexão</button>
         <button type="button" class="tab ${tab === 'mensagens' ? 'active' : ''}" data-whatsapp-tab="mensagens">Mensagens automáticas</button>
         <button type="button" class="tab ${tab === 'historico' ? 'active' : ''}" data-whatsapp-tab="historico">Histórico</button>
       </div>
@@ -2880,8 +2881,107 @@
         renderWhatsapp();
       });
     });
-    if (tab === 'historico') await renderWhatsappHistory($('whatsappTabBody'));
+    if (tab === 'conexao') await renderWhatsappConnection($('whatsappTabBody'));
+    else if (tab === 'historico') await renderWhatsappHistory($('whatsappTabBody'));
     else await renderWhatsappTemplates($('whatsappTabBody'));
+  }
+
+  async function renderWhatsappConnection(container) {
+    container.innerHTML = '<div class="panel"><p class="sub">Carregando…</p></div>';
+    let conn;
+    try {
+      conn = await api('/api/admin/whatsapp/connection');
+    } catch (e) {
+      container.innerHTML = `<div class="panel"><p class="error">${escapeHtml(e.message)}</p></div>`;
+      return;
+    }
+
+    const labels = { connected: 'Conectado', connecting: 'Aguardando escaneamento', disconnected: 'Desconectado', error: 'Erro' };
+    const classes = { connected: 'confirmed', connecting: 'pending', disconnected: 'cancelled', error: 'rejected' };
+    const statusBadge = `<span class="badge badge-${classes[conn.status] || 'pending'}">${labels[conn.status] || conn.status}</span>`;
+
+    let body = '';
+    if (!conn.settings_configured) {
+      body = `
+        <div class="panel">
+          <h3 class="review-section-title">Integração não configurada</h3>
+          <p class="sub" style="margin-top:0;">A plataforma ainda não está com a Evolution API configurada. Enquanto isso, o WhatsApp opera em <strong>modo simulado</strong> (as mensagens automáticas são registradas no histórico, sem envio real).</p>
+          <p class="sub">Fale com o suporte para liberar a conexão real do WhatsApp da sua empresa.</p>
+        </div>
+      `;
+    } else if (conn.status === 'connected') {
+      body = `
+        <div class="panel">
+          <h3 class="review-section-title">WhatsApp conectado</h3>
+          <p class="sub" style="margin-top:0;">Status: ${statusBadge}${conn.instance && conn.instance.owner_number ? ` &nbsp;•&nbsp; Número: <strong>${escapeHtml(conn.instance.owner_number)}</strong>` : ''}${conn.instance && conn.instance.owner_name ? ` <span class="muted">(${escapeHtml(conn.instance.owner_name)})</span>` : ''}</p>
+          <div class="actions">
+            <button type="button" class="btn btn-ghost waReconnect">Reconectar</button>
+            <button type="button" class="btn btn-danger waDisconnect">Desconectar</button>
+          </div>
+        </div>
+      `;
+    } else if (conn.status === 'connecting') {
+      body = `
+        <div class="panel">
+          <h3 class="review-section-title">Escaneie o QR Code para conectar</h3>
+          <p class="sub" style="margin-top:0;">Abra o WhatsApp no seu celular, toque em <strong>Menu (⋮) &gt; Aparelhos conectados &gt; Conectar um aparelho</strong> e escaneie o código abaixo. Ele expira em poucos minutos.</p>
+          ${conn.qr ? `<div class="wa-qr-wrap"><img class="wa-qr" src="${escapeHtml(conn.qr)}" alt="QR Code do WhatsApp" /></div>` : '<p class="sub">Gerando QR Code… aguarde e recarregue a página.</p>'}
+          <div class="actions">
+            <button type="button" class="btn btn-ghost waReconnect">Gerar novo QR</button>
+            <button type="button" class="btn btn-ghost waRefresh">Atualizar status</button>
+            <button type="button" class="btn btn-danger waDisconnect">Cancelar</button>
+          </div>
+        </div>
+      `;
+    } else {
+      body = `
+        <div class="panel">
+          <h3 class="review-section-title">Conectar WhatsApp</h3>
+          <p class="sub" style="margin-top:0;">Status: ${statusBadge}. Conecte a conta oficial da sua empresa para que as mensagens automáticas sejam enviadas de verdade.</p>
+          ${conn.last_error || conn.instance && conn.instance.last_error ? `<p class="error">${escapeHtml(conn.last_error || conn.instance.last_error)}</p>` : ''}
+          <div class="actions">
+            <button type="button" class="btn btn-primary waConnect">Conectar</button>
+          </div>
+        </div>
+      `;
+    }
+
+    container.innerHTML = `
+      <div class="panel">
+        <h3 class="review-section-title">Conexão da conta</h3>
+        ${body}
+      </div>
+      <div class="panel">
+        <h3 class="review-section-title">Modo de envio</h3>
+        <p class="sub" style="margin-top:0;">${conn.mode === 'evolution' ? '<span class="badge badge-confirmed">Envio real ativo</span>' : '<span class="badge badge-pending">Modo simulado</span>'} — as mensagens configuradas em <em>Mensagens automáticas</em> só saem de verdade quando a conexão estiver ativa.</p>
+      </div>
+    `;
+
+    container.querySelector('.waConnect') && container.querySelector('.waConnect').addEventListener('click', () => whatsappAction('connect'));
+    container.querySelector('.waReconnect') && container.querySelector('.waReconnect').addEventListener('click', () => whatsappAction('reconnect'));
+    container.querySelector('.waDisconnect') && container.querySelector('.waDisconnect').addEventListener('click', () => whatsappAction('disconnect'));
+    container.querySelector('.waRefresh') && container.querySelector('.waRefresh').addEventListener('click', () => whatsappAction('refresh'));
+  }
+
+  async function whatsappAction(action) {
+    const map = { connect: 'connect', reconnect: 'reconnect', disconnect: 'disconnect' };
+    showLoader();
+    try {
+      if (action === 'disconnect' && !confirm('Desconectar o WhatsApp desta empresa? As mensagens automáticas voltam a ser simuladas.')) return;
+      if (action === 'refresh') {
+        const conn = await api('/api/admin/whatsapp/connection');
+        renderWhatsappConnection($('whatsappTabBody'));
+        toast(conn.status === 'connected' ? 'WhatsApp conectado.' : `Status: ${conn.status}`, conn.status === 'connected' ? 'success' : 'info');
+        return;
+      }
+      await api(`/api/admin/whatsapp/connection/${map[action]}`, { method: 'POST' });
+      toast(action === 'connect' ? 'QR Code gerado. Escaneie com o WhatsApp.' : action === 'reconnect' ? 'Novo QR Code gerado.' : 'WhatsApp desconectado.', 'success');
+      renderWhatsappConnection($('whatsappTabBody'));
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      hideLoader();
+    }
   }
 
   async function renderWhatsappTemplates(container) {

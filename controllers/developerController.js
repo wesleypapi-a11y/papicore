@@ -55,7 +55,9 @@ const {
   listLeads,
   updateLeadStatus,
   getPlatformEmailSettings,
-  upsertPlatformEmailSettings
+  upsertPlatformEmailSettings,
+  getEvolutionSettings,
+  upsertEvolutionSettings
 } = require('../database/coreDatabase');
 const { buildDatabaseName, tenantDatabaseExists } = require('../database/createTenantDatabase');
 const {
@@ -71,6 +73,8 @@ const { signToken } = require('./authController');
 const backupService = require('../services/backupService');
 const restoreService = require('../services/restoreService');
 const planService = require('../services/planService');
+const evolutionService = require('../services/evolutionService');
+const whatsappService = require('../services/whatsappService');
 
 const VALID_STATUSES = ['ACTIVE', 'SUSPENDED', 'TRIAL', 'ARCHIVED'];
 
@@ -1318,6 +1322,102 @@ function updateLeadStatusHandler(req, res) {
   return res.json(lead);
 }
 
+/* ---------- WhatsApp / Evolution API ---------- */
+
+/* Visão geral do painel do desenvolvedor: settings globais + estado de cada
+   empresa. Os campos do whatsappService refletem o provider ativo (Evolution
+   ou Graph/MOCK). */
+function whatsappOverviewHandler(req, res) {
+  const overview = evolutionService.overview();
+  return res.json({
+    ...overview,
+    api_key: overview.api_key_defined ? '••••••••' : '',
+    whatsapp: whatsappService.getStatus()
+  });
+}
+
+function getEvolutionSettingsHandler(req, res) {
+  const s = evolutionService.getEvolutionSettings();
+  return res.json({
+    enabled: s.enabled,
+    server_url: s.server_url,
+    api_key: s.api_key ? '••••••••' : ''
+  });
+}
+
+function updateEvolutionSettingsHandler(req, res) {
+  const { enabled, server_url, api_key } = req.body || {};
+  const current = evolutionService.getEvolutionSettings();
+
+  /* URL de servidor validada (http/https), api_key sem espaços. */
+  const url = String(server_url == null ? current.server_url : server_url).trim();
+  if (url && !/^https?:\/\//i.test(url)) {
+    throw new AppError(400, 'A URL do servidor deve começar com http:// ou https://');
+  }
+
+  /* API key em branco mantém a salva (mesmo padrão da integração de e-mail). */
+  const key = String(api_key == null || api_key === '' ? current.api_key : api_key).trim();
+  const updated = upsertEvolutionSettings({
+    enabled: Boolean(enabled),
+    server_url: url,
+    api_key: key
+  });
+
+  logActivity(req.user.id, null, 'EVOLUTION_SETTINGS_CHANGED', `Configuração Evolution API atualizada (enabled=${Boolean(enabled)})`);
+  return res.json({
+    enabled: updated.enabled,
+    server_url: updated.server_url,
+    api_key: updated.api_key ? '••••••••' : ''
+  });
+}
+
+async function testEvolutionConnectionHandler(req, res) {
+  const body = req.body || {};
+  const current = evolutionService.getEvolutionSettings();
+  const override = {
+    enabled: true,
+    server_url: String(body.server_url === undefined ? current.server_url : body.server_url).trim(),
+    api_key: String(body.api_key === undefined ? current.api_key : body.api_key).trim()
+  };
+  const result = await evolutionService.testConnection(override);
+  return res.json(result);
+}
+
+function requireTenant(id) {
+  const tenant = getTenantById(Number(id));
+  if (!tenant) throw new AppError(404, 'Empresa não encontrada.');
+  return tenant;
+}
+
+/* Estado de conexão de uma empresa (atualiza junto com a Evolution). */
+async function getTenantWhatsappHandler(req, res) {
+  const tenant = requireTenant(req.params.tenantId);
+  const state = evolutionService.connectionState(tenant);
+  await evolutionService.refreshStatus(tenant).catch(() => {});
+  const refreshed = evolutionService.connectionState(tenant);
+  return res.json(refreshed);
+}
+
+async function tenantWhatsappConnectHandler(req, res) {
+  const tenant = requireTenant(req.params.tenantId);
+  const result = await evolutionService.connect(tenant, { force: false });
+  if (result.error) throw new AppError(502, result.message || 'Falha ao conectar.');
+  return res.json(result);
+}
+
+async function tenantWhatsappReconnectHandler(req, res) {
+  const tenant = requireTenant(req.params.tenantId);
+  const result = await evolutionService.reconnect(tenant);
+  if (result.error) throw new AppError(502, result.message || 'Falha ao reconectar.');
+  return res.json(result);
+}
+
+async function tenantWhatsappDisconnectHandler(req, res) {
+  const tenant = requireTenant(req.params.tenantId);
+  const result = await evolutionService.disconnect(tenant);
+  return res.json(result);
+}
+
 module.exports = {
   login,
   me,
@@ -1371,5 +1471,13 @@ module.exports = {
   getEmailSettingsHandler,
   updateEmailSettingsHandler,
   listLeadsHandler,
-  updateLeadStatusHandler
+  updateLeadStatusHandler,
+  whatsappOverviewHandler,
+  getEvolutionSettingsHandler,
+  updateEvolutionSettingsHandler,
+  testEvolutionConnectionHandler,
+  getTenantWhatsappHandler,
+  tenantWhatsappConnectHandler,
+  tenantWhatsappReconnectHandler,
+  tenantWhatsappDisconnectHandler
 };
