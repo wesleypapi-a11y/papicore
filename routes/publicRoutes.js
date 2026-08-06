@@ -25,6 +25,11 @@ router.get('/branding/manifest', brandingController.publicManifest);
 /* Pagamento via Pix: imagem do QR Code final configurada no admin */
 router.get('/payment/pix-qr', pixController.publicPixQr);
 
+/* Documentos legais (Termos de Uso / Aviso de Privacidade) do tenant atual —
+   usados nos modais do agendamento e nas páginas públicas permanentes
+   /termos-de-uso e /aviso-de-privacidade. */
+router.get('/legal/documents/:key', agendamentoController.getPublicLegalDocument);
+
 router.get('/settings', agendamentoController.getPublicSettings);
 router.get('/modalities', agendamentoController.listModalities);
 router.get('/units', agendamentoController.listActiveUnits);

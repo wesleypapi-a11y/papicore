@@ -137,6 +137,9 @@ function appointmentBody(extra = {}) {
     vehicle_category: 'sedan',
     appointment_date: nextAppointmentDay(),
     start_time: '09:00',
+    /* exigido pelo fluxo público de agendamento (aceite de Termos de Uso /
+       Aviso de Privacidade); ignorado pelo caminho admin, que não o exige. */
+    legalAcceptance: { termsAccepted: true, privacyAcknowledged: true },
     ...extra
   };
 }

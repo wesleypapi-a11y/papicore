@@ -26,8 +26,19 @@
     has_power_access: false,
     customer_notes: '',
     paymentMethod: '',
-    cardPaid: false
+    cardPaid: false,
+    /* Aceite dos Termos de Uso / Aviso de Privacidade: nunca persiste "true"
+       entre recarregamentos de página (ver DOMContentLoaded abaixo) — só
+       sobrevive a um erro de envio dentro da mesma sessão em memória. */
+    legalAccepted: false,
+    submitting: false
   };
+
+  /* Cache dos documentos legais buscados para os modais (fora de `state`
+     para não ir para o sessionStorage a cada tecla digitada). */
+  const legalDocsCache = {};
+  let legalModalReturnFocus = null;
+  let legalModalKeydownHandler = null;
 
   const STEP_LABELS = ['Atendimento', 'Dados', 'Veículo', 'Data', 'Serviço', 'Horário', 'Revisão', 'Pagamento'];
   const TOTAL_STEPS = 8;
@@ -116,6 +127,7 @@
       const msg = data && data.error ? data.error : 'Algo deu errado. Tente novamente.';
       const err = new Error(msg);
       err.status = res.status;
+      err.code = data && data.code ? data.code : null;
       throw err;
     }
     return data;
@@ -358,6 +370,13 @@
         alert('Finalize o pagamento com o cartão antes de enviar.');
         return false;
       }
+      if (!state.legalAccepted) {
+        showLegalConsentError();
+        const checkbox = $('legalAcceptCheckbox');
+        if (checkbox) checkbox.focus();
+        return false;
+      }
+      hideLegalConsentError();
     }
     return true;
   }
@@ -952,6 +971,210 @@
       grid.appendChild(btn);
     });
     renderPaymentDetail();
+    renderLegalConsent();
+  }
+
+  /* ---------- aceite de Termos de Uso / Aviso de Privacidade ---------- */
+
+  /* Sincroniza o checkbox e o botão final com o estado atual — chamado ao
+     entrar na etapa Pagamento e sempre que o aceite muda. O checkbox nunca é
+     marcado por este código: apenas reflete state.legalAccepted, que só é
+     alterado pelo próprio clique/tecla do cliente no checkbox. */
+  function renderLegalConsent() {
+    const checkbox = $('legalAcceptCheckbox');
+    if (checkbox) checkbox.checked = Boolean(state.legalAccepted);
+    updateSubmitButtonState();
+  }
+
+  function updateSubmitButtonState() {
+    const btn = $('submitBtn');
+    if (!btn) return;
+    btn.disabled = !state.legalAccepted || state.submitting;
+  }
+
+  function showLegalConsentError() {
+    const box = $('legalConsentError');
+    if (!box) return;
+    box.textContent = 'Para concluir o agendamento, leia e aceite os Termos de Uso e confirme a leitura do Aviso de Privacidade.';
+    box.hidden = false;
+  }
+
+  function hideLegalConsentError() {
+    const box = $('legalConsentError');
+    if (box) box.hidden = true;
+  }
+
+  function legalFormatDate(raw) {
+    if (!raw) return '';
+    const d = new Date(String(raw).replace(' ', 'T'));
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('pt-BR');
+  }
+
+  /* Converte o texto puro do documento (nunca HTML) em blocos legíveis: uma
+     linha "N. Título" no início de um bloco vira subtítulo. Tudo passa por
+     escapeHtml antes de virar innerHTML — não é possível injetar script
+     mesmo que o conteúdo cadastrado contenha caracteres de marcação. */
+  function renderLegalBlocks(content) {
+    const blocks = String(content || '').split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+    return blocks.map((block) => {
+      const lines = block.split('\n');
+      const isHeading = /^\d+\.\s+\S/.test(lines[0]);
+      if (isHeading && lines.length > 1) {
+        const title = escapeHtml(lines[0]);
+        const body = lines.slice(1).map((l) => `<p>${escapeHtml(l)}</p>`).join('');
+        return `<h2>${title}</h2>${body}`;
+      }
+      return lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('');
+    }).join('');
+  }
+
+  function legalModalTitle(docKey) {
+    return docKey === 'privacy' ? 'Aviso de Privacidade' : 'Termos de Uso';
+  }
+
+  function legalModalShell(docKey) {
+    const title = escapeHtml(legalModalTitle(docKey));
+    return `
+      <div class="modal legal-modal" role="dialog" aria-modal="true" aria-labelledby="legalModalTitle">
+        <div class="modal-header">
+          <h3 id="legalModalTitle">${title}</h3>
+          <button type="button" class="modal-close" data-legal-close aria-label="Fechar">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="legal-modal-content" id="legalModalContent">
+            <div class="loading">Carregando conteúdo...</div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-legal-close>Fechar</button>
+          <button type="button" class="btn btn-primary" data-legal-ack>Li e entendi</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderLegalModalDoc(overlay, doc) {
+    const titleEl = overlay.querySelector('#legalModalTitle');
+    if (titleEl && doc.title) titleEl.textContent = doc.title;
+    const content = overlay.querySelector('#legalModalContent');
+    if (!content) return;
+    const meta = `<p class="legal-modal-meta">Versão ${escapeHtml(doc.version || '')}${doc.effective_at ? ' · vigente desde ' + escapeHtml(legalFormatDate(doc.effective_at)) : ''}</p>`;
+    content.innerHTML = meta + renderLegalBlocks(doc.content);
+  }
+
+  function renderLegalModalError(overlay, message) {
+    const content = overlay.querySelector('#legalModalContent');
+    if (content) content.innerHTML = `<div class="error-box">${escapeHtml(message || 'Não foi possível carregar o conteúdo. Tente novamente.')}</div>`;
+  }
+
+  function closeLegalModal() {
+    const overlay = $('legalModalOverlay');
+    if (!overlay) return;
+    overlay.classList.remove('open');
+    overlay.innerHTML = '';
+    if (legalModalKeydownHandler) {
+      document.removeEventListener('keydown', legalModalKeydownHandler);
+      legalModalKeydownHandler = null;
+    }
+    if (legalModalReturnFocus && typeof legalModalReturnFocus.focus === 'function') {
+      legalModalReturnFocus.focus();
+    }
+    legalModalReturnFocus = null;
+  }
+
+  function legalModalFocusables(overlay) {
+    return Array.prototype.slice.call(
+      overlay.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')
+    );
+  }
+
+  function bindLegalModalEvents(overlay) {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeLegalModal();
+    });
+    overlay.querySelectorAll('[data-legal-close], [data-legal-ack]').forEach((btn) => {
+      btn.addEventListener('click', closeLegalModal);
+    });
+    legalModalKeydownHandler = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeLegalModal();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const focusable = legalModalFocusables(overlay);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', legalModalKeydownHandler);
+  }
+
+  /* Abre o modal do Termos de Uso ou do Aviso de Privacidade. O foco vai
+     para o botão de fechar assim que o modal abre e retorna ao link de
+     origem quando o modal fecha (por botão, Esc ou clique no fundo). */
+  async function openLegalModal(docKey, triggerEl) {
+    const overlay = $('legalModalOverlay');
+    if (!overlay) return;
+    legalModalReturnFocus = triggerEl || document.activeElement;
+    overlay.innerHTML = legalModalShell(docKey);
+    overlay.classList.add('open');
+    bindLegalModalEvents(overlay);
+    const closeBtn = overlay.querySelector('.modal-close');
+    if (closeBtn) closeBtn.focus();
+
+    if (legalDocsCache[docKey]) {
+      renderLegalModalDoc(overlay, legalDocsCache[docKey]);
+      return;
+    }
+    try {
+      const doc = await api('/api/legal/documents/' + docKey);
+      legalDocsCache[docKey] = doc;
+      /* o modal pode ter sido fechado enquanto a busca estava em andamento */
+      if (overlay.classList.contains('open') && overlay.querySelector('#legalModalContent')) {
+        renderLegalModalDoc(overlay, doc);
+      }
+    } catch (err) {
+      if (overlay.classList.contains('open') && overlay.querySelector('#legalModalContent')) {
+        renderLegalModalError(overlay, err.message);
+      }
+    }
+  }
+
+  function bindLegalConsent() {
+    const checkbox = $('legalAcceptCheckbox');
+    if (checkbox) {
+      checkbox.addEventListener('change', () => {
+        state.legalAccepted = checkbox.checked;
+        saveState();
+        updateSubmitButtonState();
+        if (state.legalAccepted) hideLegalConsentError();
+      });
+    }
+    const termsLink = $('termsLink');
+    if (termsLink) {
+      termsLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openLegalModal('terms', termsLink);
+      });
+    }
+    const privacyLink = $('privacyLink');
+    if (privacyLink) {
+      privacyLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openLegalModal('privacy', privacyLink);
+      });
+    }
   }
 
   function paymentTotal() {
@@ -1212,12 +1435,27 @@
       has_power_access: state.has_power_access,
       key_delivery_confirmed: state.key_delivery_confirmed,
       payment_method: state.paymentMethod || null,
-      customer_notes: state.customer_notes.trim() || null
+      customer_notes: state.customer_notes.trim() || null,
+      /* Único checkbox obrigatório cobre as duas declarações: concordância
+         com os Termos de Uso e confirmação de leitura do Aviso de
+         Privacidade. O servidor nunca confia nisso sozinho — ele revalida e
+         busca as versões vigentes por conta própria. */
+      legalAcceptance: {
+        termsAccepted: Boolean(state.legalAccepted),
+        privacyAcknowledged: Boolean(state.legalAccepted)
+      }
     };
   }
 
   async function submitBooking() {
     if (!validateAddressSubmit()) return;
+    if (!state.legalAccepted) {
+      showLegalConsentError();
+      return;
+    }
+    if (state.submitting) return;
+    state.submitting = true;
+    hideLegalConsentError();
     const btn = $('submitBtn');
     btn.disabled = true;
     btn.textContent = 'Enviando...';
@@ -1228,10 +1466,23 @@
       });
       showSuccess(appointment);
     } catch (err) {
-      alert(err.message);
+      /* Erros do aceite jurídico (checkbox burlado, ex.: via devtools, ou
+         documentos indisponíveis no servidor) usam o componente de erro
+         próprio da etapa, nunca alert(). O checkbox permanece marcado —
+         nada aqui o desmarca. */
+      if (err.code === 'LEGAL_ACCEPTANCE_REQUIRED' || err.code === 'LEGAL_DOCUMENTS_UNAVAILABLE') {
+        const box = $('legalConsentError');
+        if (box) {
+          box.textContent = err.message;
+          box.hidden = false;
+        }
+      } else {
+        alert(err.message);
+      }
     } finally {
-      btn.disabled = false;
+      state.submitting = false;
       btn.textContent = 'Enviar solicitação de agendamento';
+      updateSubmitButtonState();
     }
   }
 
@@ -1295,6 +1546,7 @@
   /* ---------- global events ---------- */
 
   function bindGlobal() {
+    bindLegalConsent();
     $('btnNext').addEventListener('click', () => {
       if (!validateStep(state.currentStep)) return;
       goToStep(state.currentStep + 1);
@@ -1379,6 +1631,9 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     loadState();
+    /* O aceite jurídico nunca vem pré-marcado, nem de uma sessão anterior
+       salva no navegador: cada carregamento de página começa desmarcado. */
+    state.legalAccepted = false;
     restoreFields();
     init();
   });

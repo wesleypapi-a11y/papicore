@@ -8,6 +8,7 @@ const {
   getService
 } = require('../services/availabilityService');
 const { createAppointment } = require('../services/appointmentService');
+const legalDocumentService = require('../services/legalDocumentService');
 const {
   AppError,
   VEHICLE_CATEGORIES,
@@ -16,6 +17,14 @@ const {
   parseWorkingDays,
   PAYMENT_METHODS
 } = require('../utils/helpers');
+
+/* Cabeçalhos técnicos guardados na auditoria do aceite: truncados por
+   segurança (nunca confiar no tamanho de um header vindo do navegador). */
+function requestMeta(req) {
+  const ip = String(req.ip || '').slice(0, 100) || null;
+  const userAgent = String(req.get('user-agent') || '').slice(0, 300) || null;
+  return { ip, userAgent };
+}
 
 function parsePaymentMethods(raw) {
   let list;
@@ -186,7 +195,7 @@ function checkAvailability(req, res) {
 }
 
 function createAppointmentPublic(req, res) {
-  const appointment = createAppointment(req.body);
+  const appointment = createAppointment(req.body, requestMeta(req));
   const { enqueueEvent, EVENTS } = require('../services/whatsappService');
   try {
     enqueueEvent(EVENTS.REQUESTED_CUSTOMER, appointment, { linkAdmin: adminLink(req) });
@@ -204,6 +213,26 @@ function createAppointmentPublic(req, res) {
 function adminLink(req) {
   const host = req && req.get ? req.get('host') : '';
   return host ? `${req.protocol || 'https'}://${host}/admin` : '/admin';
+}
+
+/* Documentos legais públicos (Termos de Uso / Aviso de Privacidade) do tenant
+   atual — usados nos modais do agendamento e nas páginas /termos-de-uso e
+   /aviso-de-privacidade. O identificador vem da URL (whitelist fixa), nunca
+   de um id de banco de dados exposto ao navegador. */
+const PUBLIC_LEGAL_DOC_KEYS = ['terms', 'privacy'];
+
+function getPublicLegalDocument(req, res) {
+  const key = String(req.params.key || '').toLowerCase();
+  if (!PUBLIC_LEGAL_DOC_KEYS.includes(key)) {
+    throw new AppError(404, 'Documento não encontrado.');
+  }
+  const db = getDb();
+  const domain = req.tenant ? req.tenant.domain : req.tenantDomain;
+  const doc = legalDocumentService.publicDocument(db, key, domain);
+  if (!doc) {
+    throw new AppError(404, 'Documento ainda não publicado por esta empresa.');
+  }
+  return res.json(doc);
 }
 
 function getByCode(req, res) {
@@ -233,5 +262,6 @@ module.exports = {
   getCatalog,
   checkAvailability,
   createAppointmentPublic,
+  getPublicLegalDocument,
   getByCode
 };

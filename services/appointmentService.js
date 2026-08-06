@@ -1,5 +1,6 @@
 const { getDb } = require('../database/tenantDatabase');
 const { getUnit, getModality, getService, getConflicts, getFullDayBlockedDates } = require('./availabilityService');
+const legalDocumentService = require('./legalDocumentService');
 const {
   lunchConfig,
   dailyProductiveMinutes,
@@ -438,7 +439,17 @@ function assertSlotAvailable({ appointment_date, end_date, start_time, end_time,
   }
 }
 
-function createAppointment(body) {
+/*
+ * Cria um agendamento vindo do fluxo público. O aceite dos documentos legais
+ * (Termos de Uso + Aviso de Privacidade) é obrigatório aqui: a validação
+ * busca as versões vigentes no servidor (nunca aceita as do navegador) e o
+ * registro do aceite é gravado dentro da MESMA transação do agendamento —
+ * se o registro falhar, o agendamento inteiro é desfeito (rollback do
+ * better-sqlite3 em qualquer exceção dentro de db.transaction). Nunca existe
+ * agendamento público sem o aceite correspondente.
+ * `meta` traz metadados técnicos opcionais do aceite (ip/user-agent).
+ */
+function createAppointment(body, meta = {}) {
   const db = getDb();
   const data = validateAppointmentInput(body, { allowStatus: false });
 
@@ -452,7 +463,10 @@ function createAppointment(body) {
     if (c >= capacity) {
       throw new AppError(409, 'Este horário não está mais disponível. Escolha outro horário.');
     }
-    return insertAppointment(data);
+    const legalDocs = legalDocumentService.validateLegalAcceptance(db, body.legalAcceptance);
+    const appointment = insertAppointment(data);
+    legalDocumentService.recordAcceptances(db, appointment.id, legalDocs, meta);
+    return appointment;
   });
 
   return tx();

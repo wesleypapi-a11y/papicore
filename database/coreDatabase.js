@@ -2723,6 +2723,30 @@ function countTenantAppointments(databaseName) {
   }
 }
 
+/* Aceites jurídicos registrados e agendamentos ainda sem aceite (deve ser
+   zero para agendamentos criados após a implantação do aceite obrigatório;
+   agendamentos anteriores à implementação legitimamente não têm aceite). Não
+   expõe nome, telefone nem qualquer dado pessoal — apenas contagens. */
+function countTenantLegalStats(databaseName) {
+  try {
+    const tenantDb = openTenantDatabase(databaseName);
+    const acceptances = tenantDb.prepare('SELECT COUNT(*) AS total FROM appointment_legal_acceptances').get();
+    const missing = tenantDb
+      .prepare(
+        `SELECT COUNT(*) AS total FROM appointments a
+         WHERE NOT EXISTS (SELECT 1 FROM appointment_legal_acceptances l WHERE l.appointment_id = a.id)`
+      )
+      .get();
+    return {
+      acceptances: acceptances ? acceptances.total : 0,
+      appointmentsWithoutAcceptance: missing ? missing.total : 0
+    };
+  } catch (err) {
+    console.error('[papi-core] Falha ao contar aceites jurídicos de', databaseName, err.message);
+    return { acceptances: 0, appointmentsWithoutAcceptance: 0 };
+  }
+}
+
 function countTenantUnits(databaseName) {
   try {
     const tenantDb = openTenantDatabase(databaseName);
@@ -2758,6 +2782,7 @@ module.exports = {
   nextTenantId,
   countTenantAppointments,
   countTenantUnits,
+  countTenantLegalStats,
   isTenantExpired,
   /* domínios */
   listDomains,

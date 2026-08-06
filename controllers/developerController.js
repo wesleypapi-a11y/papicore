@@ -23,6 +23,7 @@ const {
   deleteTenant,
   nextTenantId,
   countTenantAppointments,
+  countTenantLegalStats,
   listDomains,
   getDomainById,
   getDomainRow,
@@ -183,9 +184,14 @@ function dashboard(req, res) {
 
   let domains = 0;
   let appointments = 0;
+  let legalAcceptances = 0;
+  let appointmentsWithoutLegalAcceptance = 0;
   for (const t of tenants) {
     domains += listDomains(t.id).length;
     appointments += countTenantAppointments(t.database_name);
+    const legal = countTenantLegalStats(t.database_name);
+    legalAcceptances += legal.acceptances;
+    appointmentsWithoutLegalAcceptance += legal.appointmentsWithoutAcceptance;
   }
 
   const recentLogs = listLogs(10);
@@ -200,6 +206,8 @@ function dashboard(req, res) {
     appointments,
     plans: listPlans().length,
     tenant_databases: tenants.filter((t) => tenantDatabaseExists(t.database_name)).length,
+    legal_acceptances: legalAcceptances,
+    appointments_without_legal_acceptance: appointmentsWithoutLegalAcceptance,
     recent_tenants: tenants.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 5),
     recent_logs: recentLogs
   });

@@ -1953,3 +1953,89 @@ html.lock-desktop .modal-actions .btn { flex: none; }
   padding: 8px;
   background: #fff;
 }
+
+/* ---------- aceite de Termos de Uso / Aviso de Privacidade (Pagamento) ---------- */
+
+.legal-consent {
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin: 20px 0;
+}
+.legal-consent .checkbox {
+  margin: 0;
+  gap: 12px;
+}
+.legal-consent .checkbox input {
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+}
+.legal-consent .checkbox span { font-size: 15px; color: var(--text); }
+.legal-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.legal-link:hover { color: var(--accent-hover); }
+.legal-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.legal-consent-support {
+  margin: 12px 0 0 34px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+.legal-consent-error { margin: 12px 0 0 34px; }
+@media (max-width: 480px) {
+  .legal-consent-support, .legal-consent-error { margin-left: 0; }
+}
+
+/* Modais dos documentos legais: reaproveitam .modal-overlay/.modal, com uma
+   área de conteúdo com rolagem interna própria (documentos longos não
+   estouram a tela nem empurram os botões de ação para fora da viewport). */
+.legal-modal-content {
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+.legal-modal-content h2 { font-size: 15px; font-weight: 700; margin: 18px 0 6px; }
+.legal-modal-content h2:first-child { margin-top: 0; }
+.legal-modal-content p { font-size: 14px; line-height: 1.65; color: var(--text-soft); margin-bottom: 8px; }
+.legal-modal-content .loading { padding: 30px 0; }
+.legal-modal-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+.modal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- páginas /termos-de-uso e /aviso-de-privacidade ---------- */
+
+.legal-doc-main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 20px 60px;
+  position: relative;
+  z-index: 1;
+}
+.legal-doc-back { text-decoration: none; }
+.legal-doc-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 30px 28px;
+}
+.legal-doc-card h1 { font-size: 25px; font-weight: 800; margin-bottom: 6px; }
+.legal-doc-meta { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+.legal-doc-body h2 { font-size: 16px; font-weight: 700; margin: 24px 0 8px; }
+.legal-doc-body h2:first-child { margin-top: 0; }
+.legal-doc-body p { font-size: 14.5px; line-height: 1.75; color: var(--text-soft); margin-bottom: 8px; }
+@media (max-width: 480px) {
+  .legal-doc-card { padding: 22px 18px; }
+  .legal-doc-card h1 { font-size: 21px; }
+}

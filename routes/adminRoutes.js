@@ -18,6 +18,7 @@ const financialController = require('../controllers/financialController');
 const brandingController = require('../controllers/brandingController');
 const pixController = require('../controllers/pixController');
 const adminContractController = require('../controllers/adminContractController');
+const legalDocumentController = require('../controllers/legalDocumentController');
 const packageController = require('../controllers/packageController');
 const whatsappController = require('../controllers/whatsappController');
 
@@ -87,6 +88,11 @@ router.get('/settings', settingsController.get);
 router.put('/settings', settingsController.update);
 router.post('/settings/pix-qr', pixController.uploadPixQr);
 router.delete('/settings/pix-qr', pixController.removePixQr);
+
+/* Configurações > Documentos e privacidade: somente leitura nesta primeira
+   implementação (ver services/legalDocumentService.js). */
+router.get('/legal-documents', legalDocumentController.list);
+router.get('/legal-documents/:id', legalDocumentController.getOne);
 
 /* Aba Aparência (Configurações > Aparência): logo, favicon e tema de cores
    do próprio tenant. O tenant nunca vem da URL/body — sempre de req.tenant,

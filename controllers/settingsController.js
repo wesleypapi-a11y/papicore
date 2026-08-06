@@ -9,6 +9,7 @@ const {
   AppError,
   isValidTime,
   isValidPhone,
+  isValidEmail,
   parseWorkingDays,
   PAYMENT_METHODS
 } = require('../utils/helpers');
@@ -55,6 +56,9 @@ function update(req, res) {
     company_name,
     phone,
     whatsapp,
+    document: companyDocument,
+    email,
+    address,
     logo_url,
     default_opening_time,
     default_closing_time,
@@ -84,6 +88,14 @@ function update(req, res) {
   }
   if (phone && !isValidPhone(phone)) throw new AppError(400, 'Telefone inválido.');
   if (whatsapp && !isValidPhone(whatsapp)) throw new AppError(400, 'WhatsApp inválido.');
+
+  /* Identificação empresarial (usada nos Termos de Uso e no Aviso de
+     Privacidade). Todos opcionais — a empresa pode publicar os documentos
+     sem preenchê-los, e o texto gerado só omite o dado ausente. */
+  const companyDocumentValue = companyDocument == null ? null : String(companyDocument).trim().slice(0, 32) || null;
+  if (email && !isValidEmail(email)) throw new AppError(400, 'E-mail inválido.');
+  const emailValue = email == null ? null : String(email).trim().toLowerCase().slice(0, 160) || null;
+  const addressValue = address == null ? null : String(address).trim().slice(0, 300) || null;
 
   /* Pagamento via Pix (opcional). */
   const pixCode = pix_code == null ? null : String(pix_code).trim();
@@ -136,14 +148,18 @@ function update(req, res) {
 
   db.prepare(
     `INSERT INTO company_settings
-       (id, company_name, phone, whatsapp, logo_url, default_opening_time, default_closing_time,
+       (id, company_name, phone, whatsapp, document, email, address, logo_url,
+        default_opening_time, default_closing_time,
         default_interval, lunch_start, lunch_end, working_days, confirmation_message, capacity,
         pix_code, pix_company_name, payment_methods_enabled)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        company_name = excluded.company_name,
        phone = excluded.phone,
        whatsapp = excluded.whatsapp,
+       document = excluded.document,
+       email = excluded.email,
+       address = excluded.address,
        logo_url = excluded.logo_url,
        default_opening_time = excluded.default_opening_time,
        default_closing_time = excluded.default_closing_time,
@@ -161,6 +177,9 @@ function update(req, res) {
     String(company_name).trim(),
     phone ? String(phone).trim() : null,
     whatsapp ? String(whatsapp).trim() : null,
+    companyDocumentValue,
+    emailValue,
+    addressValue,
     logo_url ? String(logo_url).trim() : null,
     default_opening_time,
     default_closing_time,

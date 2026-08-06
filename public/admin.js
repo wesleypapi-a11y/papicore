@@ -3177,6 +3177,7 @@
       <div class="tabs">
         <button type="button" class="tab ${tab === 'geral' ? 'active' : ''}" data-settings-tab="geral">Geral</button>
         <button type="button" class="tab ${tab === 'aparencia' ? 'active' : ''}" data-settings-tab="aparencia">Aparência</button>
+        <button type="button" class="tab ${tab === 'documentos' ? 'active' : ''}" data-settings-tab="documentos">Documentos e privacidade</button>
       </div>
       <div id="settingsTabBody"></div>
     `;
@@ -3188,7 +3189,62 @@
       });
     });
     if (tab === 'aparencia') await renderAppearanceTab($('settingsTabBody'));
+    else if (tab === 'documentos') await renderLegalDocsTab($('settingsTabBody'));
     else await renderGeneralTab($('settingsTabBody'));
+  }
+
+  /* ---------- Configurações > Documentos e privacidade ---------- */
+
+  const LEGAL_DOC_LABELS = { terms: 'Termos de Uso', privacy: 'Aviso de Privacidade' };
+
+  function legalDocDate(raw) {
+    if (!raw) return '';
+    const d = new Date(String(raw).replace(' ', 'T'));
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('pt-BR');
+  }
+
+  async function renderLegalDocsTab(container) {
+    container.innerHTML = '<div class="loading">Carregando documentos...</div>';
+    let docs;
+    try {
+      docs = await api('/api/admin/legal-documents');
+    } catch (e) {
+      container.innerHTML = `<div class="error-box">${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    container.innerHTML = `
+      <div class="panel">
+        <h3 class="review-section-title" style="border:0;margin:0 0 4px;padding:0;">Documentos legais exibidos no agendamento</h3>
+        <p class="sub" style="margin-top:0;">Termos de Uso e Aviso de Privacidade que o cliente precisa aceitar para concluir um agendamento. O conteúdo usa os dados cadastrados em Configurações &gt; Geral.</p>
+        <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
+          ${docs.map((d) => `
+            <div class="stat-card">
+              <div class="stat-label">${escapeHtml(LEGAL_DOC_LABELS[d.doc_key] || d.title)}</div>
+              <div class="stat-value" style="font-size:18px;">${d.published ? 'Publicado' : 'Não publicado'}</div>
+              <p class="sub" style="margin:6px 0 12px;">Versão ${escapeHtml(d.version)}${d.effective_at ? ' · vigente desde ' + escapeHtml(legalDocDate(d.effective_at)) : ''}</p>
+              <button type="button" class="btn btn-outline btn-sm" data-view-legal-doc="${d.id}">Visualizar</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    container.querySelectorAll('[data-view-legal-doc]').forEach((btn) => {
+      btn.addEventListener('click', () => openLegalDocModal(btn.dataset.viewLegalDoc));
+    });
+  }
+
+  async function openLegalDocModal(id) {
+    openModal('Carregando...', '<div class="loading">Carregando documento...</div>');
+    try {
+      const doc = await api(`/api/admin/legal-documents/${id}`);
+      const body = `
+        <p class="sub" style="margin-top:0;">Versão ${escapeHtml(doc.version)}${doc.effective_at ? ' · vigente desde ' + escapeHtml(legalDocDate(doc.effective_at)) : ''}</p>
+        <div style="max-height:55vh;overflow-y:auto;white-space:pre-wrap;line-height:1.6;font-size:14px;">${escapeHtml(doc.content)}</div>
+      `;
+      openModal(doc.title, body, '<button type="button" class="btn btn-primary" data-close>Fechar</button>');
+    } catch (e) {
+      openModal('Documento', `<div class="error-box">${escapeHtml(e.message)}</div>`);
+    }
   }
 
   async function renderGeneralTab(container) {
@@ -3206,6 +3262,13 @@
           <div class="field">${fieldHtml('setPhone', 'Telefone', s.phone, 'text', '(00) 00000-0000')}</div>
           <div class="field">${fieldHtml('setWhatsapp', 'WhatsApp', s.whatsapp, 'text', '(00) 00000-0000')}</div>
           <div class="field">${fieldHtml('setCapacity', 'Capacidade simultânea (padrão)', s.capacity || 1, 'number')}</div>
+        </div>
+        <h3 class="review-section-title">Dados para os documentos legais</h3>
+        <p class="sub" style="margin-top:0;">Usados nos Termos de Uso e no Aviso de Privacidade exibidos ao cliente no agendamento. Deixe em branco o que não se aplicar — o texto omite o dado ausente.</p>
+        <div class="form-grid">
+          <div class="field">${fieldHtml('setDocument', 'CNPJ ou CPF', s.document, 'text', '00.000.000/0000-00')}</div>
+          <div class="field">${fieldHtml('setEmail', 'E-mail (contato e privacidade)', s.email, 'email', 'contato@suaempresa.com.br')}</div>
+          <div class="field span-2">${fieldHtml('setAddress', 'Endereço', s.address, 'text', 'Rua, número, bairro, cidade/UF')}</div>
         </div>
         <h3 class="review-section-title">Horário de funcionamento</h3>
         <div class="form-grid">
@@ -3252,6 +3315,9 @@
         company_name: $('setName').value,
         phone: $('setPhone').value || null,
         whatsapp: $('setWhatsapp').value || null,
+        document: $('setDocument').value || null,
+        email: $('setEmail').value || null,
+        address: $('setAddress').value || null,
         default_opening_time: $('setOpen').value,
         default_closing_time: $('setClose').value,
         lunch_start: $('setLunchStart').value,

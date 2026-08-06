@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d12" />
+<title>Aviso de Privacidade</title>
+<meta name="tenant-title-suffix" content="Aviso de Privacidade" />
+<meta name="description" content="Aviso de Privacidade do agendamento online." />
+<link id="pageFavicon" rel="icon" href="/assets/favicon.png" />
+<link id="appleTouchIcon" rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body class="booking-app legal-doc-page" data-doc-key="privacy">
+  <header class="site-header">
+    <div class="brand">
+      <img id="brandLogo" data-tenant-logo src="/assets/logo.png" alt="" class="brand-logo" />
+      <span class="brand-name" id="brandName">Agendamento</span>
+    </div>
+    <a class="btn btn-ghost legal-doc-back" href="/">← Voltar ao agendamento</a>
+  </header>
+
+  <main class="legal-doc-main">
+    <div class="legal-doc-card" id="legalDocCard">
+      <div class="loading">Carregando documento...</div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img data-tenant-logo src="/assets/logo.png" alt="" class="footer-logo" />
+        <p id="footerCompanyName"></p>
+      </div>
+      <div class="footer-social">
+        <span class="footer-label">Contato</span>
+        <span class="footer-phone" id="footerPhone"></span>
+        <a class="footer-link" id="footerWa" href="#" target="_blank" rel="noopener" hidden>WhatsApp</a>
+      </div>
+      <div class="footer-copy">© PapiCore — Todos os direitos reservados.</div>
+    </div>
+  </footer>
+
+  <script src="/js/branding.js"></script>
+  <script src="/js/legalPage.js"></script>
+</body>
+</html>

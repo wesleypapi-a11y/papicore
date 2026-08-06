@@ -227,9 +227,19 @@
         </header>
         <div class="payment-grid" id="paymentGrid"></div>
         <div class="payment-detail" id="paymentDetail" hidden></div>
+
+        <div class="legal-consent" id="legalConsent">
+          <label class="checkbox">
+            <input type="checkbox" id="legalAcceptCheckbox" aria-describedby="legalConsentSupport legalConsentError" />
+            <span>Li e concordo com os <a href="/termos-de-uso" id="termsLink" class="legal-link">Termos de Uso</a> e declaro que li o <a href="/aviso-de-privacidade" id="privacyLink" class="legal-link">Aviso de Privacidade</a>.</span>
+          </label>
+          <p class="legal-consent-support" id="legalConsentSupport">Seus dados serão utilizados para processar o agendamento, permitir o atendimento pela empresa escolhida e manter o histórico operacional necessário.</p>
+          <div class="error-box legal-consent-error" id="legalConsentError" role="alert" hidden></div>
+        </div>
+
         <div class="nav-row">
           <button type="button" class="btn btn-ghost" data-action="back">← Voltar</button>
-          <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">Enviar solicitação de agendamento</button>
+          <button type="submit" class="btn btn-primary btn-lg" id="submitBtn" disabled>Enviar solicitação de agendamento</button>
         </div>
       </section>
 
@@ -256,6 +266,11 @@
       </div>
     </section>
   </main>
+
+  <!-- Modal dos documentos legais (Termos de Uso / Aviso de Privacidade),
+       aberto a partir dos links da etapa Pagamento. Conteúdo montado em
+       JavaScript (ver app.js) a partir de /api/legal/documents/:key. -->
+  <div id="legalModalOverlay" class="modal-overlay"></div>
 
   <footer class="site-footer">
     <div class="footer-inner">

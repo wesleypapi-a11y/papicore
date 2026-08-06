@@ -221,6 +221,20 @@ app.get('/agendar/:slug', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+/* Documentos legais da EMPRESA (tenant) do domínio acessado — exigidos no
+   aceite do agendamento público. Diferentes de /termos e /privacidade acima,
+   que são documentos institucionais da própria PapiCore. O HTML é o mesmo
+   para qualquer domínio; o conteúdo (nome, dados e texto jurídico da
+   empresa) é resolvido no navegador via /api/legal/documents/:key, que passa
+   pelo domainTenantMiddleware. Não usa /admin nem /desenvolvedor. */
+app.get('/termos-de-uso', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'termos-de-uso.html'));
+});
+
+app.get('/aviso-de-privacidade', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'aviso-de-privacidade.html'));
+});
+
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Rota não encontrada.' });
 });

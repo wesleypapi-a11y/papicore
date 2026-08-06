@@ -332,6 +332,209 @@ CREATE INDEX IF NOT EXISTS idx_pt_appointment ON package_transactions (appointme
 CREATE INDEX IF NOT EXISTS idx_pt_created ON package_transactions (created_at);
 `;
 
+/* ---------- Documentos legais (LGPD) ---------- */
+
+/* Documentos legais versionados por tenant (Termos de Uso, Aviso de
+   Privacidade). A versão vigente é a atual; edições criam uma versão nova e
+   o agendamento registra a versão exata aceita pelo cliente. */
+const legalDocumentsDDL = `
+CREATE TABLE IF NOT EXISTS legal_documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_key TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  version TEXT NOT NULL DEFAULT '1.0',
+  effective_at TEXT,
+  published INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+`;
+
+/* Histórico imutável de versões: sempre que o conteúdo de um documento muda
+   (updateDocument), a versão ANTERIOR inteira (título + texto) é arquivada
+   aqui antes de ser sobrescrita em legal_documents — nunca silenciosamente
+   perdida. legal_documents guarda apenas a versão vigente (leitura rápida no
+   fluxo público); esta tabela guarda o histórico completo para auditoria. */
+const legalDocumentVersionsDDL = `
+CREATE TABLE IF NOT EXISTS legal_document_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  legal_document_id INTEGER NOT NULL REFERENCES legal_documents(id) ON DELETE CASCADE,
+  doc_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  version TEXT NOT NULL,
+  published INTEGER NOT NULL,
+  effective_at TEXT,
+  archived_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (legal_document_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_ldv_document ON legal_document_versions (legal_document_id);
+`;
+
+/* Aceites registrados por agendamento: guarda o instantâneo (título + versão)
+   aceitos, tornando o histórico imutável mesmo que o documento mude depois.
+   O registro é feito na mesma transação do agendamento. ip_address/user_agent
+   são metadados técnicos do momento do aceite (auditoria), nunca usados para
+   outra finalidade. */
+const appointmentLegalAcceptancesDDL = `
+CREATE TABLE IF NOT EXISTS appointment_legal_acceptances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  appointment_id INTEGER NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+  legal_document_id INTEGER NOT NULL REFERENCES legal_documents(id),
+  document_version TEXT NOT NULL,
+  document_title TEXT NOT NULL,
+  ip_address TEXT,
+  user_agent TEXT,
+  accepted_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE (appointment_id, legal_document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ala_appointment ON appointment_legal_acceptances (appointment_id);
+`;
+
+/*
+ * Conteúdo jurídico inicial sujeito à revisão profissional antes da
+ * publicação definitiva.
+ *
+ * Conteúdo padrão NEUTRO (sem marca, sem nome de cliente fixado). Usa
+ * placeholders substituídos pelos dados reais do tenant somente na leitura
+ * pública (ver legalDocumentService.renderContent):
+ *   {{NOME_DA_EMPRESA}}       nome da empresa (ou frase neutra, se ausente)
+ *   {{IDENTIFICACAO_EMPRESA}} parágrafo com os dados cadastrados da empresa
+ *                              (documento, endereço, contato, domínio — cada
+ *                              dado só aparece se estiver cadastrado)
+ *   {{CONTATO_PRIVACIDADE}}   canal de contato para assuntos de privacidade
+ *   {{DOMINIO_EMPRESA}}       domínio configurado da empresa
+ * As empresas podem editar o conteúdo no painel administrativo; cada edição
+ * relevante cria uma nova versão (ver legalDocumentService.updateDocument).
+ */
+const DEFAULT_LEGAL_DOCUMENTS = [
+  {
+    doc_key: 'terms',
+    title: 'Termos de Uso',
+    content: [
+      'Estes Termos de Uso regulam o uso da página pública de agendamento online. Ao marcar a caixa de aceite antes de concluir uma solicitação de agendamento, você declara que leu e concorda com estas condições.',
+      '',
+      '1. Identificação da empresa prestadora do serviço',
+      '{{IDENTIFICACAO_EMPRESA}}',
+      '',
+      '2. Finalidade desta página de agendamento',
+      'Esta página permite solicitar, de forma online, o agendamento de serviços automotivos oferecidos por {{NOME_DA_EMPRESA}}. A PapiCore é a fornecedora da tecnologia utilizada para operar este agendamento; quem presta o serviço automotivo, define preços e atende o veículo é {{NOME_DA_EMPRESA}}.',
+      '',
+      '3. Informações fornecidas pelo cliente',
+      'Para solicitar um agendamento, são pedidos dados de identificação e contato, dados do veículo e, quando aplicável à modalidade escolhida, endereço de atendimento.',
+      '',
+      '4. Responsabilidade pela veracidade dos dados',
+      'Você é responsável pela veracidade, exatidão e atualização dos dados informados. Dados incorretos ou incompletos podem impedir a confirmação ou a correta prestação do serviço.',
+      '',
+      '5. Solicitação e confirmação do agendamento',
+      'O envio do formulário gera uma solicitação de agendamento, não uma confirmação automática. A reserva do horário é analisada e confirmada por {{NOME_DA_EMPRESA}}, que poderá entrar em contato pelos canais informados.',
+      '',
+      '6. Aceitar, recusar, alterar ou cancelar',
+      '{{NOME_DA_EMPRESA}} pode aceitar, recusar, propor alteração de horário ou cancelar uma solicitação, especialmente em caso de indisponibilidade, dados incompletos ou impossibilidade de realizar o serviço solicitado.',
+      '',
+      '7. Preços e condições apresentados no agendamento',
+      'Os preços, prazos e condições exibidos no momento do agendamento são os praticados por {{NOME_DA_EMPRESA}} naquele momento e podem ser revistos antes da confirmação, especialmente quando dependem de avaliação do veículo.',
+      '',
+      '8. Serviços com preço fixo ou "a partir de"',
+      'Serviços com preço fixo têm valor determinado antecipadamente. Serviços exibidos como "a partir de" são estimativas: o valor final é confirmado por {{NOME_DA_EMPRESA}} conforme as características do veículo ou do serviço solicitado, antes da execução.',
+      '',
+      '9. Modalidades de atendimento',
+      'Conforme a disponibilidade configurada por {{NOME_DA_EMPRESA}}, o serviço pode ser prestado na unidade, por leva e traz (retirada e devolução do veículo) ou por delivery (atendimento no endereço informado pelo cliente).',
+      '',
+      '10. Taxas adicionais',
+      'Taxas adicionais eventualmente aplicáveis à modalidade escolhida (como deslocamento) são exibidas antes da confirmação do agendamento, dentro do resumo apresentado ao cliente.',
+      '',
+      '11. Formas de pagamento',
+      'As formas de pagamento disponíveis são as habilitadas por {{NOME_DA_EMPRESA}} e exibidas na etapa de pagamento deste agendamento.',
+      '',
+      '12. Atrasos e tolerância',
+      'Quando {{NOME_DA_EMPRESA}} configurar uma política de tolerância a atrasos, ela será informada ao cliente pelos canais de atendimento. Na ausência de configuração específica, atrasos podem afetar a disponibilidade do horário reservado.',
+      '',
+      '13. Cancelamento e reagendamento',
+      'O cliente pode solicitar o cancelamento ou o reagendamento pelos canais de contato de {{NOME_DA_EMPRESA}}. Condições específicas de cancelamento, quando existirem, são informadas pela empresa no momento da solicitação.',
+      '',
+      '14. Objetos deixados no veículo',
+      '{{NOME_DA_EMPRESA}} não se responsabiliza por objetos pessoais deixados no veículo. Recomenda-se retirar pertences de valor antes do atendimento.',
+      '',
+      '15. Condições relevantes do veículo',
+      'O cliente deve informar condições relevantes do veículo (como avarias preexistentes, itens soltos ou problemas mecânicos conhecidos) que possam ser importantes para a correta execução do serviço.',
+      '',
+      '16. Limitações técnicas da plataforma',
+      'A PapiCore realiza esforços razoáveis para manter esta página disponível e funcionando corretamente, mas não garante disponibilidade ininterrupta nem ausência total de falhas técnicas, que podem ocasionalmente afetar o envio ou a exibição de informações.',
+      '',
+      '17. Uso adequado desta página',
+      'Esta página deve ser utilizada exclusivamente para solicitar agendamentos reais de serviços oferecidos por {{NOME_DA_EMPRESA}}, de forma lícita e de boa-fé.',
+      '',
+      '18. Proibição de agendamentos fraudulentos',
+      'É proibido enviar solicitações de agendamento com dados falsos, de terceiros sem autorização, ou com o objetivo de fraudar, sobrecarregar ou testar indevidamente o sistema.',
+      '',
+      '19. Propriedade intelectual da plataforma',
+      'O software, o layout e os recursos técnicos desta página de agendamento são de propriedade da PapiCore ou de seus licenciantes, não sendo cedidos ao cliente pelo uso do serviço.',
+      '',
+      '20. Alterações destes Termos',
+      'Estes Termos de Uso podem ser atualizados. Alterações relevantes geram uma nova versão, sem afetar o registro do aceite já vinculado a agendamentos anteriores.',
+      '',
+      '21. Canal de contato',
+      'Dúvidas sobre estes Termos podem ser esclarecidas diretamente com {{NOME_DA_EMPRESA}}, pelo(s) canal(is) de contato informado(s) nesta página.',
+      '',
+      '22. Legislação aplicável e foro',
+      'Estes Termos são regidos pela legislação brasileira. Fica eleito o foro do domicílio da empresa prestadora do serviço para dirimir eventuais controvérsias, ressalvada disposição legal em contrário.'
+    ].join('\n')
+  },
+  {
+    doc_key: 'privacy',
+    title: 'Aviso de Privacidade',
+    content: [
+      'Este Aviso de Privacidade explica como os dados pessoais informados nesta página de agendamento são tratados, em conformidade com a Lei Geral de Proteção de Dados (LGPD — Lei nº 13.709/2018).',
+      '',
+      '1. Quem trata os seus dados',
+      '{{IDENTIFICACAO_EMPRESA}}',
+      '',
+      '2. Papel da empresa responsável pelo atendimento',
+      '{{NOME_DA_EMPRESA}} é responsável pelo atendimento, pela execução do serviço automotivo solicitado e pelos dados dos seus clientes coletados para essa finalidade.',
+      '',
+      '3. Papel da PapiCore como fornecedora da plataforma',
+      'A PapiCore fornece a tecnologia (software de agendamento) utilizada por {{NOME_DA_EMPRESA}} para operar e administrar os agendamentos, atuando como operadora dos dados tratados nesta página, conforme instruções da empresa contratante.',
+      '',
+      '4. Dados que podem ser coletados',
+      'Conforme os campos preenchidos no agendamento, podem ser coletados: nome; telefone e/ou WhatsApp; dados do veículo (marca, modelo, ano, placa, cor, categoria); endereço, quando necessário para leva e traz ou delivery; serviço, data e horário escolhidos; dados de pagamento, somente quando aplicável à forma de pagamento selecionada; e informações técnicas de acesso e segurança (como endereço IP e navegador utilizado).',
+      '',
+      '5. Finalidades do tratamento',
+      'Os dados são utilizados para: criar e administrar o agendamento; entrar em contato sobre o atendimento; organizar a agenda de {{NOME_DA_EMPRESA}}; executar o serviço solicitado; prevenir fraude e uso abusivo da plataforma; manter registros necessários à operação; e cumprir obrigações legais e regulatórias aplicáveis.',
+      '',
+      '6. Compartilhamento de dados',
+      'Os dados podem ser compartilhados com: {{NOME_DA_EMPRESA}}, como responsável pelo atendimento; provedores de hospedagem e infraestrutura técnica essencial ao funcionamento da plataforma; meios de pagamento, quando efetivamente utilizados; e autoridades públicas, quando exigido por lei ou ordem judicial. Os dados não são vendidos a terceiros.',
+      '',
+      '7. Armazenamento e segurança',
+      'Os dados ficam armazenados no banco de dados próprio da empresa dentro da plataforma PapiCore, com controles técnicos e administrativos de acesso destinados a reduzir riscos de acesso não autorizado, perda ou uso indevido.',
+      '',
+      '8. Período de retenção',
+      'Os dados são mantidos pelo tempo necessário para cumprir as finalidades descritas neste Aviso, incluindo o histórico operacional do atendimento, e podem ser mantidos por período adicional quando exigido por obrigação legal, regulatória ou para exercício regular de direitos.',
+      '',
+      '9. Direitos do titular dos dados',
+      'Nos termos da LGPD, você pode solicitar, entre outros direitos previstos em lei: confirmação da existência de tratamento; acesso aos dados; correção de dados incompletos, inexatos ou desatualizados; e, observadas as exceções legais (como obrigações de guarda de registros), a eliminação de dados tratados com base no consentimento.',
+      '',
+      '10. Como exercer seus direitos',
+      'Solicitações relacionadas aos seus dados podem ser feitas junto a {{CONTATO_PRIVACIDADE}}, canal de contato de {{NOME_DA_EMPRESA}} para assuntos de privacidade.',
+      '',
+      '11. Cookies e dados técnicos essenciais',
+      'Esta página utiliza apenas os recursos técnicos essenciais ao seu funcionamento (como armazenamento local do progresso do agendamento no seu próprio navegador), sem uso de cookies de rastreamento publicitário de terceiros.',
+      '',
+      '12. Dados de menores de idade',
+      'Este serviço destina-se à solicitação de agendamentos por pessoas maiores de idade ou legalmente capazes. Dados de menores porventura informados (como no cadastro do responsável) são tratados apenas na medida necessária à prestação do serviço solicitado.',
+      '',
+      '13. Atualizações deste Aviso',
+      'Este Aviso de Privacidade pode ser atualizado. Alterações relevantes geram uma nova versão, sem afetar o registro do aceite já vinculado a agendamentos anteriores.',
+      '',
+      '14. Canal de contato sobre privacidade',
+      'Para dúvidas sobre este Aviso ou sobre o tratamento dos seus dados, utilize {{CONTATO_PRIVACIDADE}}.',
+      '',
+      'O aceite registrado nesta página confirma que você concorda com os Termos de Uso e que leu este Aviso de Privacidade. O tratamento necessário para solicitar e executar o agendamento pode se apoiar em bases legais além do consentimento, como a execução de um contrato ou o cumprimento de obrigação legal, conforme a finalidade específica de cada dado tratado. Este aceite não implica renúncia a nenhum direito previsto na LGPD.'
+    ].join('\n')
+  }
+];
+
 /* ---------- WhatsApp (mensagens automáticas) ---------- */
 
 /* Modelos de mensagem automática, editáveis por tenant. O banco é por
@@ -768,6 +971,20 @@ function migrateWhatsappV2(db) {
   ensureColumn(db, 'whatsapp_outbox', 'processed_at', 'TEXT');
 }
 
+/* Documentos legais v1 — tabelas + seed dos documentos padrão NEUTROS.
+   INSERT OR IGNORE preserva edições da empresa (idempotente). */
+function migrateLegalDocumentsV1(db) {
+  db.exec(appointmentLegalAcceptancesDDL);
+  db.exec(legalDocumentVersionsDDL);
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO legal_documents (doc_key, title, content, version, effective_at, published)
+     VALUES (?, ?, ?, '1.0', datetime('now', 'localtime'), 1)`
+  );
+  for (const d of DEFAULT_LEGAL_DOCUMENTS) {
+    insert.run(d.doc_key, d.title, d.content);
+  }
+}
+
 /* ---------- Aplicação do schema ---------- */
 
 function createTables(db) {
@@ -785,6 +1002,9 @@ function createTables(db) {
   db.exec(whatsappMessageTemplatesDDL);
   db.exec(whatsappOutboxDDL);
   db.exec(whatsappMessageHistoryDDL);
+  db.exec(legalDocumentsDDL);
+  db.exec(appointmentLegalAcceptancesDDL);
+  db.exec(legalDocumentVersionsDDL);
   db.exec(
     "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')))"
   );
@@ -822,6 +1042,13 @@ function upgradeSchema(db) {
   ensureColumn(db, 'company_settings', 'capacity', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'company_settings', 'lunch_start', "TEXT NOT NULL DEFAULT '12:00'");
   ensureColumn(db, 'company_settings', 'lunch_end', "TEXT NOT NULL DEFAULT '13:00'");
+
+  /* Identificação empresarial usada nos documentos legais (Termos de Uso e
+     Aviso de Privacidade) e opcionalmente em outras telas. Todos opcionais:
+     a ausência de um dado apenas o omite no texto gerado, sem "undefined". */
+  ensureColumn(db, 'company_settings', 'document', 'TEXT');
+  ensureColumn(db, 'company_settings', 'email', 'TEXT');
+  ensureColumn(db, 'company_settings', 'address', 'TEXT');
 
   /* Pagamento via Pix: chave copia e cola e nome do recebedor. A imagem do
      QR Code fica como asset do tenant (assets/tenant_XXXX/pix_qr.*), sem
@@ -901,6 +1128,12 @@ function upgradeSchema(db) {
   if (!migrationApplied(db, 'whatsapp_v2')) {
     migrateWhatsappV2(db);
     markMigration(db, 'whatsapp_v2');
+  }
+
+  /* Documentos legais (LGPD): tabelas + seed dos documentos padrão. */
+  if (!migrationApplied(db, 'legal_documents_v1')) {
+    migrateLegalDocumentsV1(db);
+    markMigration(db, 'legal_documents_v1');
   }
 
   /* índices */
@@ -1075,6 +1308,7 @@ module.exports = {
   SEED_CATEGORIES,
   SEED_SERVICES,
   WHATSAPP_DEFAULT_TEMPLATES,
+  DEFAULT_LEGAL_DOCUMENTS,
   tableExists,
   columnNames,
   ensureColumn
