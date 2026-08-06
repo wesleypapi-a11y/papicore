@@ -46,7 +46,7 @@ const { openTenantDatabase, closeTenantDatabase } = require('../database/tenantD
 const { createTenantDatabase } = require('../database/tenantDatabase');
 const { buildDatabaseName } = require('../database/createTenantDatabase');
 const { requireApiKey, requireScope, hasScope, resetApiRateLimits, sha256hex, ALL_SCOPES } = require('../middlewares/apiKeyMiddleware');
-const { idempotency } = require('../middlewares/idempotencyMiddleware');
+const { idempotency, requestSha } = require('../middlewares/idempotencyMiddleware');
 const webhookService = require('../services/webhookService');
 const publicApiController = require('../controllers/publicApiController');
 const apiKeyController = require('../controllers/apiKeyController');
@@ -460,16 +460,16 @@ test('idempotency: mesma chave com corpo diferente → 422', async () => {
 });
 
 test('idempotency: registro sem resposta (em andamento) → 409', async () => {
+  const req = authReq({ method: 'POST', baseUrl: '/api/v1', path: '/appointments', body: { a: 1 } }, keyA);
+  req.headers['idempotency-key'] = 'idem-inflight';
   core.insertApiIdempotencyKey({
     tenant_id: tenantA.id,
     api_key_id: keyA.row.id,
     idempotency_key: 'idem-inflight',
     method: 'POST',
     path: '/api/v1/appointments',
-    request_sha: 'qualquer'
+    request_sha: requestSha(req)
   });
-  const req = authReq({ method: 'POST', baseUrl: '/api/v1', path: '/appointments', body: { a: 1 } }, keyA);
-  req.headers['idempotency-key'] = 'idem-inflight';
   const res = await runChain(req, makeRes(), [requireApiKey, idempotency()], (rq, r) => r.status(201).json({ ok: true }));
   assert(res.statusCode === 409, `esperava 409, veio ${res.statusCode}`);
 });
