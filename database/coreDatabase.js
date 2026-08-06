@@ -459,22 +459,56 @@ function migrateUserPasswordChangedAtColumn() {
   ensureColumn('users', 'password_changed_at', 'TEXT');
 }
 
-function openCore() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  db = new Database(CORE_FILE);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.exec(CORE_DDL);
-  db.exec(MAINTENANCE_DDL);
-  db.exec(PASSWORD_RESET_DDL);
-  db.exec(PLATFORM_EMAIL_SETTINGS_DDL);
-  db.exec(RESTORE_RUNS_DDL);
-  db.exec(COMMERCIAL_LEADS_DDL);
-  db.exec(SITE_CONTENT_DDL);
-  db.exec(CONTRACTS_DDL);
-  migrateBrandingThemeColumns();
-  migrateUserPasswordChangedAtColumn();
-  runMigrations();
+/*
+ * Alinha contract_templates ao schema atual para instalações que existiam
+ * antes do modelo ganhar versionamento. CREATE TABLE IF NOT EXISTS não
+ * altera tabelas já criadas; a versão antiga usava colunas diferentes
+ * (tenant_id/title/body/signatory_role/status). A migração detecta o schema
+ * antigo, recria a tabela com o formato atual e copia as linhas (mapeando
+ * body → content e title → description). É idempotente: após aplicar, o
+ * formato novo faz a detecção retornar cedo. foreign_keys é desligado durante
+ * a troca para que o DROP da tabela antiga não dispare ON DELETE SET NULL
+ * nas linhas de contracts que apontam para ela (o RENAME preserva o nome da
+ * tabela, mantendo essas referências válidas).
+ */
+function migrateContractTemplatesSchemaV1() {
+  const cols = db.prepare('PRAGMA table_info(contract_templates)').all().map((c) => c.name);
+  const isLegacy = cols.includes('body') || cols.includes('tenant_id');
+  if (!isLegacy) return;
+
+  const hadForeignKeyCheck = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  const tx = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE contract_templates_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        contract_type TEXT NOT NULL DEFAULT 'SUBSCRIPTION',
+        content TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_by_user_id INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        UNIQUE (slug, version)
+      )`);
+    db.prepare(
+      `INSERT INTO contract_templates_new
+        (id, slug, name, description, contract_type, content, version, is_default, is_active,
+         created_by_user_id, created_at, updated_at)
+       SELECT id, slug, name, title, 'SUBSCRIPTION', body, 1, COALESCE(is_default, 0), 1,
+              created_by_user_id, created_at, updated_at
+       FROM contract_templates`
+    ).run();
+    db.exec('DROP TABLE contract_templates');
+    db.exec('ALTER TABLE contract_templates_new RENAME TO contract_templates');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_contract_templates_slug ON contract_templates(slug)');
+  });
+  tx();
+  if (hadForeignKeyCheck) db.pragma('foreign_keys = ON');
 }
 
 function seedCore() {
@@ -673,6 +707,24 @@ function migrateLegacyData() {
   logActivity(null, tenant.id, 'MIGRATION', 'Dados migrados do banco legado app.db');
 }
 
+function openCore() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  db = new Database(CORE_FILE);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.exec(CORE_DDL);
+  db.exec(MAINTENANCE_DDL);
+  db.exec(PASSWORD_RESET_DDL);
+  db.exec(PLATFORM_EMAIL_SETTINGS_DDL);
+  db.exec(RESTORE_RUNS_DDL);
+  db.exec(COMMERCIAL_LEADS_DDL);
+  db.exec(SITE_CONTENT_DDL);
+  db.exec(CONTRACTS_DDL);
+  migrateBrandingThemeColumns();
+  migrateUserPasswordChangedAtColumn();
+  runMigrations();
+}
+
 /*
  * Garante que o banco da primeira empresa exista no disco.
  * Em instalações sem app.db legado, cria o banco com o catálogo completo.
@@ -845,6 +897,9 @@ function migrateSubscriptionsV3() {
  * boot), então aqui não encontram nada para migrar.
  */
 function migrateContractTemplateMinimumTermV1() {
+  /* Instalações criadas antes da coluna is_default existir precisam dela para
+     localizar a versão vigente da família — adiciona de forma idempotente. */
+  ensureColumn('contract_templates', 'is_default', 'INTEGER NOT NULL DEFAULT 0');
   const OLD_CLAUSE = 'CLÁUSULA 13 — DO CANCELAMENTO\nQualquer das partes poderá rescindir o presente contrato mediante aviso prévio de 30 (trinta) dias.';
   const NEW_CLAUSE = 'CLÁUSULA 13 — DO CANCELAMENTO\nO presente contrato possui prazo mínimo de vigência de 6 (seis) meses a contar de {{CONTRATO_INICIO}}. Qualquer das partes poderá rescindir o contrato mediante aviso prévio de 30 (trinta) dias. Caso a CONTRATANTE solicite o cancelamento antes de completar o prazo mínimo de 6 (seis) meses, pagará à CONTRATADA multa rescisória equivalente a 1 (uma) mensalidade do plano contratado.';
   const family = db.prepare("SELECT * FROM contract_templates WHERE slug = 'licenca-prestacao-servicos-papicore' AND is_default = 1").get();
@@ -873,6 +928,10 @@ function runMigrations() {
   if (!migrationApplied('subscriptions_v3')) {
     migrateSubscriptionsV3();
     markMigrationApplied('subscriptions_v3');
+  }
+  if (!migrationApplied('contract_templates_schema_v1')) {
+    migrateContractTemplatesSchemaV1();
+    markMigrationApplied('contract_templates_schema_v1');
   }
   if (!migrationApplied('contract_template_minimum_term_v1')) {
     migrateContractTemplateMinimumTermV1();
