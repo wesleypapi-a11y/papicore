@@ -71,11 +71,31 @@ function qrTtlMs() {
   return Number.isFinite(n) && n > 0 ? n : 120000;
 }
 
+/* Converte o timestamp gravado do QR (formato local "YYYY-MM-DD HH:mm:ss"
+   gerado por dateTimeNow, ou ISO com offset) em ms absolutos. O ISO local sem
+   offset é interpretado como hora local — o mesmo relógio que o gravou — e o
+   ISO com offset (Z/+HH:MM) é interpretado em UTC: em ambos os casos o valor
+   é coerente com Date.now(), então NUNCA expira por diferença de timezone. */
+function qrTimestampMs(timestamp) {
+  const s = String(timestamp || '').trim();
+  if (!s) return NaN;
+  const t = new Date(s.replace(' ', 'T')).getTime();
+  return Number.isNaN(t) ? NaN : t;
+}
+
 function qrExpired(timestamp) {
-  if (!timestamp) return false;
-  const t = new Date(String(timestamp).replace(' ', 'T')).getTime();
+  const t = qrTimestampMs(timestamp);
   if (Number.isNaN(t)) return false;
   return Date.now() - t > qrTtlMs();
+}
+
+/* Momento de expiração (UTC ISO) do QR gerado em "timestamp". Compartilhado
+   com o front para a contagem regressiva e calculado a partir do mesmo TTL da
+   validação — a tela nunca marca expirado antes do backend. */
+function qrExpiresAt(timestamp) {
+  const t = qrTimestampMs(timestamp);
+  if (Number.isNaN(t)) return null;
+  return new Date(t + qrTtlMs()).toISOString();
 }
 
 /* ---------- Eventos ---------- */
@@ -687,7 +707,10 @@ function safeInstance(instance) {
   };
 }
 
-/* Estado combinado para o painel do cliente/desenvolvedor. */
+/* Estado combinado para o painel do cliente/desenvolvedor. Quando há QR
+   válido salvo (não expirado) ele é devolvido no contrato normalizado
+   (qrType/qrCode/pairingCode/expiresAt) para a tela exibir direto — sem
+   depender de "recarregar a página". */
 function connectionState(tenant) {
   const providerName = activeProviderName();
   const configured = evolutionConfigured();
@@ -702,10 +725,15 @@ function connectionState(tenant) {
     instance: safeInstance(instance)
   };
   if (status === 'connecting' && instance && instance.qr_base64) {
+    const qrCode = evolutionProvider.ensureDataUri(instance.qr_base64);
     if (qrExpired(instance.last_qr_generated)) {
       out.qr_expired = true;
     } else {
-      out.qr = instance.qr_base64;
+      out.qr = qrCode;
+      out.qrType = 'image';
+      out.qrCode = qrCode;
+      out.pairingCode = null;
+      out.expiresAt = qrExpiresAt(instance.last_qr_generated);
     }
   }
   if (instance) {
@@ -752,6 +780,7 @@ async function connect(tenant, { force = false } = {}) {
     const current = getEvolutionInstance(tenantId);
     if (force && current) deleteEvolutionInstance(tenantId);
     const qr = await mockProvider.generateQRCode(instanceName);
+    const generatedAt = dateTimeNow();
     upsertEvolutionInstance(tenantId, {
       tenant_id: tenantId,
       database_name: tenant.database_name,
@@ -759,11 +788,20 @@ async function connect(tenant, { force = false } = {}) {
       status: 'connecting',
       qr_base64: qr.qr,
       last_error: null,
-      last_qr_generated: dateTimeNow()
+      last_qr_generated: generatedAt
     });
     ensureWebhookToken(tenantId);
     logWhatsapp(LOG_ACTIONS.QR_GENERATED, tenantId, { instance_name: instanceName, mock: true });
-    return { ok: true, status: 'connecting', qr: qr.qr, mock: true };
+    return {
+      ok: true,
+      success: true,
+      status: 'qr_pending',
+      qrType: 'image',
+      qrCode: qr.qr || null,
+      pairingCode: null,
+      expiresAt: qrExpiresAt(generatedAt),
+      mock: true
+    };
   }
 
   const settings = evolutionProvider.getSettings();
@@ -930,7 +968,7 @@ async function connectEvolution(tenant, { force, instanceName, settings }) {
   const qr = await evolutionProvider.generateQRCode(instanceName, settings);
   if (qr.error) {
     upsertEvolutionInstance(tenantId, { status: 'error', last_error: qr.message });
-    return { error: true, code: 'qr_failed', message: `Não foi possível obter o QR Code: ${qr.message}` };
+    return { error: true, code: qr.errorCode === 'qr_missing' ? 'qr_missing' : 'qr_failed', message: qr.message };
   }
 
   /* Instância conectou enquanto gerávamos o QR (state open sem base64):
@@ -948,14 +986,36 @@ async function connectEvolution(tenant, { force, instanceName, settings }) {
     return { ok: true, status: 'connected', message: 'A instância já está conectada na Evolution.' };
   }
 
+  /* Sem QR e sem estado "open": não existe QR para exibir — erro controlado
+     (o front mostra "A Evolution respondeu, mas não forneceu um QR Code"). */
+  if (!qr.qr && !qr.pairingCode && !qr.code) {
+    upsertEvolutionInstance(tenantId, {
+      status: 'error',
+      last_error: 'A Evolution respondeu, mas não forneceu um QR Code. Tente gerar novamente.'
+    });
+    return { error: true, code: 'qr_missing', message: 'A Evolution respondeu, mas não forneceu um QR Code. Tente gerar novamente.' };
+  }
+
+  const generatedAt = dateTimeNow();
   upsertEvolutionInstance(tenantId, {
     status: 'connecting',
-    qr_base64: qr.qr,
+    qr_base64: qr.qrType === 'image' ? (qr.qr || null) : null,
     last_error: null,
-    last_qr_generated: dateTimeNow()
+    last_qr_generated: generatedAt
   });
   logWhatsapp(LOG_ACTIONS.QR_GENERATED, tenantId, { instance_name: instanceName });
-  return { ok: true, status: 'connecting', qr: qr.qr, code: qr.code || '', pairing_code: qr.pairingCode || '' };
+  return {
+    ok: true,
+    success: true,
+    status: 'qr_pending',
+    qrType: qr.qrType || 'image',
+    qrCode: qr.qr || null,
+    pairingCode: qr.pairingCode || null,
+    expiresAt: qr.expiresAt || qrExpiresAt(generatedAt),
+    message: qr.qrType === 'pairing_code' || qr.qrType === 'text'
+      ? 'Use o código de pareamento abaixo para conectar.'
+      : 'QR Code gerado. Escaneie com o WhatsApp.'
+  };
 }
 
 async function reconnect(tenant) {
@@ -972,6 +1032,7 @@ function friendlyErrorMessage(result) {
     instance_name_conflict: 'O nome desta instância já está em uso na Evolution e ela não pôde ser verificada para reutilização.',
     webhook_failed: 'A instância foi criada, mas o webhook não pôde ser configurado.',
     qr_failed: 'Não foi possível gerar o QR Code. Tente novamente.',
+    qr_missing: 'A Evolution respondeu, mas não forneceu um QR Code. Tente gerar novamente.',
     public_url_missing: 'A URL pública HTTPS do PapiCore ainda não está configurada.',
     reserved_instance: 'O nome desta instância é reservado para a PapiCore e não pode ser usado por uma empresa.',
     already_connected: 'A instância já está conectada na Evolution.',
@@ -998,6 +1059,7 @@ function connectErrorHttpStatus(result) {
     case 'instance_create_failed':
     case 'webhook_failed':
     case 'qr_failed':
+    case 'qr_missing':
     case 'evolution_unreachable':
     default:
       return 502;
@@ -1014,6 +1076,7 @@ function connectErrorCode(result) {
     case 'instance_create_failed': return 'INSTANCE_CREATE_FAILED';
     case 'webhook_failed': return 'WEBHOOK_FAILED';
     case 'qr_failed': return 'QR_FAILED';
+    case 'qr_missing': return 'QR_MISSING';
     case 'evolution_unreachable': return 'EVOLUTION_UNREACHABLE';
     default: return 'CONNECT_FAILED';
   }
@@ -1425,7 +1488,8 @@ async function handleWebhook(payload, headers = {}) {
       break;
     case 'qrcode.updated':
       {
-        const qr = payload && payload.data && payload.data.base64;
+        const raw = payload && payload.data && payload.data.base64;
+        const qr = evolutionProvider.ensureDataUri(raw);
         if (qr) {
           upsertEvolutionInstance(tenantId, { status: 'connecting', qr_base64: qr, last_qr_generated: dateTimeNow() });
           logWhatsapp(LOG_ACTIONS.QR_GENERATED, tenantId, { instance_name: instance.instance_name });
@@ -1587,6 +1651,7 @@ module.exports = {
   isReservedInstanceName,
   validateEvolutionBootConfig,
   qrExpired,
+  qrExpiresAt,
   /* settings */
   getWhatsappSettings,
   updateWhatsappSettings,

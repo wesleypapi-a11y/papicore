@@ -94,7 +94,8 @@ function close() {
     const saved = mode; mode = 'pairing';
     try {
       const out = await provider.generateQRCode('tenant_0001', settings);
-      assert(out.ok === true && out.qr === '');
+      assert(out.ok === true && out.qrType === 'pairing_code');
+      assert.equal(out.qr, 'SESSION-1');
       assert.equal(out.pairingCode, 'SESSION-1');
     } finally { mode = saved; }
   });

@@ -451,10 +451,11 @@ function qrText(qr) {
 
 test('connect MOCK: QR de simulação, instância registrada e webhook_token gerado', async () => {
   const result = await whatsappService.connect(tenant);
-  assert(result.ok === true && result.status === 'connecting', 'connect ok em MOCK');
+  assert(result.ok === true && result.status === 'qr_pending', 'connect ok em MOCK (qr_pending)');
   assert(result.mock === true, 'indica MOCK');
-  assert(result.qr && result.qr.startsWith('data:image/svg+xml;base64,'), 'QR de simulação exibível');
-  assert(qrText(result.qr).includes('MODO SIMULAÇÃO'), 'QR marcado como MODO SIMULAÇÃO');
+  assert(result.qrCode && result.qrCode.startsWith('data:image/svg+xml;base64,'), 'QR de simulação exibível');
+  assert(result.expiresAt && new Date(result.expiresAt).getTime() > Date.now(), 'expiresAt futuro');
+  assert(qrText(result.qrCode).includes('MODO SIMULAÇÃO'), 'QR marcado como MODO SIMULAÇÃO');
 
   const row = core.getEvolutionInstance(tenant.id);
   assert(row, 'instância registrada no core');
@@ -694,9 +695,9 @@ test('controller: getConnection e connect/reconnect/disconnect via provider MOCK
   assert(state.result.provider === 'mock' && state.result.mode === 'simulation', 'getConnection reflete MOCK');
 
   const conn = await callController(whatsappController.connectConnection, null, null, null);
-  assert(conn.result.ok === true && conn.result.status === 'connecting', 'connect via controller');
+  assert(conn.result.ok === true && conn.result.status === 'qr_pending', 'connect via controller');
   const rec = await callController(whatsappController.reconnectConnection, null, null, null);
-  assert(rec.result.ok === true && rec.result.status === 'connecting', 'reconnect via controller (force)');
+  assert(rec.result.ok === true && rec.result.status === 'qr_pending', 'reconnect via controller (force)');
   const dis = await callController(whatsappController.disconnectConnection, null, null, null);
   assert(dis.result.status === 'disconnected', 'disconnect via controller');
 });

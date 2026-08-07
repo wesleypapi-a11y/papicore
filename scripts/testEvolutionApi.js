@@ -276,14 +276,16 @@ test('connect: cria instância, obtém QR e registra no core', async () => {
   const calls = [];
   const restore = stubFetch({
     '/instance/create': () => jsonResponse({ instance: { instanceName: INSTANCE, status: 'close' } }),
-    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR1' }),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ base64: 'QR1', code: 'PAIR-1', pairingCode: null }),
     '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({})
   }, calls);
 
   try {
     const result = await evolutionService.connect(tenant);
-    assert(result.ok === true, 'connect ok');
-    assert(result.qr === 'data:image/png;base64,QR1', 'QR retornado');
+    assert(result.ok === true && result.status === 'qr_pending', 'connect ok');
+    assert(result.qrType === 'image', `qrType image (veio ${result.qrType})`);
+    assert(result.qrCode === 'data:image/png;base64,QR1', 'QR retornado com prefixo');
+    assert(result.expiresAt && new Date(result.expiresAt).getTime() > Date.now(), 'expiresAt futuro');
     assert(calls.some((c) => c.url === '/instance/create'), 'create chamado (POST /instance/create v2)');
     assert(calls.some((c) => c.url === '/instance/connect/tenant_0001_torque_detail'), 'connect/QR chamado');
     assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook/set chamado');
@@ -295,7 +297,8 @@ test('connect: cria instância, obtém QR e registra no core', async () => {
     assert(row.qr_base64 === 'data:image/png;base64,QR1', 'QR gravado no registro');
 
     const state = evolutionService.connectionState(tenant);
-    assert(state.status === 'connecting' && state.qr, 'connectionState expõe QR ao painel');
+    assert(state.status === 'connecting' && state.qr === 'data:image/png;base64,QR1', 'connectionState expõe QR com prefixo');
+    assert(state.qrCode === 'data:image/png;base64,QR1' && state.expiresAt, 'contrato qrCode/expiresAt no estado');
   } finally {
     restore();
     process.env.WHATSAPP_ENABLED = 'false';
@@ -307,7 +310,7 @@ test('admin: conexão do cliente reflete QR e actions connect/disconnect', async
   const calls = [];
   const restore = stubFetch({
     '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { state: 'close' } }),
-    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR2' }),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ base64: 'QR2', code: 'PAIR-2', pairingCode: null }),
     '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
     '/instance/logout/tenant_0001_torque_detail': () => jsonResponse({})
   }, calls);
@@ -325,7 +328,7 @@ test('admin: conexão do cliente reflete QR e actions connect/disconnect', async
 
     /* reconecta via admin */
     const conn = await callController(connectConnection, null, null, null);
-    assert(conn.result.qr === 'data:image/png;base64,QR2', 'novo QR pelo admin');
+    assert(conn.result.qrCode === 'data:image/png;base64,QR2' && conn.result.status === 'qr_pending', 'novo QR pelo admin (contrato)');
     assert(core.getEvolutionInstance(tenant.id).qr_base64 === 'data:image/png;base64,QR2', 'QR registrado');
   } finally {
     restore();
@@ -524,12 +527,14 @@ test('connect A: instância não existe → create, webhook e QR', async () => {
       { response: { message: 'The "tenant_0001_torque_detail" instance does not exist' } }, false, 404),
     '/instance/create': () => jsonResponse({ instance: { instanceName: INSTANCE, status: 'close' } }),
     '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
-    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR-A' })
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ base64: 'QR-A', code: 'C-A', pairingCode: 'P-A' })
   }, calls);
 
   try {
     const r = await whatsappService.connect(tenant);
-    assert(r.ok === true && r.status === 'connecting' && r.qr === 'data:image/png;base64,QR-A', 'QR devolvido');
+    assert(r.ok === true && r.status === 'qr_pending', 'status qr_pending');
+    assert(r.qrType === 'image' && r.qrCode === 'data:image/png;base64,QR-A', 'QR devolvido com prefixo');
+    assert(r.pairingCode === 'P-A' && r.expiresAt, 'pairingCode e expiresAt no contrato');
     assert(calls.filter((c) => c.url === '/instance/create').length === 1, `create chamado exatamente uma vez (veio ${calls.filter((c) => c.url === '/instance/create').length})`);
     assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook configurado');
     assert(calls.some((c) => c.url === '/instance/connect/tenant_0001_torque_detail'), 'QR solicitado');
@@ -547,12 +552,12 @@ test('connect B: instância já existe (close) → reutiliza sem criar', async (
   const restore = stubFetch({
     '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { state: 'close' } }),
     '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
-    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR-B' })
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ base64: 'QR-B' })
   }, calls);
 
   try {
     const r = await whatsappService.connect(tenant);
-    assert(r.ok === true && r.status === 'connecting' && r.qr === 'data:image/png;base64,QR-B', 'QR da instância reutilizada');
+    assert(r.ok === true && r.status === 'qr_pending' && r.qrCode === 'data:image/png;base64,QR-B', 'QR da instância reutilizada');
     assert(!calls.some((c) => c.url === '/instance/create'), 'create NÃO é chamado quando a instância existe');
     assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook configurado');
     assert(calls.some((c) => c.url === '/instance/connect/tenant_0001_torque_detail'), 'QR solicitado');
@@ -577,12 +582,12 @@ test('connect C: create responde "name already in use" → reconsulta e reutiliz
     '/instance/create': () => jsonResponse(
       { response: { message: 'This name "tenant_0001_torque_detail" is already in use.' } }, false, 400),
     '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
-    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR-C' })
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ base64: 'QR-C' })
   }, calls);
 
   try {
     const r = await whatsappService.connect(tenant);
-    assert(r.ok === true && r.status === 'connecting' && r.qr === 'data:image/png;base64,QR-C', 'continua após already in use (não vira 502)');
+    assert(r.ok === true && r.status === 'qr_pending' && r.qrCode === 'data:image/png;base64,QR-C', 'continua após already in use (não vira 502)');
     assert(calls.filter((c) => c.url === '/instance/create').length === 1, `create tentado uma vez (veio ${calls.filter((c) => c.url === '/instance/create').length})`);
     assert(stateCalls >= 3, `reconsulta o estado (chamadas: ${stateCalls})`);
     assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook configurado após reconciliação');
@@ -667,6 +672,98 @@ test('connect F: conflito não recuperável → 409 com código sanitizado (não
     restore();
     setRealProvider(false);
   }
+});
+
+/* ---------- QR Code: normalização e exposição ao painel ---------- */
+
+const norm = require('../services/whatsapp/providers/evolutionProvider');
+const PREFIX = 'data:image/png;base64,';
+const RAW_QR = 'iVBORw0KGgo=';
+
+function localTs(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+test('normalizeQrResponse: matriz de formatos (A–K)', () => {
+  const cases = [
+    ['A top-level base64 (formato real 2.3.7)', { base64: RAW_QR }, 'image', PREFIX + RAW_QR],
+    ['B top-level qrcode string', { qrcode: PREFIX + RAW_QR }, 'image', PREFIX + RAW_QR],
+    ['C qrcode objeto {base64}', { qrcode: { base64: PREFIX + RAW_QR } }, 'image', PREFIX + RAW_QR],
+    ['D campo qr', { qr: PREFIX + RAW_QR }, 'image', PREFIX + RAW_QR],
+    ['E base64 sem prefixo ganha prefixo', { base64: RAW_QR }, 'image', PREFIX + RAW_QR],
+    ['F qrcode sem prefixo ganha prefixo', { qrcode: RAW_QR }, 'image', PREFIX + RAW_QR],
+    ['G code numérico → texto', { code: '12345' }, 'text', '12345'],
+    ['H pairingCode → texto', { pairingCode: 'ABC-DEF' }, 'pairing_code', 'ABC-DEF'],
+    ['I pairing_code snake → texto', { pairing_code: 'GHI-JKL' }, 'pairing_code', 'GHI-JKL'],
+    ['J sem QR nenhum → none', {}, 'none', null],
+    ['K corpo string pura (legado)', 'data:image/png;base64,RAW', 'image', 'data:image/png;base64,RAW']
+  ];
+  for (const [name, raw, qrType, qrCode] of cases) {
+    const out = norm.normalizeQrResponse(raw);
+    assert(out.qrType === qrType, `${name}: qrType ${qrType} (veio ${out.qrType})`);
+    assert(out.qrCode === qrCode, `${name}: qrCode (veio ${out.qrCode})`);
+    assert(out.status === 'qr_pending', `${name}: status qr_pending`);
+    assert(out.expiresAt && new Date(out.expiresAt).getTime() > Date.now() - 1000, `${name}: expiresAt válido`);
+  }
+});
+
+test('ensureDataUri: adiciona prefixo sem duplicar e trata vazio', () => {
+  assert(norm.ensureDataUri(RAW_QR) === PREFIX + RAW_QR, 'adiciona prefixo');
+  assert(norm.ensureDataUri(PREFIX + RAW_QR) === PREFIX + RAW_QR, 'não duplica prefixo');
+  assert(norm.ensureDataUri('') === '', 'vazio → vazio');
+  assert(norm.ensureDataUri(null) === '', 'null → vazio');
+});
+
+test('connect sem QR da Evolution: erro controlado qr_missing, instância preservada (sem logout/delete)', async () => {
+  setRealProvider(true);
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse(
+      { response: { message: 'The "tenant_0001_torque_detail" instance does not exist' } }, false, 404),
+    '/instance/create': () => jsonResponse({ instance: { instanceName: INSTANCE, status: 'close' } }),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({})
+  }, calls);
+
+  try {
+    const r = await whatsappService.connect(tenant);
+    assert(r.error === true && r.code === 'qr_missing', `código qr_missing (veio ${r.code})`);
+    assert(/não forneceu um QR Code/.test(r.message), `mensagem amigável (${r.message})`);
+    assert(!r.qrCode && !r.qr && !r.ok, 'nenhum sucesso falso com QR vazio');
+    const row = core.getEvolutionInstance(tenant.id);
+    assert(row && row.status === 'error', `registro marca error (veio ${row && row.status})`);
+    assert(!calls.some((c) => c.url.includes('/instance/logout/') || c.url.includes('/instance/delete/')),
+      'nenhum logout/delete da instância');
+  } finally {
+    restore();
+    setRealProvider(false);
+  }
+});
+
+test('connectionState: QR vencido nunca é exposto; recente sai com prefixo/expiresAt', () => {
+  const recent = localTs(Date.now() - 5000);
+  const old = localTs(Date.now() - 300000);
+  core.upsertEvolutionInstance(tenant.id, { status: 'connecting', qr_base64: RAW_QR, last_qr_generated: recent });
+  const fresh = evolutionService.connectionState(tenant);
+  assert(fresh.qrType === 'image' && fresh.qrCode === PREFIX + RAW_QR, 'QR recente com prefixo');
+  assert(fresh.expiresAt && new Date(fresh.expiresAt).getTime() > Date.now(), 'expiresAt futuro');
+  assert(!fresh.qr_expired, 'não marca expirado');
+
+  core.upsertEvolutionInstance(tenant.id, { status: 'connecting', qr_base64: RAW_QR, last_qr_generated: old });
+  const stale = evolutionService.connectionState(tenant);
+  assert(stale.qr_expired === true, 'marca expirado');
+  assert(!stale.qrCode && !stale.qr && !stale.expiresAt, 'QR vencido não sai para o painel');
+
+  core.upsertEvolutionInstance(tenant.id, { status: 'disconnected', qr_base64: '', last_qr_generated: null });
+});
+
+test('auditoria: base64 do QR nunca é gravado em logs', () => {
+  const logs = JSON.stringify(core.getCoreDb().prepare(
+    "SELECT action, details FROM activity_logs WHERE action LIKE 'WHATSAPP_%'"
+  ).all());
+  assert(!logs.includes(PREFIX) && !logs.includes('iVBORw0KGgo'), 'logs sem QR/base64');
 });
 
 test('disconnect limpa registro e volta ao MOCK', async () => {

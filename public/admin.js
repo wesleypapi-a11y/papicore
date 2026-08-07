@@ -2896,7 +2896,80 @@
     else await renderWhatsappTemplates($('whatsappTabBody'));
   }
 
-  async function renderWhatsappConnection(container) {
+  /* QR do WhatsApp guardado SOMENTE em memória durante a vida da aba — nunca
+     em localStorage, dataset ou console. O timer da contagem regressiva é
+     compartilhado entre renders para nunca duplicar intervalos. */
+  let whatsappQrTimer = null;
+
+  /* Bloco de exibição do QR: imagem centralizada com <img id="whatsappQrCode">
+     (src é o data URI recebido do backend, já com prefixo) ou, quando a
+     Evolution devolve apenas código de pareamento, o código em destaque com
+     botão de copiar. NUNCA renderiza imagem vazia. */
+  function whatsappQrHtml(conn) {
+    if (conn.qrType === 'image' && conn.qrCode) {
+      return `
+        <div class="wa-qr-wrap">
+          <div class="wa-qr-box">
+            <img id="whatsappQrCode" class="wa-qr" src="${escapeHtml(conn.qrCode)}" alt="QR Code para conectar o WhatsApp" />
+            <p class="sub wa-qr-count" id="whatsappQrCountdown"></p>
+          </div>
+        </div>
+      `;
+    }
+    if (conn.qrType === 'pairing_code' && conn.pairingCode) {
+      return `
+        <div class="wa-pairing-wrap">
+          <div class="wa-pairing-box">
+            <strong id="whatsappPairingCode">${escapeHtml(conn.pairingCode)}</strong>
+            <button type="button" class="btn btn-ghost btn-sm" id="whatsappCopyPairing">Copiar código</button>
+          </div>
+          <p class="sub wa-qr-count" id="whatsappQrCountdown"></p>
+        </div>
+      `;
+    }
+    if (conn.qrType === 'text' && conn.qrCode) {
+      return `
+        <div class="wa-pairing-wrap">
+          <div class="wa-pairing-box">
+            <strong id="whatsappPairingCode">${escapeHtml(conn.qrCode)}</strong>
+            <button type="button" class="btn btn-ghost btn-sm" id="whatsappCopyPairing">Copiar código</button>
+          </div>
+          <p class="sub wa-qr-count" id="whatsappQrCountdown"></p>
+        </div>
+      `;
+    }
+    return '';
+  }
+
+  /* Contagem regressiva até a expiração do QR/pairing (expiresAt vem do
+     backend em UTC ISO). Ao zerar, oculta o código e deixa visível o botão
+     "Gerar novo QR". */
+  function startWhatsappQrCountdown(container, expiresAt) {
+    if (whatsappQrTimer) { clearInterval(whatsappQrTimer); whatsappQrTimer = null; }
+    const el = container.querySelector('#whatsappQrCountdown');
+    if (!el) return;
+    const target = new Date(expiresAt).getTime();
+    if (Number.isNaN(target)) { el.remove(); return; }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+      el.textContent = remaining > 0 ? `O código expira em ${remaining}s` : 'O código expirou.';
+      if (remaining <= 0) {
+        clearInterval(whatsappQrTimer);
+        whatsappQrTimer = null;
+        const img = container.querySelector('#whatsappQrCode');
+        const pair = container.querySelector('#whatsappPairingCode');
+        const wrap = (img && img.closest('.wa-qr-wrap')) || (pair && pair.closest('.wa-pairing-wrap'));
+        if (wrap) wrap.remove();
+        const btn = container.querySelector('.waReconnect');
+        if (btn) { btn.classList.remove('hidden'); btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+        toast('O QR Code expirou. Gere um novo QR.', 'info');
+      }
+    };
+    tick();
+    whatsappQrTimer = setInterval(tick, 1000);
+  }
+
+  async function renderWhatsappConnection(container, qrOverride) {
     container.innerHTML = '<div class="panel"><p class="sub">Carregando…</p></div>';
     let conn;
     try {
@@ -2904,6 +2977,20 @@
     } catch (e) {
       container.innerHTML = `<div class="panel"><p class="error">${escapeHtml(e.message)}</p></div>`;
       return;
+    }
+
+    /* A resposta imediata do connect/reconnect vence o estado salvo: o QR
+       recém-gerado é exibido na hora, sem depender de uma nova consulta. */
+    if (qrOverride && qrOverride.qrType && qrOverride.qrType !== 'none') {
+      conn = {
+        ...conn,
+        status: 'connecting',
+        qrType: qrOverride.qrType,
+        qrCode: qrOverride.qrCode || null,
+        pairingCode: qrOverride.pairingCode || null,
+        expiresAt: qrOverride.expiresAt || conn.expiresAt || null,
+        qr_expired: false
+      };
     }
 
     const labels = { connected: 'Conectado', connecting: 'Aguardando escaneamento', disconnected: 'Desconectado', error: 'Erro', missing_remote: 'Instância ausente na Evolution' };
@@ -2923,6 +3010,8 @@
     const timestampsHtml = auditRows.length
       ? `<p class="sub" style="margin:10px 0 0;">${auditRows.map(([k, v]) => `${k}: <strong>${escapeHtml(v)}</strong>`).join(' &nbsp;•&nbsp; ')}</p>`
       : '';
+
+    const qrHtml = whatsappQrHtml(conn);
 
     let body = '';
     if (!conn.settings_configured) {
@@ -2949,7 +3038,7 @@
         <div class="panel">
           <h3 class="review-section-title">Escaneie o QR Code para conectar</h3>
           <p class="sub" style="margin-top:0;">Abra o WhatsApp no seu celular, toque em <strong>Menu (⋮) &gt; Aparelhos conectados &gt; Conectar um aparelho</strong> e escaneie o código abaixo. Ele expira em poucos minutos.</p>
-          ${conn.qr ? `<div class="wa-qr-wrap"><img class="wa-qr" src="${escapeHtml(conn.qr)}" alt="QR Code do WhatsApp" /></div>` : conn.qr_expired ? '<p class="sub">O QR Code anterior <strong>expirou</strong>. Gere um novo QR para continuar.</p>' : '<p class="sub">Gerando QR Code… aguarde e recarregue a página.</p>'}
+          ${qrHtml || (conn.qr_expired ? '<p class="sub">O QR Code anterior <strong>expirou</strong>. Gere um novo QR para continuar.</p>' : '<p class="sub">Nenhum QR Code válido no momento. Gere um novo QR para conectar.</p>')}
           ${conn.instance && conn.instance.last_error ? `<p class="error">${escapeHtml(conn.instance.last_error)}</p>` : ''}
           ${conn.mode === 'simulation' ? '<p class="sub">Este é um <strong>QR de simulação</strong> (MODO SIMULAÇÃO) — nenhuma conta real é usada enquanto a plataforma não liberar a Evolution.</p>' : ''}
           <div class="actions">
@@ -2988,6 +3077,20 @@
     container.querySelector('.waReconnect') && container.querySelector('.waReconnect').addEventListener('click', () => whatsappAction('reconnect'));
     container.querySelector('.waDisconnect') && container.querySelector('.waDisconnect').addEventListener('click', () => whatsappAction('disconnect'));
     container.querySelector('.waRefresh') && container.querySelector('.waRefresh').addEventListener('click', () => whatsappAction('refresh'));
+
+    const copyBtn = container.querySelector('#whatsappCopyPairing');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(conn.pairingCode || conn.qrCode || '');
+          toast('Código copiado.', 'success');
+        } catch (err) {
+          toast('Não foi possível copiar automaticamente.', 'error');
+        }
+      });
+    }
+
+    startWhatsappQrCountdown(container, conn.expiresAt);
   }
 
   async function whatsappAction(action) {
@@ -3007,7 +3110,7 @@
       } else {
         toast(action === 'connect' ? 'QR Code gerado. Escaneie com o WhatsApp.' : action === 'reconnect' ? 'Novo QR Code gerado.' : 'WhatsApp desconectado.', 'success');
       }
-      renderWhatsappConnection($('whatsappTabBody'));
+      renderWhatsappConnection($('whatsappTabBody'), result);
     } catch (e) {
       toast(e.message, 'error');
       renderWhatsappConnection($('whatsappTabBody'));

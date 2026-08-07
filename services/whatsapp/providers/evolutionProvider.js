@@ -77,6 +77,92 @@ function sanitizeSettings(settings) {
   };
 }
 
+/* ---------- Normalização do QR Code ---------- */
+
+const QR_DATA_PREFIX = 'data:image/png;base64,';
+const DEFAULT_QR_TTL_MS = 120000;
+
+/* Garante o prefixo data URI da imagem. Base64 sem prefixo vira
+   data:image/png;base64,...; valores que já começam com data: (ex.: o SVG de
+   simulação do MOCK) são mantidos intactos — o prefixo NUNCA é duplicado. */
+function ensureDataUri(value) {
+  const v = String(value == null ? '' : value).trim();
+  if (!v) return '';
+  if (/^data:/i.test(v)) return v;
+  return `${QR_DATA_PREFIX}${v}`;
+}
+
+function asText(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+/* Normaliza a resposta do GET /instance/connect/{name} da Evolution num
+   contrato interno único — o provider/service só conversam por este formato.
+
+   Formatos aceitos (verificados contra a v2.3.7 — o OpenAPI oficial define
+   ConnectInstanceResponse com os campos top-level base64/code/pairingCode):
+     { base64 }                      → imagem
+     { qrcode }                      → imagem (string)
+     { qrcode: { base64 } }          → imagem
+     { qr }                          → imagem
+     { code }                        → texto (QR textual — exibe em texto)
+     { pairingCode | pairing_code }  → pairing code (exibe em texto)
+
+   NUNCA loga nem retorna o QR em logs. O contrato resultante:
+     { qrType, qrCode, code, pairingCode, expiresAt, status } */
+function normalizeQrResponse(raw, opts = {}) {
+  const ttlMs = Number(opts.ttlMs) > 0 ? Number(opts.ttlMs) : DEFAULT_QR_TTL_MS;
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+
+  /* Formato legado: corpo é a própria string do QR (data URI ou base64 puro). */
+  if (typeof raw === 'string') {
+    return {
+      qrType: 'image',
+      qrCode: ensureDataUri(raw),
+      code: null,
+      pairingCode: null,
+      expiresAt,
+      status: 'qr_pending'
+    };
+  }
+
+  const data = raw && typeof raw === 'object' ? raw : {};
+  const qrcode = data.qrcode && typeof data.qrcode === 'object' ? data.qrcode : null;
+
+  const base64 = ensureDataUri(
+    asText(data.base64) ||
+    asText(typeof data.qrcode === 'string' ? data.qrcode : '') ||
+    asText(data.qr) ||
+    asText(qrcode && qrcode.base64) ||
+    asText(qrcode && qrcode.qrcode) ||
+    asText(qrcode && qrcode.qr)
+  );
+
+  const code = asText(data.code || (qrcode && qrcode.code) || '');
+
+  const pairingCode = asText(
+    data.pairingCode ||
+    data.pairing_code ||
+    (qrcode && (qrcode.pairingCode || qrcode.pairing_code || qrcode.session)) ||
+    ''
+  );
+
+  let qrType = 'none';
+  let qrCode = null;
+  if (base64) { qrType = 'image'; qrCode = base64; }
+  else if (pairingCode) { qrType = 'pairing_code'; qrCode = pairingCode; }
+  else if (code) { qrType = 'text'; qrCode = code; }
+
+  return {
+    qrType,
+    qrCode,
+    code: code || null,
+    pairingCode: pairingCode || null,
+    expiresAt,
+    status: 'qr_pending'
+  };
+}
+
 function getSettings() {
   return sanitizeSettings(getEvolutionSettings());
 }
@@ -201,25 +287,44 @@ async function deleteInstance(instanceName, settings) {
 async function generateQRCode(instanceName, settings) {
   const { ok, status, data } = await apiFetch(settings, ENDPOINTS.connect(instanceName));
   if (!ok) return { error: true, status, message: extractErrorMessage(data, status) };
-  const payload = data && typeof data === 'object' ? data : {};
-  const qrcode = payload.qrcode;
-  let qr = '';
-  if (typeof data === 'string') {
-    qr = data;
-  } else if (typeof qrcode === 'string') {
-    qr = qrcode;
-  } else if (qrcode && typeof qrcode === 'object') {
-    qr = qrcode.base64 || '';
+
+  const normalized = normalizeQrResponse(data);
+  const instanceState = data && data.instance && (data.instance.state || data.instance.status);
+
+  if (normalized.qrType === 'none') {
+    if (instanceState === 'open') {
+      return {
+        ok: true,
+        qrType: 'none',
+        status: 'connected',
+        state: 'open',
+        qr: '',
+        code: normalized.code || '',
+        pairingCode: normalized.pairingCode || ''
+      };
+    }
+    /* Sem QR na resposta: erro controlado — NUNCA devolver "QR gerado" vazio. */
+    return {
+      error: true,
+      errorCode: 'qr_missing',
+      status,
+      message: 'A Evolution respondeu, mas não forneceu um QR Code. Tente gerar novamente.',
+      code: normalized.code || '',
+      pairingCode: normalized.pairingCode || ''
+    };
   }
-  const code = (qrcode && typeof qrcode === 'object' && (qrcode.code || qrcode.base64 || '')) || payload.code || '';
-  const pairingCode = (qrcode && typeof qrcode === 'object' && (qrcode.session || qrcode.pairingCode || '')) || payload.pairingCode || '';
-  const instanceState = payload.instance && (payload.instance.state || payload.instance.status);
-  if (!qr) {
-    if (instanceState === 'open') return { ok: true, qr: '', state: 'open', code, pairingCode };
-    if (code || pairingCode) return { ok: true, qr: '', code, pairingCode };
-    return { error: true, status, message: extractErrorMessage(payload, status), code, pairingCode };
-  }
-  return { ok: true, qr, base64: typeof qr === 'string' ? qr : '', code, pairingCode, state: instanceState };
+
+  return {
+    ok: true,
+    status: 'qr_pending',
+    qrType: normalized.qrType,
+    qr: normalized.qrCode || '',
+    base64: normalized.qrCode || '',
+    code: normalized.code || '',
+    pairingCode: normalized.pairingCode || '',
+    expiresAt: normalized.expiresAt,
+    state: instanceState
+  };
 }
 
 /* connect = cria a instância (se preciso) e devolve o QR Code. */
@@ -358,6 +463,8 @@ module.exports = {
   getSettings,
   isConfigured,
   sanitizeSettings,
+  ensureDataUri,
+  normalizeQrResponse,
   toInternationalPhone,
   isAlreadyExistsError,
   testConnection,
