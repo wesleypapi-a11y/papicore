@@ -87,11 +87,9 @@ function validateAppointmentInput(body, opts = {}) {
     customer_phone,
     customer_email,
     customer_cpf,
-    vehicle_brand,
     vehicle_model,
     vehicle_year,
     vehicle_plate,
-    vehicle_color,
     vehicle_category,
     appointment_date,
     start_time,
@@ -182,9 +180,6 @@ function validateAppointmentInput(body, opts = {}) {
   }
   if (!vehicle_plate || !isValidPlate(vehicle_plate)) {
     throw new AppError(400, 'Informe uma placa válida. Use o formato ABC-1234 ou Mercosul.');
-  }
-  if (!opts.allowMissingVehicleColor && (!vehicle_color || String(vehicle_color).trim().length < 2)) {
-    throw new AppError(400, 'Informe a cor do veículo.');
   }
   const category = String(vehicle_category || '').toLowerCase();
   if (!VEHICLE_CATEGORIES.includes(category)) {
@@ -321,11 +316,9 @@ function validateAppointmentInput(body, opts = {}) {
     customer_phone: normalizePhone(customer_phone),
     customer_email: customer_email ? String(customer_email).trim().toLowerCase() : null,
     customer_cpf: customer_cpf ? String(customer_cpf).replace(/\D/g, '') : null,
-    vehicle_brand: vehicle_brand && String(vehicle_brand).trim() ? String(vehicle_brand).trim() : null,
     vehicle_model: String(vehicle_model).trim(),
     vehicle_year: vehicle_year && String(vehicle_year).trim() ? String(vehicle_year).trim() : null,
     vehicle_plate: vehicle_plate ? String(vehicle_plate).toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
-    vehicle_color: vehicle_color ? String(vehicle_color).trim() : null,
     vehicle_category: category,
     appointment_date,
     start_time: startTime,
@@ -360,7 +353,7 @@ function insertAppointment(data) {
       `INSERT INTO appointments
         (appointment_code, modality_id, unit_id, service_id,
           customer_id, vehicle_id, customer_name, customer_phone, customer_email, customer_cpf,
-         vehicle_brand, vehicle_model, vehicle_year, vehicle_plate, vehicle_color, vehicle_category,
+         vehicle_model, vehicle_year, vehicle_plate, vehicle_category,
          appointment_date, start_time, end_date, end_time, booked_duration_minutes, service_name, services_json,
          service_price, modality_fee, total_price, price_is_estimate, status,
          address_zipcode, address_street, address_number, address_complement, address_neighborhood,
@@ -368,7 +361,7 @@ function insertAppointment(data) {
          responsible_name, responsible_phone,
          has_water_access, has_power_access, key_delivery_confirmed,
          payment_method, customer_notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       code,
@@ -381,11 +374,9 @@ function insertAppointment(data) {
       data.customer_phone,
       data.customer_email,
       data.customer_cpf,
-      data.vehicle_brand,
       data.vehicle_model,
       data.vehicle_year,
       data.vehicle_plate,
-      data.vehicle_color,
       data.vehicle_category,
       data.appointment_date,
       data.start_time,

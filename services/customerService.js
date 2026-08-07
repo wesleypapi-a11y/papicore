@@ -113,11 +113,9 @@ function findOrCreateCustomer(db, data, tx) {
 }
 
 function findOrCreateVehicle(db, customerId, data, tx) {
-  const brand = data.brand ? String(data.brand).trim() : null;
   const model = data.model ? String(data.model).trim() : null;
   const plate = data.plate ? String(data.plate).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
   const year = data.year ? String(data.year).trim() : null;
-  const color = data.color ? String(data.color).trim() : null;
   const category = data.category || 'passeio';
 
   if (!model) throw new AppError(400, 'Informe o modelo do veículo.');
@@ -127,7 +125,7 @@ function findOrCreateVehicle(db, customerId, data, tx) {
     if (existing) {
       const updates = [];
       const params = [];
-      for (const [key, value] of [['brand', brand], ['model', model], ['year', year], ['color', color], ['category', category]]) {
+      for (const [key, value] of [['model', model], ['year', year], ['category', category]]) {
         if (value && existing[key] !== value) {
           updates.push(`${key} = ?`);
           params.push(value);
@@ -145,8 +143,8 @@ function findOrCreateVehicle(db, customerId, data, tx) {
 
   const conn = tx && tx.prepare ? tx : db;
   const info = conn.prepare(
-    `INSERT INTO vehicles (customer_id, brand, model, year, plate, color, category) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(customerId, brand, model, year, plate, color, category);
+    `INSERT INTO vehicles (customer_id, model, year, plate, category) VALUES (?, ?, ?, ?, ?)`
+  ).run(customerId, model, year, plate, category);
   return { vehicle: db.prepare('SELECT * FROM vehicles WHERE id = ?').get(info.lastInsertRowid), created: true };
 }
 
@@ -167,11 +165,9 @@ function ensureCustomerFromAppointment(db, data, tx) {
 function ensureVehicleFromAppointment(db, customerId, data, tx) {
   if (!data.vehicle_model) return null;
   return findOrCreateVehicle(db, customerId, {
-    brand: data.vehicle_brand,
     model: data.vehicle_model,
     year: data.vehicle_year,
     plate: data.vehicle_plate,
-    color: data.vehicle_color,
     category: data.vehicle_category
   }, tx);
 }

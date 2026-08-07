@@ -129,11 +129,9 @@ function appointmentBody(extra = {}) {
     customer_phone: '(11) 98888-7777',
     customer_email: 'wa@teste.com.br',
     customer_cpf: null,
-    vehicle_brand: 'Honda',
     vehicle_model: 'Civic',
     vehicle_year: '2022',
     vehicle_plate: 'WAT1234',
-    vehicle_color: 'Preto',
     vehicle_category: 'passeio',
     appointment_date: nextAppointmentDay(),
     start_time: '09:00',
@@ -430,7 +428,6 @@ test('placeholders: resolução no texto e rejeição de desconhecidos/HTML/JS/c
       end_time: '10:00',
       booked_duration_minutes: 60,
       service_name: 'Lavagem completa',
-      vehicle_brand: 'Fiat',
       vehicle_model: 'Argo',
       vehicle_year: '2020',
       unit_name: 'Unidade Centro',
@@ -443,7 +440,7 @@ test('placeholders: resolução no texto e rejeição de desconhecidos/HTML/JS/c
     assert(values.CLIENTE_NOME === 'João', 'CLIENTE_NOME resolvido');
     assert(values.DATA_AGENDAMENTO === '10/08/2026', 'DATA_AGENDAMENTO em formato BR');
     assert(values.VALOR === 'R$ 80,00', `VALOR formatado (veio ${values.VALOR})`);
-    assert(values.VEICULO.includes('Fiat Argo'), 'VEICULO resolvido');
+    assert(values.VEICULO.includes('Argo'), 'VEICULO resolvido');
 
     const rendered = whatsappService.renderTemplate('Olá {{CLIENTE_NOME}}, dia {{DATA_AGENDAMENTO}}', values);
     assert(rendered === 'Olá João, dia 10/08/2026', `renderização (veio: ${rendered})`);
@@ -510,7 +507,6 @@ test('isolamento entre tenants: outbox de A não vaza para B', async () => {
       end_time: '10:00',
       customer_name: 'Isolamento',
       service_name: 'Teste',
-      vehicle_brand: 'A',
       vehicle_model: 'B',
       total_price: 0,
       customer_package_id: null

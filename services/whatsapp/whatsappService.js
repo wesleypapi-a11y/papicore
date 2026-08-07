@@ -274,7 +274,7 @@ function timeLabel(a) {
 }
 
 function vehicleDescription(a) {
-  let text = `${a.vehicle_brand || ''} ${a.vehicle_model || ''}`.trim();
+  let text = String(a.vehicle_model || '').trim();
   if (a.vehicle_year) text += ` (${a.vehicle_year})`;
   return text;
 }

@@ -124,11 +124,9 @@ CREATE TABLE ${table} (
   customer_phone TEXT NOT NULL,
   customer_email TEXT,
   customer_cpf TEXT,
-  vehicle_brand TEXT,
   vehicle_model TEXT NOT NULL,
   vehicle_year TEXT,
   vehicle_plate TEXT,
-  vehicle_color TEXT,
   vehicle_category TEXT NOT NULL DEFAULT 'passeio',
   appointment_date TEXT NOT NULL,
   start_time TEXT NOT NULL,
@@ -220,11 +218,9 @@ const vehiclesDDL = `
 CREATE TABLE IF NOT EXISTS vehicles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-  brand TEXT,
   model TEXT NOT NULL,
   year TEXT,
   plate TEXT,
-  color TEXT,
   category TEXT NOT NULL DEFAULT 'passeio',
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -496,7 +492,7 @@ const DEFAULT_LEGAL_DOCUMENTS = [
       'A PapiCore fornece a tecnologia (software de agendamento) utilizada por {{NOME_DA_EMPRESA}} para operar e administrar os agendamentos, atuando como operadora dos dados tratados nesta página, conforme instruções da empresa contratante.',
       '',
       '4. Dados que podem ser coletados',
-      'Conforme os campos preenchidos no agendamento, podem ser coletados: nome; telefone e/ou WhatsApp; dados do veículo (marca, modelo, ano, placa, cor, categoria); endereço, quando necessário para leva e traz ou delivery; serviço, data e horário escolhidos; dados de pagamento, somente quando aplicável à forma de pagamento selecionada; e informações técnicas de acesso e segurança (como endereço IP e navegador utilizado).',
+      'Conforme os campos preenchidos no agendamento, podem ser coletados: nome; telefone e/ou WhatsApp; dados do veículo (modelo, ano, placa e categoria); endereço, quando necessário para leva e traz ou delivery; serviço, data e horário escolhidos; dados de pagamento, somente quando aplicável à forma de pagamento selecionada; e informações técnicas de acesso e segurança (como endereço IP e navegador utilizado).',
       '',
       '5. Finalidades do tratamento',
       'Os dados são utilizados para: criar e administrar o agendamento; entrar em contato sobre o atendimento; organizar a agenda de {{NOME_DA_EMPRESA}}; executar o serviço solicitado; prevenir fraude e uso abusivo da plataforma; manter registros necessários à operação; e cumprir obrigações legais e regulatórias aplicáveis.',
@@ -808,7 +804,7 @@ function migrateAppointments(db) {
     INSERT INTO appointments_new (
       id, appointment_code, modality_id, unit_id, service_id,
       customer_name, customer_phone, customer_email, customer_cpf,
-      vehicle_brand, vehicle_model, vehicle_year, vehicle_plate, vehicle_color, vehicle_category,
+      vehicle_model, vehicle_year, vehicle_plate, vehicle_category,
       appointment_date, start_time, end_date, end_time, booked_duration_minutes, service_name,
       service_price, modality_fee, total_price, price_is_estimate,
       status,
@@ -822,7 +818,7 @@ function migrateAppointments(db) {
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?,
@@ -842,7 +838,7 @@ function migrateAppointments(db) {
       insert.run(
         r.id, r.appointment_code, 1, r.unit_id, null,
         r.customer_name, r.customer_phone, r.customer_email, null,
-        null, r.vehicle_model, null, r.vehicle_plate, null, 'passeio',
+        r.vehicle_model, null, r.vehicle_plate, 'passeio',
         r.appointment_date, r.appointment_time, r.appointment_date, end, 60, null,
         0, 0, 0, 0,
         STATUS_MAP[r.status] || 'pending',
@@ -1202,6 +1198,25 @@ function upgradeSchema(db) {
   /* appointments: rebuild quando schema antigo */
   if (!columnNames(db, 'appointments').includes('start_time')) {
     migrateAppointments(db);
+  }
+
+  /* Marca e cor deixaram de fazer parte dos dados de veículo. Remove as
+     colunas legadas dos bancos existentes; bancos novos já nascem sem elas. */
+  if (!migrationApplied(db, 'remove_vehicle_brand_color_v1')) {
+    const removeVehicleDetails = db.transaction(() => {
+      for (const [table, column] of [
+        ['appointments', 'vehicle_brand'],
+        ['appointments', 'vehicle_color'],
+        ['vehicles', 'brand'],
+        ['vehicles', 'color']
+      ]) {
+        if (columnNames(db, table).includes(column)) {
+          db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+        }
+      }
+      markMigration(db, 'remove_vehicle_brand_color_v1');
+    });
+    removeVehicleDetails();
   }
 
   /* backfill: agendamentos legados recebem end_date e duração reservada */

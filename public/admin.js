@@ -66,7 +66,7 @@
      gravado no banco não muda. */
   const STATUS_SHORT_LABELS = { pending: 'Pendente' };
   function vehicleSummary(a) {
-    const parts = `${a.vehicle_brand || ''} ${a.vehicle_model || ''}`.trim();
+    const parts = String(a.vehicle_model || '').trim();
     return parts + (a.vehicle_year ? ' · ' + a.vehicle_year : '');
   }
   /* Data curta (DD/MM, sem ano) para a linha condensada do card mobile. */
@@ -1662,11 +1662,9 @@
         service_id: Number($('apptService').value),
         customer_name: $('apptName').value,
         customer_phone: $('apptPhone').value,
-        vehicle_brand: appt ? appt.vehicle_brand : null,
         vehicle_model: $('apptModel').value,
         vehicle_year: null,
         vehicle_plate: $('apptPlate').value || null,
-        vehicle_color: appt ? appt.vehicle_color : null,
         vehicle_category: $('apptCategory').value,
         appointment_date: $('apptDate').value,
         start_time: $('apptTime').value,
@@ -1734,9 +1732,8 @@
       ['Telefone', a.customer_phone],
       ['E-mail', a.customer_email],
       ['CPF', a.customer_cpf],
-      ['Veículo', `${a.vehicle_brand || ''} ${a.vehicle_model || ''}${a.vehicle_year ? ' · ' + a.vehicle_year : ''}`],
+      ['Veículo', `${a.vehicle_model || ''}${a.vehicle_year ? ' · ' + a.vehicle_year : ''}`],
       ['Placa', a.vehicle_plate],
-      ['Cor', a.vehicle_color],
       ['Categoria', CATEGORY_LABELS[a.vehicle_category] || a.vehicle_category],
       ['Data', toDateBR(a.appointment_date) + (a.end_date && a.end_date !== a.appointment_date ? ' → ' + toDateBR(a.end_date) : '')],
       ['Horário', isLongAppointment(a) ? 'Horário a confirmar' : `${a.start_time} às ${a.end_time}`],
@@ -2379,11 +2376,9 @@
             <select id="sellVehicle"><option value="">Sem veículo</option></select>
             <div class="checkbox-row"><label class="switch-row"><input type="checkbox" id="sellNewVehicle" /><span>Informar um veículo novo</span></label></div>
           </div>
-          <div class="field">${fieldHtml('sellVBrand', 'Marca', '', 'text')}</div>
           <div class="field">${fieldHtml('sellVModel', 'Modelo', '', 'text')}</div>
           <div class="field">${fieldHtml('sellVPlate', 'Placa', '', 'text', 'ABC-1D23')}</div>
           <div class="field">${fieldHtml('sellVYear', 'Ano', '', 'text')}</div>
-          <div class="field"><label for="sellVColor">Cor</label><input type="text" id="sellVColor" /></div>
           <div class="field"><label for="sellVCategory">Categoria</label>
             <select id="sellVCategory">
               ${Object.keys(CATEGORY_LABELS).map((k) => `<option value="${k}">${CATEGORY_LABELS[k]}</option>`).join('')}
@@ -2437,7 +2432,7 @@
     };
     const showNewVehicleFields = () => {
       const isNew = $('sellNewVehicle').checked;
-      ['sellVBrand', 'sellVModel', 'sellVPlate', 'sellVYear', 'sellVColor', 'sellVCategory'].forEach((f) => { $(f).disabled = !isNew; });
+      ['sellVModel', 'sellVPlate', 'sellVYear', 'sellVCategory'].forEach((f) => { $(f).disabled = !isNew; });
       $('sellVehicle').disabled = isNew;
     };
 
@@ -2475,11 +2470,9 @@
       }
       if ($('sellNewVehicle').checked) {
         body.vehicle = {
-          brand: $('sellVBrand').value,
           model: $('sellVModel').value,
           year: $('sellVYear').value,
           plate: $('sellVPlate').value,
-          color: $('sellVColor').value,
           category: $('sellVCategory').value
         };
       } else if ($('sellVehicle').value) {

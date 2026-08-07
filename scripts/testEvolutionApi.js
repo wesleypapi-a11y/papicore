@@ -204,7 +204,6 @@ test('MOCK preservado: sem Evolution, envio continua simulado sem fetch', async 
         end_time: '10:00',
         customer_name: 'Mock',
         service_name: 'Teste',
-        vehicle_brand: 'A',
         vehicle_model: 'B',
         total_price: 0,
         customer_package_id: null
@@ -380,7 +379,6 @@ test('envio real: processOne passa pela Evolution e marca SENT', async () => {
         end_time: '10:00',
         customer_name: 'Real',
         service_name: 'Teste',
-        vehicle_brand: 'A',
         vehicle_model: 'B',
         total_price: 0,
         customer_package_id: null
@@ -454,7 +452,6 @@ test('instance fantasma: Evolution 404 "does not exist" → FAILED e status miss
         end_time: '10:00',
         customer_name: 'Fantasma',
         service_name: 'Teste',
-        vehicle_brand: 'A',
         vehicle_model: 'B',
         total_price: 0,
         customer_package_id: null
@@ -497,7 +494,6 @@ test('instância existe mas fechada na Evolution → FAILED sem enviar', async (
         end_time: '10:00',
         customer_name: 'Fechada',
         service_name: 'Teste',
-        vehicle_brand: 'A',
         vehicle_model: 'B',
         total_price: 0,
         customer_package_id: null

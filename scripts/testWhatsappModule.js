@@ -136,7 +136,6 @@ function appointmentFactory(id, extra = {}) {
     start_time: '09:00',
     end_time: '10:00',
     service_name: 'Lavagem',
-    vehicle_brand: 'Fiat',
     vehicle_model: 'Argo',
     vehicle_year: '2020',
     unit_name: 'Matriz',
@@ -409,7 +408,7 @@ test('placeholders: resolução no texto e bloco de saldo no evento de pacote', 
     'APPOINTMENT_CONFIRMED', appointmentFactory(1008), { linkAdmin: '/admin', unitAddress: 'Rua A, 10 — Centro' }
   )));
   assert(rendered.includes('Cliente Módulo'), 'CLIENTE_NOME resolvido');
-  assert(rendered.includes('Fiat Argo'), 'VEICULO resolvido');
+  assert(rendered.includes('Argo'), 'VEICULO resolvido');
   assert(rendered.includes('R$ 120,00') || rendered.includes('R$ 120'), 'VALOR formatado');
   assert(rendered.includes('Rua A, 10 — Centro'), 'UNIDADE_ENDERECO via opts');
 

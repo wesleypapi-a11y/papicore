@@ -12,7 +12,7 @@
     modality: null,
     unit: null,
     customer: { name: '', phone: '', email: '', cpf: '' },
-    vehicle: { brand: '', model: '', year: '', plate: '', color: '', category: '' },
+    vehicle: { model: '', year: '', plate: '', category: '' },
     date: null,
     services: [],
     slot: null,
@@ -350,7 +350,6 @@
     if (n === 2) {
       if (state.vehicle.model.trim().length < 2) { alert('Informe o modelo do veículo.'); return false; }
       if (!validPlate(state.vehicle.plate)) { alert('Informe uma placa válida. Use ABC-1234 ou o padrão Mercosul.'); return false; }
-      if (state.vehicle.color.trim().length < 2) { alert('Informe a cor do veículo.'); return false; }
       if (!state.vehicle.category) { alert('Selecione o tipo do veículo.'); return false; }
     }
     if (n === 3) {
@@ -1512,11 +1511,9 @@
       customer_phone: state.customer.phone,
       customer_email: state.customer.email.trim() || null,
       customer_cpf: state.customer.cpf || null,
-      vehicle_brand: state.vehicle.brand && state.vehicle.brand.trim() ? state.vehicle.brand.trim() : null,
       vehicle_model: state.vehicle.model.trim(),
       vehicle_year: state.vehicle.year && state.vehicle.year.trim() ? state.vehicle.year.trim() : null,
       vehicle_plate: state.vehicle.plate || null,
-      vehicle_color: state.vehicle.color.trim() || null,
       vehicle_category: state.vehicle.category,
       appointment_date: state.date,
       start_time: state.longService ? null : state.slot,
@@ -1692,9 +1689,6 @@
     const plateInput = $('vehiclePlate');
     plateInput.addEventListener('input', () => { maskPlate(plateInput); state.vehicle.plate = plateInput.value; saveState(); });
 
-    const colorInput = $('vehicleColor');
-    colorInput.addEventListener('input', () => { state.vehicle.color = colorInput.value; saveState(); });
-
     const notesInput = $('customerNotes');
     notesInput.addEventListener('input', () => { state.customer_notes = notesInput.value; saveState(); });
   }
@@ -1704,13 +1698,11 @@
     const phoneInput = $('customerPhone');
     const modelInput = $('vehicleModel');
     const plateInput = $('vehiclePlate');
-    const colorInput = $('vehicleColor');
     const notesInput = $('customerNotes');
     nameInput.value = state.customer.name;
     phoneInput.value = state.customer.phone;
     modelInput.value = state.vehicle.model;
     plateInput.value = state.vehicle.plate;
-    colorInput.value = state.vehicle.color;
     notesInput.value = state.customer_notes;
   }
 

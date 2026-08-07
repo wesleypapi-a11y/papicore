@@ -106,7 +106,7 @@ function getAppointment(req, res) {
 
 function createAppointment(req, res) {
   const db = getDb();
-  const data = validateAppointmentInput(req.body, { allowStatus: true, allowMissingVehicleColor: true });
+  const data = validateAppointmentInput(req.body, { allowStatus: true });
   const settings = getSettings();
   const capacity = data.unit ? (data.unit.capacity || 1) : (settings.capacity || 1);
 
@@ -164,7 +164,7 @@ function updateAppointment(req, res) {
   const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
 
-  const data = validateAppointmentInput(req.body, { allowStatus: true, allowMissingVehicleColor: true });
+  const data = validateAppointmentInput(req.body, { allowStatus: true });
   const customer = customerService.ensureCustomerFromAppointment(db, data).customer;
   const vehicleResult = data.vehicle_plate ? customerService.ensureVehicleFromAppointment(db, customer.id, data) : null;
   const vehicle = vehicleResult && vehicleResult.vehicle ? vehicleResult.vehicle : null;
@@ -195,7 +195,7 @@ function updateAppointment(req, res) {
     `UPDATE appointments SET
        modality_id = ?, unit_id = ?, service_id = ?,
        customer_id = ?, vehicle_id = ?, customer_name = ?, customer_phone = ?, customer_email = ?, customer_cpf = ?,
-       vehicle_brand = ?, vehicle_model = ?, vehicle_year = ?, vehicle_plate = ?, vehicle_color = ?, vehicle_category = ?,
+       vehicle_model = ?, vehicle_year = ?, vehicle_plate = ?, vehicle_category = ?,
        appointment_date = ?, start_time = ?, end_date = ?, end_time = ?, booked_duration_minutes = ?, service_name = ?,
        service_price = ?, modality_fee = ?, total_price = ?, price_is_estimate = ?, status = ?,
        address_zipcode = ?, address_street = ?, address_number = ?, address_complement = ?, address_neighborhood = ?,
@@ -214,11 +214,9 @@ function updateAppointment(req, res) {
     data.customer_phone,
     data.customer_email,
     data.customer_cpf,
-    data.vehicle_brand,
     data.vehicle_model,
     data.vehicle_year,
     data.vehicle_plate,
-    data.vehicle_color,
     data.vehicle_category,
     data.appointment_date,
     data.start_time,

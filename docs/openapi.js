@@ -175,7 +175,7 @@ Webhooks: assinatura HMAC-SHA256 no cabeçalho \`X-PapiCore-Signature\` (\`sha25
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['modality_id', 'service_ids', 'customer_name', 'customer_phone', 'vehicle_model', 'vehicle_plate', 'vehicle_color', 'vehicle_category', 'appointment_date', 'start_time'],
+                required: ['modality_id', 'service_ids', 'customer_name', 'customer_phone', 'vehicle_model', 'vehicle_plate', 'vehicle_category', 'appointment_date', 'start_time'],
                 properties: {
                   modality_id: { type: 'integer', example: 1 },
                   unit_id: { type: 'integer', description: 'Obrigatório para in-store.' },
@@ -184,11 +184,9 @@ Webhooks: assinatura HMAC-SHA256 no cabeçalho \`X-PapiCore-Signature\` (\`sha25
                   customer_phone: { type: 'string', example: '(11) 98888-7777' },
                   customer_email: { type: 'string' },
                   customer_cpf: { type: 'string' },
-                  vehicle_brand: { type: 'string' },
                   vehicle_model: { type: 'string' },
                   vehicle_year: { type: 'string' },
                   vehicle_plate: { type: 'string', example: 'ABC1D23' },
-                  vehicle_color: { type: 'string' },
                   vehicle_category: { type: 'string', enum: ['passeio', 'utilitario'] },
                   appointment_date: { type: 'string', example: '2026-08-10' },
                   start_time: { type: 'string', example: '09:00' },
@@ -203,11 +201,9 @@ Webhooks: assinatura HMAC-SHA256 no cabeçalho \`X-PapiCore-Signature\` (\`sha25
                 customer_name: 'João da Silva',
                 customer_phone: '(11) 98888-7777',
                 customer_email: 'joao@example.com',
-                vehicle_brand: 'Volkswagen',
                 vehicle_model: 'Gol',
                 vehicle_year: '2020',
                 vehicle_plate: 'ABC1D23',
-                vehicle_color: 'Branco',
                 vehicle_category: 'passeio',
                 appointment_date: '2026-08-10',
                 start_time: '09:00'

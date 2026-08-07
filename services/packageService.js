@@ -516,7 +516,7 @@ function listCustomerPackages(db, filters = {}) {
       can_reserve: full.can_reserve,
       totals: full.totals,
       balances: full.balances,
-      vehicle: full.vehicle ? { id: full.vehicle.id, plate: full.vehicle.plate, brand: full.vehicle.brand, model: full.vehicle.model } : null
+      vehicle: full.vehicle ? { id: full.vehicle.id, plate: full.vehicle.plate, model: full.vehicle.model } : null
     };
   });
 }
