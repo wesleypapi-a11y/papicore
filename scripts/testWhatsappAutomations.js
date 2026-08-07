@@ -134,7 +134,7 @@ function appointmentBody(extra = {}) {
     vehicle_year: '2022',
     vehicle_plate: 'WAT1234',
     vehicle_color: 'Preto',
-    vehicle_category: 'sedan',
+    vehicle_category: 'passeio',
     appointment_date: nextAppointmentDay(),
     start_time: '09:00',
     /* exigido pelo fluxo público de agendamento (aceite de Termos de Uso /

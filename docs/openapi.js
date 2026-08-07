@@ -39,7 +39,7 @@ function appointmentSchema(ref = true) {
       customer_email: { type: ['string', 'null'] },
       vehicle_plate: { type: 'string', example: 'ABC1D23' },
       vehicle_model: { type: 'string', example: 'Gol' },
-      vehicle_category: { type: 'string', enum: ['hatch', 'sedan', 'suv', 'pickup'] },
+      vehicle_category: { type: 'string', enum: ['passeio', 'utilitario'] },
       modality_name: { type: 'string' },
       unit_name: { type: ['string', 'null'] },
       service_name: { type: 'string' },
@@ -141,7 +141,7 @@ Webhooks: assinatura HMAC-SHA256 no cabeçalho \`X-PapiCore-Signature\` (\`sha25
           { name: 'service_ids', in: 'query', required: true, schema: { type: 'string' }, description: 'IDs dos serviços separados por vírgula (ex.: 1,2).' },
           { name: 'date', in: 'query', required: true, schema: { type: 'string', example: '2026-08-10' } },
           { name: 'unit_id', in: 'query', required: false, schema: { type: 'integer' }, description: 'Obrigatório para a modalidade "in-store".' },
-          { name: 'vehicle_category', in: 'query', required: false, schema: { type: 'string', enum: ['hatch', 'sedan', 'suv', 'pickup'] } }
+          { name: 'vehicle_category', in: 'query', required: false, schema: { type: 'string', enum: ['passeio', 'utilitario'] } }
         ],
         security: [{ bearerAuth: ['availability:read'] }],
         responses: { '200': { description: 'Slots disponíveis/ocupados para a data.' } }
@@ -175,7 +175,7 @@ Webhooks: assinatura HMAC-SHA256 no cabeçalho \`X-PapiCore-Signature\` (\`sha25
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['modality_id', 'service_ids', 'customer_name', 'customer_phone', 'vehicle_brand', 'vehicle_model', 'vehicle_year', 'vehicle_plate', 'vehicle_color', 'vehicle_category', 'appointment_date', 'start_time'],
+                required: ['modality_id', 'service_ids', 'customer_name', 'customer_phone', 'vehicle_model', 'vehicle_plate', 'vehicle_color', 'vehicle_category', 'appointment_date', 'start_time'],
                 properties: {
                   modality_id: { type: 'integer', example: 1 },
                   unit_id: { type: 'integer', description: 'Obrigatório para in-store.' },
@@ -189,7 +189,7 @@ Webhooks: assinatura HMAC-SHA256 no cabeçalho \`X-PapiCore-Signature\` (\`sha25
                   vehicle_year: { type: 'string' },
                   vehicle_plate: { type: 'string', example: 'ABC1D23' },
                   vehicle_color: { type: 'string' },
-                  vehicle_category: { type: 'string', enum: ['hatch', 'sedan', 'suv', 'pickup'] },
+                  vehicle_category: { type: 'string', enum: ['passeio', 'utilitario'] },
                   appointment_date: { type: 'string', example: '2026-08-10' },
                   start_time: { type: 'string', example: '09:00' },
                   payment_method: { type: 'string', enum: ['local', 'card', 'pix', 'qrcode'] },
@@ -208,7 +208,7 @@ Webhooks: assinatura HMAC-SHA256 no cabeçalho \`X-PapiCore-Signature\` (\`sha25
                 vehicle_year: '2020',
                 vehicle_plate: 'ABC1D23',
                 vehicle_color: 'Branco',
-                vehicle_category: 'hatch',
+                vehicle_category: 'passeio',
                 appointment_date: '2026-08-10',
                 start_time: '09:00'
               }

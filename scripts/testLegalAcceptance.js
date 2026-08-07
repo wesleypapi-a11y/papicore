@@ -117,7 +117,7 @@ function appointmentBody(database, svc, extra = {}) {
     vehicle_year: '2019',
     vehicle_plate: 'XYZ9876',
     vehicle_color: 'Prata',
-    vehicle_category: 'hatch',
+    vehicle_category: 'passeio',
     appointment_date: nextDate(),
     start_time: '10:00',
     legalAcceptance: { termsAccepted: true, privacyAcknowledged: true },

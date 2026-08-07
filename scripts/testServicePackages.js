@@ -111,7 +111,7 @@ function appointmentBody(pkgId, service, extra = {}) {
     vehicle_year: '2020',
     vehicle_plate: 'ABC1234',
     vehicle_color: 'Branco',
-    vehicle_category: 'hatch',
+    vehicle_category: 'passeio',
     appointment_date: tomorrow(),
     start_time: '09:00',
     ...extra
@@ -236,7 +236,7 @@ test('venda: snapshots, saldos PURCHASE e entrada financeira única (cents → R
     const sold = packageService.sellPackage(db, {
       package_id: pkg.id,
       customer: { name: 'João Silva', phone: '(11) 97777-1234', email: 'joao@teste.com' },
-      vehicle: { brand: 'Fiat', model: 'Argo', plate: 'XYZ-9876', color: 'Prata', year: '2021', category: 'hatch' },
+      vehicle: { brand: 'Fiat', model: 'Argo', plate: 'XYZ-9876', color: 'Prata', year: '2021', category: 'passeio' },
       payment_method: 'pix',
       purchased_at: todayStr(),
       notes: 'Venda na loja'

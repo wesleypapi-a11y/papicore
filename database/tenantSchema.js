@@ -97,13 +97,11 @@ CREATE TABLE IF NOT EXISTS services (
   description TEXT,
   price_type TEXT NOT NULL DEFAULT 'category',
   fixed_price REAL,
-  price_hatch REAL,
-  price_sedan REAL,
-  price_suv REAL,
-  price_pickup REAL,
+  price_passeio REAL,
+  price_utilitario REAL,
   starting_price REAL,
   duration_minutes INTEGER NOT NULL DEFAULT 60,
-  pickup_extra_minutes INTEGER NOT NULL DEFAULT 60,
+  utilitario_extra_minutes INTEGER NOT NULL DEFAULT 60,
   package_items TEXT,
   available_at_unit INTEGER NOT NULL DEFAULT 1,
   available_pickup_delivery INTEGER NOT NULL DEFAULT 1,
@@ -131,7 +129,7 @@ CREATE TABLE ${table} (
   vehicle_year TEXT,
   vehicle_plate TEXT,
   vehicle_color TEXT,
-  vehicle_category TEXT NOT NULL DEFAULT 'hatch',
+  vehicle_category TEXT NOT NULL DEFAULT 'passeio',
   appointment_date TEXT NOT NULL,
   start_time TEXT NOT NULL,
   end_date TEXT,
@@ -227,7 +225,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
   year TEXT,
   plate TEXT,
   color TEXT,
-  category TEXT NOT NULL DEFAULT 'hatch',
+  category TEXT NOT NULL DEFAULT 'passeio',
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -746,19 +744,19 @@ const SEED_CATEGORIES = [
 ];
 
 const SEED_SERVICES = [
-  { id: 1, category_id: 1, name: 'Lavagem Técnica Premium', slug: 'lavagem-tecnica-premium', description: 'Lavagem técnica completa: pré-lavagem, espuma ativa, enxágue com água desmineralizada e acabamento.', price_type: 'category', price_hatch: 120, price_sedan: 140, price_suv: 160, price_pickup: 180, duration_minutes: 150, display_order: 1 },
-  { id: 2, category_id: 1, name: 'Lavagem Detalhada', slug: 'lavagem-detalhada', description: 'Lavagem completa com atenção aos detalhes, incluindo soleiras, batentes e acabamentos.', price_type: 'category', price_hatch: 220, price_sedan: 250, price_suv: 290, price_pickup: 320, duration_minutes: 300, display_order: 2 },
-  { id: 3, category_id: 1, name: 'Cristalização dos Vidros', slug: 'cristalizacao-dos-vidros', description: 'Aplicação de cristalização hidrofóbica em todos os vidros, melhorando a visibilidade e repelindo água.', price_type: 'category', price_hatch: 220, price_sedan: 250, price_suv: 300, price_pickup: 320, duration_minutes: 150, display_order: 3 },
-  { id: 4, category_id: 1, name: 'Restauração de Faróis (par)', slug: 'restauracao-de-farois', description: 'Lixamento, polimento e aplicação de proteção UV para recuperar o brilho e a transparência dos faróis.', price_type: 'category', price_hatch: 250, price_sedan: 250, price_suv: 280, price_pickup: 280, duration_minutes: 180, display_order: 4 },
-  { id: 5, category_id: 1, name: 'Limpeza Técnica do Motor', slug: 'limpeza-tecnica-do-motor', description: 'Limpeza segura do compartimento do motor com produtos específicos e proteção dos componentes.', price_type: 'category', price_hatch: 180, price_sedan: 180, price_suv: 220, price_pickup: 220, duration_minutes: 180, display_order: 5 },
-  { id: 6, category_id: 2, name: 'Higienização Interna Completa', slug: 'higienizacao-interna-completa', description: 'Higienização profunda de bancos, carpetes, teto e painel, com extração de manchas e odores.', price_type: 'category', price_hatch: 380, price_sedan: 450, price_suv: 550, price_pickup: 600, duration_minutes: 960, display_order: 1 },
-  { id: 7, category_id: 3, name: 'Polimento Comercial', slug: 'polimento-comercial', description: 'Polimento leve para renovar o brilho e remover marcas superficiais.', price_type: 'category', price_hatch: 450, price_sedan: 500, price_suv: 600, price_pickup: 650, duration_minutes: 360, display_order: 1 },
-  { id: 8, category_id: 3, name: 'Polimento Técnico 1 etapa', slug: 'polimento-tecnico-1-etapa', description: 'Correção de pintura em 1 etapa, removendo marcas leves e hologramas.', price_type: 'category', price_hatch: 750, price_sedan: 850, price_suv: 950, price_pickup: 1050, duration_minutes: 480, display_order: 2 },
-  { id: 9, category_id: 3, name: 'Polimento Técnico 2 etapas', slug: 'polimento-tecnico-2-etapas', description: 'Correção de pintura em 2 etapas, com remoção de marcas médias e leves.', price_type: 'category', price_hatch: 1150, price_sedan: 1300, price_suv: 1500, price_pickup: 1700, duration_minutes: 480, display_order: 3 },
-  { id: 10, category_id: 3, name: 'Polimento Técnico 3 etapas', slug: 'polimento-tecnico-3-etapas', description: 'Correção de pintura em 3 etapas, o mais completo para pinturas muito danificadas.', price_type: 'category', price_hatch: 1600, price_sedan: 1850, price_suv: 2100, price_pickup: 2400, duration_minutes: 480, display_order: 4 },
-  { id: 11, category_id: 4, name: 'Vitrificação 1 ano', slug: 'vitrificacao-1-ano', description: 'Aplicação de revestimento cerâmico com durabilidade de 1 ano.', price_type: 'category', price_hatch: 950, price_sedan: 1100, price_suv: 1250, price_pickup: 1350, duration_minutes: 960, display_order: 1 },
-  { id: 12, category_id: 4, name: 'Vitrificação 3 anos', slug: 'vitrificacao-3-anos', description: 'Revestimento cerâmico de alta durabilidade com garantia de 3 anos.', price_type: 'category', price_hatch: 1750, price_sedan: 1950, price_suv: 2250, price_pickup: 2450, duration_minutes: 960, display_order: 2 },
-  { id: 13, category_id: 4, name: 'Vitrificação 5 anos', slug: 'vitrificacao-5-anos', description: 'Revestimento cerâmico profissional com durabilidade de até 5 anos.', price_type: 'category', price_hatch: 2500, price_sedan: 2800, price_suv: 3100, price_pickup: 3500, duration_minutes: 960, display_order: 3 },
+  { id: 1, category_id: 1, name: 'Lavagem Técnica Premium', slug: 'lavagem-tecnica-premium', description: 'Lavagem técnica completa: pré-lavagem, espuma ativa, enxágue com água desmineralizada e acabamento.', price_type: 'category', price_passeio: 120, price_utilitario: 180, duration_minutes: 150, display_order: 1 },
+  { id: 2, category_id: 1, name: 'Lavagem Detalhada', slug: 'lavagem-detalhada', description: 'Lavagem completa com atenção aos detalhes, incluindo soleiras, batentes e acabamentos.', price_type: 'category', price_passeio: 220, price_utilitario: 320, duration_minutes: 300, display_order: 2 },
+  { id: 3, category_id: 1, name: 'Cristalização dos Vidros', slug: 'cristalizacao-dos-vidros', description: 'Aplicação de cristalização hidrofóbica em todos os vidros, melhorando a visibilidade e repelindo água.', price_type: 'category', price_passeio: 220, price_utilitario: 320, duration_minutes: 150, display_order: 3 },
+  { id: 4, category_id: 1, name: 'Restauração de Faróis (par)', slug: 'restauracao-de-farois', description: 'Lixamento, polimento e aplicação de proteção UV para recuperar o brilho e a transparência dos faróis.', price_type: 'category', price_passeio: 250, price_utilitario: 280, duration_minutes: 180, display_order: 4 },
+  { id: 5, category_id: 1, name: 'Limpeza Técnica do Motor', slug: 'limpeza-tecnica-do-motor', description: 'Limpeza segura do compartimento do motor com produtos específicos e proteção dos componentes.', price_type: 'category', price_passeio: 180, price_utilitario: 220, duration_minutes: 180, display_order: 5 },
+  { id: 6, category_id: 2, name: 'Higienização Interna Completa', slug: 'higienizacao-interna-completa', description: 'Higienização profunda de bancos, carpetes, teto e painel, com extração de manchas e odores.', price_type: 'category', price_passeio: 380, price_utilitario: 600, duration_minutes: 960, display_order: 1 },
+  { id: 7, category_id: 3, name: 'Polimento Comercial', slug: 'polimento-comercial', description: 'Polimento leve para renovar o brilho e remover marcas superficiais.', price_type: 'category', price_passeio: 450, price_utilitario: 650, duration_minutes: 360, display_order: 1 },
+  { id: 8, category_id: 3, name: 'Polimento Técnico 1 etapa', slug: 'polimento-tecnico-1-etapa', description: 'Correção de pintura em 1 etapa, removendo marcas leves e hologramas.', price_type: 'category', price_passeio: 750, price_utilitario: 1050, duration_minutes: 480, display_order: 2 },
+  { id: 9, category_id: 3, name: 'Polimento Técnico 2 etapas', slug: 'polimento-tecnico-2-etapas', description: 'Correção de pintura em 2 etapas, com remoção de marcas médias e leves.', price_type: 'category', price_passeio: 1150, price_utilitario: 1700, duration_minutes: 480, display_order: 3 },
+  { id: 10, category_id: 3, name: 'Polimento Técnico 3 etapas', slug: 'polimento-tecnico-3-etapas', description: 'Correção de pintura em 3 etapas, o mais completo para pinturas muito danificadas.', price_type: 'category', price_passeio: 1600, price_utilitario: 2400, duration_minutes: 480, display_order: 4 },
+  { id: 11, category_id: 4, name: 'Vitrificação 1 ano', slug: 'vitrificacao-1-ano', description: 'Aplicação de revestimento cerâmico com durabilidade de 1 ano.', price_type: 'category', price_passeio: 950, price_utilitario: 1350, duration_minutes: 960, display_order: 1 },
+  { id: 12, category_id: 4, name: 'Vitrificação 3 anos', slug: 'vitrificacao-3-anos', description: 'Revestimento cerâmico de alta durabilidade com garantia de 3 anos.', price_type: 'category', price_passeio: 1750, price_utilitario: 2450, duration_minutes: 960, display_order: 2 },
+  { id: 13, category_id: 4, name: 'Vitrificação 5 anos', slug: 'vitrificacao-5-anos', description: 'Revestimento cerâmico profissional com durabilidade de até 5 anos.', price_type: 'category', price_passeio: 2500, price_utilitario: 3500, duration_minutes: 960, display_order: 3 },
   { id: 14, category_id: 5, name: 'Torque Signature Silver', slug: 'torque-signature-silver', description: 'Pacote premium de higienização e proteção.', price_type: 'fixed', fixed_price: 590, duration_minutes: 120, package_items: JSON.stringify(['Lavagem Técnica Premium', 'Limpeza interna completa', 'Higienização de rodas e pneus', 'Aplicação de cera de proteção', 'Aromatizador']), display_order: 1 },
   { id: 15, category_id: 5, name: 'Torque Signature Gold', slug: 'torque-signature-gold', description: 'Pacote completo com polimento e proteção de pintura.', price_type: 'fixed', fixed_price: 1490, duration_minutes: 240, package_items: JSON.stringify(['Tudo do pacote Silver', 'Polimento Comercial', 'Descontaminação de pintura', 'Proteção de pintura (selante)', 'Higienização interna com extração', 'Restauração de plásticos externos', 'Aromatizador premium']), display_order: 2 },
   { id: 16, category_id: 5, name: 'Torque Signature Black', slug: 'torque-signature-black', description: 'O pacote mais completo da casa, com correção de pintura e vitrificação. Valor a partir de R$ 2.590.', price_type: 'starting', starting_price: 2590, duration_minutes: 480, package_items: JSON.stringify(['Tudo do pacote Gold', 'Polimento Técnico 2 etapas', 'Vitrificação de pintura (1 ano)', 'Higienização interna de alto padrão', 'Tratamento de couro', 'Restauração de faróis (par)', 'Aromatizador premium', 'Revisão técnica completa']), display_order: 3 },
@@ -827,7 +825,7 @@ function migrateAppointments(db) {
       insert.run(
         r.id, r.appointment_code, 1, r.unit_id, null,
         r.customer_name, r.customer_phone, r.customer_email, null,
-        null, r.vehicle_model, null, r.vehicle_plate, null, 'hatch',
+        null, r.vehicle_model, null, r.vehicle_plate, null, 'passeio',
         r.appointment_date, r.appointment_time, r.appointment_date, end, 60, null,
         0, 0, 0, 0,
         STATUS_MAP[r.status] || 'pending',
@@ -885,17 +883,16 @@ function seedBrandedCatalog(db) {
   const insertService = db.prepare(`
     INSERT OR IGNORE INTO services
       (id, category_id, name, slug, description, price_type, fixed_price,
-       price_hatch, price_sedan, price_suv, price_pickup, starting_price,
-       duration_minutes, pickup_extra_minutes, package_items, available_at_unit, available_pickup_delivery,
+       price_passeio, price_utilitario, starting_price,
+       duration_minutes, utilitario_extra_minutes, package_items, available_at_unit, available_pickup_delivery,
        available_mobile_delivery, active, display_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, ?)
   `);
   for (const s of SEED_SERVICES) {
     insertService.run(
       s.id, s.category_id, s.name, s.slug, s.description, s.price_type,
-      s.fixed_price ?? null, s.price_hatch ?? null, s.price_sedan ?? null,
-      s.price_suv ?? null, s.price_pickup ?? null, s.starting_price ?? null,
-      s.duration_minutes, s.pickup_extra_minutes ?? 60, s.package_items ?? null, s.display_order
+      s.fixed_price ?? null, s.price_passeio ?? null, s.price_utilitario ?? null, s.starting_price ?? null,
+      s.duration_minutes, s.utilitario_extra_minutes ?? 60, s.package_items ?? null, s.display_order
     );
   }
 }
@@ -910,13 +907,53 @@ function seedCatalog(db) {
 function migrateSeedDurations(db) {
   const applyDurations = db.transaction(() => {
     const update = db.prepare(
-      "UPDATE services SET duration_minutes = ?, pickup_extra_minutes = ?, updated_at = datetime('now', 'localtime') WHERE slug = ?"
+      "UPDATE services SET duration_minutes = ?, utilitario_extra_minutes = ?, updated_at = datetime('now', 'localtime') WHERE slug = ?"
     );
     for (const s of SEED_SERVICES) {
-      update.run(s.duration_minutes, s.pickup_extra_minutes ?? 60, s.slug);
+      update.run(s.duration_minutes, s.utilitario_extra_minutes ?? 60, s.slug);
     }
   });
   applyDurations();
+}
+
+/* Categorias de veículo: fluxo simplificado para Passeio/Utilitário.
+   Migração idempotente de bancos antigos (precisa rodar ANTES de qualquer
+   seed que use as colunas de preço/duração):
+   - services: price_hatch → price_passeio, price_pickup → price_utilitario,
+     pickup_extra_minutes → utilitario_extra_minutes; descarta price_sedan e
+     price_suv (unificadas em Passeio);
+   - appointments.vehicle_category e vehicles.category: hatch/sedan/suv →
+     passeio, pickup → utilitario. */
+function migrateCategoriesV2(db) {
+  const cols = (t) => columnNames(db, t);
+
+  if (cols('services').includes('price_hatch') && !cols('services').includes('price_passeio')) {
+    db.exec('ALTER TABLE services RENAME COLUMN price_hatch TO price_passeio');
+  }
+  if (cols('services').includes('price_pickup') && !cols('services').includes('price_utilitario')) {
+    db.exec('ALTER TABLE services RENAME COLUMN price_pickup TO price_utilitario');
+  }
+  if (cols('services').includes('pickup_extra_minutes') && !cols('services').includes('utilitario_extra_minutes')) {
+    db.exec('ALTER TABLE services RENAME COLUMN pickup_extra_minutes TO utilitario_extra_minutes');
+  }
+  if (cols('services').includes('price_sedan')) db.exec('ALTER TABLE services DROP COLUMN price_sedan');
+  if (cols('services').includes('price_suv')) db.exec('ALTER TABLE services DROP COLUMN price_suv');
+
+  db.prepare(
+    "UPDATE appointments SET vehicle_category = 'passeio' WHERE vehicle_category IN ('hatch', 'sedan', 'suv')"
+  ).run();
+  db.prepare(
+    "UPDATE appointments SET vehicle_category = 'utilitario' WHERE vehicle_category = 'pickup'"
+  ).run();
+
+  if (tableExists(db, 'vehicles')) {
+    db.prepare(
+      "UPDATE vehicles SET category = 'passeio' WHERE category IN ('hatch', 'sedan', 'suv')"
+    ).run();
+    db.prepare(
+      "UPDATE vehicles SET category = 'utilitario' WHERE category = 'pickup'"
+    ).run();
+  }
 }
 
 /* Fase 1 — Pacotes de serviços. As tabelas já são criadas em createTables
@@ -1060,7 +1097,6 @@ function upgradeSchema(db) {
      'qrcode'). As desabilitadas não aparecem para o cliente no passo de pagamento. */
   ensureColumn(db, 'company_settings', 'payment_methods_enabled', "TEXT NOT NULL DEFAULT '[\"local\",\"card\",\"pix\",\"qrcode\"]'");
 
-  ensureColumn(db, 'services', 'pickup_extra_minutes', 'INTEGER NOT NULL DEFAULT 60');
   ensureColumn(db, 'appointments', 'end_date', 'TEXT');
   ensureColumn(db, 'appointments', 'booked_duration_minutes', 'INTEGER NOT NULL DEFAULT 60');
   ensureColumn(db, 'appointments', 'services_json', 'TEXT');
@@ -1104,6 +1140,13 @@ function upgradeSchema(db) {
   }
 
   ensureColumn(db, 'blocked_schedules', 'blocked_time_end', 'TEXT');
+
+  /* Categorias de veículo simplificadas: roda antes dos seeds que referenciam
+     as colunas de preço/duração (seed_durations_v1). */
+  if (!migrationApplied(db, 'categories_v2')) {
+    migrateCategoriesV2(db);
+    markMigration(db, 'categories_v2');
+  }
 
   if (!migrationApplied(db, 'seed_durations_v1')) {
     migrateSeedDurations(db);

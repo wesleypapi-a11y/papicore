@@ -13,7 +13,6 @@ const legalDocumentService = require('../services/legalDocumentService');
 const {
   AppError,
   VEHICLE_CATEGORIES,
-  PUBLIC_VEHICLE_CATEGORIES,
   todayStr,
   isValidDateStr,
   parseWorkingDays,
@@ -142,19 +141,17 @@ function getCatalog(req, res) {
         description: s.description,
         price_type: s.price_type,
         fixed_price: s.fixed_price,
-        price_hatch: s.price_hatch,
-        price_sedan: s.price_sedan,
-        price_suv: s.price_suv,
-        price_pickup: s.price_pickup,
+        price_passeio: s.price_passeio,
+        price_utilitario: s.price_utilitario,
         starting_price: s.starting_price,
         duration_minutes: s.duration_minutes,
-        pickup_extra_minutes: s.pickup_extra_minutes,
+        utilitario_extra_minutes: s.utilitario_extra_minutes,
         package_items: s.package_items ? JSON.parse(s.package_items) : [],
         display_order: s.display_order
       }))
   }));
 
-  return res.json({ vehicle_categories: PUBLIC_VEHICLE_CATEGORIES, catalog });
+  return res.json({ vehicle_categories: VEHICLE_CATEGORIES, catalog });
 }
 
 function checkAvailability(req, res) {
@@ -162,7 +159,7 @@ function checkAvailability(req, res) {
   const serviceIdsRaw = String(req.query.service_ids || req.query.service_id || '').trim();
   const date = req.query.date;
   const unitId = req.query.unit_id ? Number(req.query.unit_id) : null;
-  const category = req.query.vehicle_category ? String(req.query.vehicle_category).toLowerCase() : 'hatch';
+  const category = req.query.vehicle_category ? String(req.query.vehicle_category).toLowerCase() : 'passeio';
 
   if (!modalityId) throw new AppError(400, 'Informe o campo modality_id.');
   if (!serviceIdsRaw) throw new AppError(400, 'Informe ao menos um serviço.');
@@ -206,7 +203,7 @@ function getCalendarAvailability(req, res) {
   const year = Number(req.query.year);
   const month = Number(req.query.month);
   const unitId = req.query.unit_id ? Number(req.query.unit_id) : null;
-  const category = req.query.vehicle_category ? String(req.query.vehicle_category).toLowerCase() : 'hatch';
+  const category = req.query.vehicle_category ? String(req.query.vehicle_category).toLowerCase() : 'passeio';
 
   if (!modalityId) throw new AppError(400, 'Informe o campo modality_id.');
   if (!serviceIdsRaw) throw new AppError(400, 'Informe ao menos um serviço.');

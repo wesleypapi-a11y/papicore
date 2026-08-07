@@ -2,7 +2,7 @@ const { getDb } = require('../database/tenantDatabase');
 const { AppError } = require('../utils/helpers');
 
 const PRICE_TYPES = ['category', 'fixed', 'starting'];
-const PRICE_FIELDS = ['price_hatch', 'price_sedan', 'price_suv', 'price_pickup'];
+const PRICE_FIELDS = ['price_passeio', 'price_utilitario'];
 
 function slugify(str) {
   return String(str || '')
@@ -31,13 +31,11 @@ function validateService(body, existingId) {
     description,
     price_type,
     fixed_price,
-    price_hatch,
-    price_sedan,
-    price_suv,
-    price_pickup,
+    price_passeio,
+    price_utilitario,
     starting_price,
     duration_minutes,
-    pickup_extra_minutes,
+    utilitario_extra_minutes,
     package_items,
     available_at_unit,
     available_pickup_delivery,
@@ -64,10 +62,8 @@ function validateService(body, existingId) {
   const toNum = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
 
   let fixed = toNum(fixed_price);
-  let hatch = toNum(price_hatch);
-  let sedan = toNum(price_sedan);
-  let suv = toNum(price_suv);
-  let pickup = toNum(price_pickup);
+  let passeio = toNum(price_passeio);
+  let utilitario = toNum(price_utilitario);
   let starting = toNum(starting_price);
 
   if (type === 'fixed' && (fixed === null || fixed < 0)) {
@@ -77,14 +73,14 @@ function validateService(body, existingId) {
     throw new AppError(400, 'Informe o preço "a partir de".');
   }
   if (type === 'category') {
-    const allNull = PRICE_FIELDS.every((f) => ({ hatch, sedan, suv, pickup }[f.slice(6)] === null));
+    const allNull = PRICE_FIELDS.every((f) => ({ passeio, utilitario }[f.slice(6)] === null));
     if (allNull) {
       throw new AppError(400, 'Informe ao menos um preço por categoria de veículo.');
     }
   }
 
   if (type !== 'category') {
-    hatch = sedan = suv = pickup = null;
+    passeio = utilitario = null;
   }
   if (type !== 'fixed') fixed = null;
   if (type !== 'starting') starting = null;
@@ -94,9 +90,9 @@ function validateService(body, existingId) {
     throw new AppError(400, 'A duração deve estar entre 15 e 1440 minutos.');
   }
 
-  const pickupExtra = Number(pickup_extra_minutes);
-  if (!Number.isInteger(pickupExtra) || pickupExtra < 0 || pickupExtra > 1440) {
-    throw new AppError(400, 'O acréscimo para picape deve ser entre 0 e 1440 minutos.');
+  const utilitarioExtra = Number(utilitario_extra_minutes);
+  if (!Number.isInteger(utilitarioExtra) || utilitarioExtra < 0 || utilitarioExtra > 1440) {
+    throw new AppError(400, 'O acréscimo para utilitário deve ser entre 0 e 1440 minutos.');
   }
 
   const slug = slugify(name);
@@ -112,13 +108,11 @@ function validateService(body, existingId) {
     description: description ? String(description).trim() : null,
     price_type: type,
     fixed_price: fixed,
-    price_hatch: hatch,
-    price_sedan: sedan,
-    price_suv: suv,
-    price_pickup: pickup,
+    price_passeio: passeio,
+    price_utilitario: utilitario,
     starting_price: starting,
     duration_minutes: duration,
-    pickup_extra_minutes: pickupExtra,
+    utilitario_extra_minutes: utilitarioExtra,
     package_items: parsePackageItems(package_items),
     available_at_unit: available_at_unit ? 1 : 0,
     available_pickup_delivery: available_pickup_delivery ? 1 : 0,
@@ -161,10 +155,10 @@ function create(req, res) {
     .prepare(
       `INSERT INTO services
         (category_id, name, slug, description, price_type, fixed_price,
-         price_hatch, price_sedan, price_suv, price_pickup, starting_price,
-         duration_minutes, pickup_extra_minutes, package_items, available_at_unit, available_pickup_delivery,
+         price_passeio, price_utilitario, starting_price,
+         duration_minutes, utilitario_extra_minutes, package_items, available_at_unit, available_pickup_delivery,
          available_mobile_delivery, active, display_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       data.category_id,
@@ -173,13 +167,11 @@ function create(req, res) {
       data.description,
       data.price_type,
       data.fixed_price,
-      data.price_hatch,
-      data.price_sedan,
-      data.price_suv,
-      data.price_pickup,
+      data.price_passeio,
+      data.price_utilitario,
       data.starting_price,
       data.duration_minutes,
-      data.pickup_extra_minutes,
+      data.utilitario_extra_minutes,
       data.package_items.length ? JSON.stringify(data.package_items) : null,
       data.available_at_unit,
       data.available_pickup_delivery,
@@ -200,8 +192,8 @@ function update(req, res) {
   db.prepare(
     `UPDATE services SET
        category_id = ?, name = ?, slug = ?, description = ?, price_type = ?, fixed_price = ?,
-       price_hatch = ?, price_sedan = ?, price_suv = ?, price_pickup = ?, starting_price = ?,
-       duration_minutes = ?, pickup_extra_minutes = ?, package_items = ?, available_at_unit = ?, available_pickup_delivery = ?,
+       price_passeio = ?, price_utilitario = ?, starting_price = ?,
+       duration_minutes = ?, utilitario_extra_minutes = ?, package_items = ?, available_at_unit = ?, available_pickup_delivery = ?,
        available_mobile_delivery = ?, active = ?, display_order = ?, updated_at = datetime('now', 'localtime')
      WHERE id = ?`
   ).run(
@@ -211,13 +203,11 @@ function update(req, res) {
     data.description,
     data.price_type,
     data.fixed_price,
-    data.price_hatch,
-    data.price_sedan,
-    data.price_suv,
-    data.price_pickup,
+    data.price_passeio,
+    data.price_utilitario,
     data.starting_price,
     data.duration_minutes,
-    data.pickup_extra_minutes,
+    data.utilitario_extra_minutes,
     data.package_items.length ? JSON.stringify(data.package_items) : null,
     data.available_at_unit,
     data.available_pickup_delivery,

@@ -120,7 +120,7 @@ function findOrCreateVehicle(db, customerId, data, tx) {
   const plate = data.plate ? String(data.plate).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
   const year = data.year ? String(data.year).trim() : null;
   const color = data.color ? String(data.color).trim() : null;
-  const category = data.category || 'hatch';
+  const category = data.category || 'passeio';
 
   if (!model) throw new AppError(400, 'Informe o modelo do veículo.');
 

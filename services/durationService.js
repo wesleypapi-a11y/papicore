@@ -27,7 +27,7 @@ function dailyProductiveMinutes(opening, closing, lunchStart, lunchEnd) {
 /* Duração efetiva do serviço considerando o acréscimo para utilitário. */
 function serviceDuration(service, category) {
   const base = Number(service && service.duration_minutes) || 60;
-  const extra = isUtilityVehicle(category) ? (Number(service && service.pickup_extra_minutes) || 0) : 0;
+  const extra = isUtilityVehicle(category) ? (Number(service && service.utilitario_extra_minutes) || 0) : 0;
   return base + extra;
 }
 

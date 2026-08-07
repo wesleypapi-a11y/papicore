@@ -83,7 +83,7 @@ function getConflicts(fromDate, toDate, unitIdForScope) {
    agendamentos, capacidade) e gera a lista de horários. Extraído de
    getAvailability para ser reutilizado pelo calendário mensal — a lógica de
    agenda é uma única (nunca duplicada). */
-function computeDayAvailability({ date, svcList, category = 'hatch', unit = null, settings }) {
+function computeDayAvailability({ date, svcList, category = 'passeio', unit = null, settings }) {
   const opening = unit ? unit.opening_time : (settings && settings.default_opening_time) || '08:00';
   const closing = unit ? unit.closing_time : (settings && settings.default_closing_time) || '17:00';
   const interval = unit ? unit.appointment_interval : (settings && settings.default_interval) || 60;
@@ -176,7 +176,7 @@ function computeDayAvailability({ date, svcList, category = 'hatch', unit = null
   };
 }
 
-function getAvailability({ date, service = null, services = null, category = 'hatch', modality, unit = null, settings, includeAppointments = false }) {
+function getAvailability({ date, service = null, services = null, category = 'passeio', modality, unit = null, settings, includeAppointments = false }) {
   const svcList = services && services.length ? services : (service ? [service] : []);
   const info = computeDayAvailability({ date, svcList, category, unit, settings });
 
@@ -223,7 +223,7 @@ function getAvailability({ date, service = null, services = null, category = 'ha
    'closed', 'blocked' (bloqueio de dia inteiro) ou 'past'. Reutiliza a MESMA
    engine de horários (computeDayAvailability) — um dia só é liberado quando
    existe ao menos um horário de início onde o serviço inteiro cabe. */
-function getMonthAvailability({ year, month, services = null, category = 'hatch', modality, unit = null, settings }) {
+function getMonthAvailability({ year, month, services = null, category = 'passeio', modality, unit = null, settings }) {
   const svcList = services && services.length ? services : [];
   const monthIndex = month - 1;
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();

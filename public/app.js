@@ -454,14 +454,11 @@
   };
 
   function categoryPriceKey(cat) {
-    if (cat === 'utilitario' || cat === 'pickup') return 'price_pickup';
-    if (cat === 'sedan') return 'price_sedan';
-    if (cat === 'suv') return 'price_suv';
-    return 'price_hatch';
+    return cat === 'utilitario' ? 'price_utilitario' : 'price_passeio';
   }
 
   function isUtilityCategory(cat) {
-    return cat === 'utilitario' || cat === 'pickup';
+    return cat === 'utilitario';
   }
 
   /* Normaliza categorias antigas (hatch/sedan/suv/pickup) de sessões
@@ -695,7 +692,7 @@
     state.services.forEach((s) => {
       const p = liveServicePrice(s);
       value += p.value;
-      duration += Number(s.duration_minutes || 0) + (isUtilityCategory(state.vehicle.category) ? Number(s.pickup_extra_minutes || 0) : 0);
+      duration += Number(s.duration_minutes || 0) + (isUtilityCategory(state.vehicle.category) ? Number(s.utilitario_extra_minutes || 0) : 0);
       if (p.estimate) estimate = true;
     });
     return { value, duration, estimate };
@@ -733,7 +730,7 @@
             ${s.description ? `<span class="service-desc">${s.description}</span>` : ''}
             ${s.package_items && s.package_items.length ? `<span class="service-items">${s.package_items.slice(0, 3).join(' · ')}${s.package_items.length > 3 ? ' · +' + (s.package_items.length - 3) + ' itens' : ''}</span>` : ''}
             <span class="service-foot">
-              <span class="service-duration">${fmtDur(s.duration_minutes)}${s.pickup_extra_minutes ? ' · utilitário +' + fmtDur(s.pickup_extra_minutes) : ''}</span>
+              <span class="service-duration">${fmtDur(s.duration_minutes)}${s.utilitario_extra_minutes ? ' · utilitário +' + fmtDur(s.utilitario_extra_minutes) : ''}</span>
               <span class="service-price">${p.estimate ? 'a partir de ' : ''}${money(p.value)}</span>
             </span>
           `;
@@ -751,7 +748,7 @@
                 price: p.value,
                 estimate: p.estimate,
                 duration_minutes: s.duration_minutes,
-                pickup_extra_minutes: s.pickup_extra_minutes || 0,
+                utilitario_extra_minutes: s.utilitario_extra_minutes || 0,
                 category_name: cat.name,
                 description: s.description
               });

@@ -23,7 +23,7 @@
   const WEEKDAY_KEYS = [0, 1, 2, 3, 4, 5, 6];
   const MONTH_LABELS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const AGENDA_DOT_STATUSES = ['pending', 'confirmed', 'completed'];
-  const CATEGORY_LABELS = { passeio: 'Passeio', utilitario: 'Utilitário', hatch: 'Hatch', sedan: 'Sedan', suv: 'SUV', pickup: 'Picape' };
+  const CATEGORY_LABELS = { passeio: 'Passeio', utilitario: 'Utilitário' };
   const PAYMENT_LABELS = {
     local: 'Pagamento no local',
     card: 'Crédito/débito no local',
@@ -1756,7 +1756,7 @@
       return `<tr>
         <td><strong>${escapeHtml(s.name)}</strong><br /><span class="muted">${escapeHtml(s.category_name)}</span></td>
         <td>${priceHtml}</td>
-        <td>${fmtDur(s.duration_minutes)}${s.pickup_extra_minutes ? `<br/><span class="muted">picape +${fmtDur(s.pickup_extra_minutes)}</span>` : ''}</td>
+        <td>${fmtDur(s.duration_minutes)}${s.utilitario_extra_minutes ? `<br/><span class="muted">utilitário +${fmtDur(s.utilitario_extra_minutes)}</span>` : ''}</td>
         <td><span class="muted">${flags.join(' · ') || '—'}</span></td>
         <td>${s.active ? badge('confirmed') : badge('cancelled')}</td>
         <td><div class="appointment-actions">
@@ -1820,7 +1820,7 @@
               <option value="starting">A partir de</option>
             </select></div>
           <div class="field">${fieldHtml('svcDuration', 'Duração (minutos)', v('duration_minutes', 60), 'number')}</div>
-          <div class="field">${fieldHtml('svcPickupExtra', 'Acréscimo para picape (min)', v('pickup_extra_minutes', 0), 'number')}</div>
+          <div class="field">${fieldHtml('svcUtilitarioExtra', 'Acréscimo para utilitário (min)', v('utilitario_extra_minutes', 0), 'number')}</div>
         </div>
         <div id="svcPriceFields"></div>
         <div class="field"><label for="svcItems">Itens do pacote (um por linha)</label>
@@ -1851,13 +1851,11 @@
         description: $('svcDesc').value || null,
         price_type: priceType,
         fixed_price: priceType === 'fixed' ? Number($('pfFixed').value) : null,
-        price_hatch: priceType === 'category' ? Number($('pfHatch').value) : null,
-        price_sedan: priceType === 'category' ? Number($('pfSedan').value) : null,
-        price_suv: priceType === 'category' ? Number($('pfSuv').value) : null,
-        price_pickup: priceType === 'category' ? Number($('pfPickup').value) : null,
+        price_passeio: priceType === 'category' ? Number($('pfPasseio').value) : null,
+        price_utilitario: priceType === 'category' ? Number($('pfUtilitario').value) : null,
         starting_price: priceType === 'starting' ? Number($('pfStarting').value) : null,
         duration_minutes: Number($('svcDuration').value),
-        pickup_extra_minutes: Number($('svcPickupExtra').value || 0),
+        utilitario_extra_minutes: Number($('svcUtilitarioExtra').value || 0),
         package_items: $('svcItems').value.split('\n').map((i) => i.trim()).filter(Boolean),
         available_at_unit: $('svcUnit').checked ? 1 : 0,
         available_pickup_delivery: $('svcPickup').checked ? 1 : 0,
@@ -1890,10 +1888,8 @@
       } else {
         wrap.innerHTML = `
           <div class="field-row">
-            <div class="field">${fieldHtml('pfHatch', 'Hatch (R$)', v('price_hatch', ''), 'number')}</div>
-            <div class="field">${fieldHtml('pfSedan', 'Sedan (R$)', v('price_sedan', ''), 'number')}</div>
-            <div class="field">${fieldHtml('pfSuv', 'SUV (R$)', v('price_suv', ''), 'number')}</div>
-            <div class="field">${fieldHtml('pfPickup', 'Picape (R$)', v('price_pickup', ''), 'number')}</div>
+            <div class="field">${fieldHtml('pfPasseio', 'Passeio (R$)', v('price_passeio', ''), 'number')}</div>
+            <div class="field">${fieldHtml('pfUtilitario', 'Utilitário (R$)', v('price_utilitario', ''), 'number')}</div>
           </div>`;
       }
     }

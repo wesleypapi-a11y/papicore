@@ -32,34 +32,22 @@ const PAYMENT_LABELS = {
   qrcode: 'Pix (QR Code)'
 };
 
-const VEHICLE_CATEGORIES = ['passeio', 'utilitario', 'hatch', 'sedan', 'suv', 'pickup'];
-
-/* Categorias expostas no fluxo público (Passeio / Utilitário). As categorias
-   antigas (hatch/sedan/suv/pickup) continuam aceitas no backend para manter o
-   admin e dados existentes funcionando. */
-const PUBLIC_VEHICLE_CATEGORIES = ['passeio', 'utilitario'];
+const VEHICLE_CATEGORIES = ['passeio', 'utilitario'];
 
 const VEHICLE_CATEGORY_LABELS = {
   passeio: 'Passeio',
-  utilitario: 'Utilitário',
-  hatch: 'Hatch',
-  sedan: 'Sedan',
-  suv: 'SUV',
-  pickup: 'Picape'
+  utilitario: 'Utilitário'
 };
 
 /* Coluna de preço correspondente a uma categoria na tabela de serviços. */
 function vehicleCategoryPriceField(category) {
   const c = String(category || '').toLowerCase();
-  if (c === 'utilitario' || c === 'pickup') return 'price_pickup';
-  if (c === 'sedan') return 'price_sedan';
-  if (c === 'suv') return 'price_suv';
-  return 'price_hatch'; // passeio / hatch / padrão
+  if (c === 'utilitario') return 'price_utilitario';
+  return 'price_passeio'; // padrão
 }
 
 function isUtilityVehicle(category) {
-  const c = String(category || '').toLowerCase();
-  return c === 'utilitario' || c === 'pickup';
+  return String(category || '').toLowerCase() === 'utilitario';
 }
 
 const LEAD_STATUSES = ['new', 'contacted', 'demo_scheduled', 'proposal_sent', 'customer', 'lost'];
@@ -323,7 +311,6 @@ module.exports = {
   PAYMENT_METHODS,
   PAYMENT_LABELS,
   VEHICLE_CATEGORIES,
-  PUBLIC_VEHICLE_CATEGORIES,
   VEHICLE_CATEGORY_LABELS,
   vehicleCategoryPriceField,
   isUtilityVehicle,
