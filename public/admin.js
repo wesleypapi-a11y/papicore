@@ -419,7 +419,9 @@
       </div>
     `;
     overlay.classList.add('open');
-    overlay.querySelector('[data-close]').addEventListener('click', closeModal);
+    overlay.querySelectorAll('[data-close]').forEach((control) => {
+      control.addEventListener('click', closeModal);
+    });
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
     return overlay;
   }
