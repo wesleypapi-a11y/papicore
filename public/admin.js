@@ -58,6 +58,22 @@
     return isLongAppointment(a) ? 'Horário a confirmar' : (a.start_time || '—');
   }
 
+  /* Resumo de veículo/serviços reaproveitado pelo card mobile de
+     Agendamentos (ver renderAppointments) e pelo modal de detalhes. */
+  const STATUS_EMOJI = { pending: '🟡', confirmed: '🟢', completed: '🔵', rejected: '🔴', cancelled: '⚪' };
+  function vehicleSummary(a) {
+    const parts = `${a.vehicle_brand || ''} ${a.vehicle_model || ''}`.trim();
+    return parts + (a.vehicle_year ? ' · ' + a.vehicle_year : '');
+  }
+  function servicesSummary(a) {
+    let list = [];
+    try { list = JSON.parse(a.services_json || '[]'); } catch { list = []; }
+    if (!Array.isArray(list) || list.length < 2) {
+      return { count: 1, first: a.service_name || '—', extra: 0 };
+    }
+    return { count: list.length, first: list[0].name || a.service_name || '—', extra: list.length - 1 };
+  }
+
   /* Botões de ação compactos (somente ícones), padrão reaproveitado em todas
      as tabelas do admin (agendamentos, serviços, unidades, formas de atendimento).
      Ícones SVG inline (padrão do projeto — sem biblioteca externa). */
@@ -1046,7 +1062,7 @@
       return `<button class="tab ${state.appointmentStatus === s ? 'active' : ''}" data-status="${s}">${label} <span class="count">${n}</span></button>`;
     }).join('');
 
-    const rows = data.map((a) => {
+    const rowsAndCards = data.map((a) => {
       const actions = [];
       if (a.status === 'pending') {
         actions.push(actionButton('accept', a.id));
@@ -1061,7 +1077,9 @@
       }
       actions.push(actionButton('detail', a.id));
       actions.push(actionButton('delete', a.id));
-      return `
+      const actionsHtml = actions.join('');
+
+      const row = `
         <tr>
           <td><strong>${escapeHtml(a.appointment_code)}</strong></td>
           <td>${escapeHtml(a.customer_name)}<br /><span class="muted">${escapeHtml(a.customer_phone)}</span></td>
@@ -1069,9 +1087,43 @@
           <td>${escapeHtml(a.service_name || '—')}<br /><span class="muted">${escapeHtml(a.modality_name || '')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</span></td>
           <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}<br />${a.payment_method ? `<span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
           <td>${badge(a.status)}</td>
-          <td><div class="appointment-actions">${actions.join('')}</div></td>
+          <td><div class="appointment-actions">${actionsHtml}</div></td>
         </tr>`;
-    }).join('');
+
+      /* Card mobile — layout próprio (não é a tabela reaproveitada), denso
+         como um app: cada linha é um dado só, sem rótulo separado, com
+         ícone identificando o campo. Serviços múltiplos viram um resumo
+         ("N serviços" + primeiro + "+X adicionais") em vez da lista
+         inteira — ver Visualizar/Editar para a lista completa. */
+      const svc = servicesSummary(a);
+      const timeRange = isLongAppointment(a)
+        ? 'Horário a confirmar'
+        : `${a.start_time || '—'} às ${a.end_time || '—'}`;
+      const vehicle = vehicleSummary(a);
+      const card = `
+        <div class="appt-card">
+          <div class="appt-card-top">
+            <span class="appt-card-code">${escapeHtml(a.appointment_code)}</span>
+            <span class="badge badge-${a.status} appt-card-badge">${STATUS_EMOJI[a.status] || ''} ${STATUS_LABELS[a.status] || a.status}</span>
+          </div>
+          <div class="appt-card-row appt-card-name">👤 ${escapeHtml(a.customer_name)}</div>
+          <div class="appt-card-row muted">📞 ${escapeHtml(a.customer_phone)}</div>
+          ${vehicle ? `<div class="appt-card-row muted">🚗 ${escapeHtml(vehicle)}</div>` : ''}
+          <div class="appt-card-row">📅 ${toDateBR(a.appointment_date)} &nbsp;🕐 ${escapeHtml(timeRange)}</div>
+          ${svc.count > 1 ? `<div class="appt-card-row">🧽 ${svc.count} serviços</div>` : ''}
+          <div class="appt-card-row appt-card-service-line">
+            <span class="appt-card-service-name">${svc.count === 1 ? '🧽 ' : ''}${escapeHtml(svc.first)}</span>
+            ${svc.extra > 0 ? `<span class="appt-card-extra">+${svc.extra} adicional${svc.extra === 1 ? '' : 'ais'}</span>` : ''}
+          </div>
+          <div class="appt-card-row appt-card-price">💰 ${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}</div>
+          <div class="appt-card-actions">${actionsHtml}</div>
+        </div>`;
+
+      return { row, card };
+    });
+
+    const rows = rowsAndCards.map((x) => x.row).join('');
+    const cards = rowsAndCards.map((x) => x.card).join('');
 
     el.innerHTML = `
       <div class="admin-header">
@@ -1079,12 +1131,15 @@
         <button class="btn btn-primary" id="btnNewAppointment">+ Novo agendamento</button>
       </div>
       <div class="tabs">${tabs}</div>
-      <div class="panel">
-        ${data.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Código</th><th>Cliente</th><th>Data</th><th>Serviço</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table></div>` : '<div class="empty-state">Nenhum agendamento neste filtro.</div>'}
-      </div>
+      ${data.length ? `
+        <div class="panel appt-table-panel">
+          <div class="table-wrap"><table>
+            <thead><tr><th>Código</th><th>Cliente</th><th>Data</th><th>Serviço</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>
+        </div>
+        <div class="appt-cards">${cards}</div>
+      ` : '<div class="panel"><div class="empty-state">Nenhum agendamento neste filtro.</div></div>'}
     `;
 
     el.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
