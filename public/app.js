@@ -788,9 +788,16 @@
     block.hidden = false;
     const grid = $('slotsGrid');
     const loading = $('slotLoading');
-    const subtitle = $('slotSubtitle');
+    const serviceNameEl = $('slotServiceName');
+    const durationLineEl = $('slotDurationLine');
+    const dateTextEl = $('slotDateText');
+    const infoNote = $('slotInfoNote');
     const serviceIds = state.services.map((s) => s.id);
-    subtitle.textContent = `${state.services.map((s) => s.name).join(' + ')} · ${formatDateBR(state.date)}`;
+    serviceNameEl.textContent = state.services.map((s) => s.name).join(' + ');
+    const dateLabel = formatDateBR(state.date);
+    dateTextEl.textContent = dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1);
+    durationLineEl.hidden = true;
+    infoNote.hidden = true;
     grid.innerHTML = '';
     const key = `${state.modality.id}|${state.unit ? state.unit.id : ''}|${serviceIds.slice().sort((a, b) => a - b).join(',')}|${state.date}|${state.vehicle.category}`;
     if (!slotCache[key]) {
@@ -821,6 +828,11 @@
       grid.innerHTML = `<div class="error-box">Não há horários disponíveis nesta data.</div>`;
       return;
     }
+    const pickupExtra = isUtilityCategory(data.vehicle_category) ? ' (inclui acréscimo para utilitário)' : '';
+    if (data.duration_minutes) {
+      durationLineEl.innerHTML = `Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${pickupExtra}`;
+      durationLineEl.hidden = false;
+    }
     if (data.is_long_service) {
       state.longService = true;
       state.slot = null;
@@ -832,40 +844,43 @@
         : null;
       saveState();
       grid.innerHTML = '';
-      const pickupExtra = isUtilityCategory(data.vehicle_category) ? ' (inclui acréscimo para utilitário)' : '';
       const deliveryWord = state.modality.slug === 'in-store' ? 'atendimento' : 'entrega';
       longNote.innerHTML = `
-        <p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${pickupExtra}</p>
         <p class="slot-long-message">Este serviço possui duração estimada de <strong>${fmtDur(data.duration_minutes)}</strong>. Por ser um serviço de longa duração, não é necessário escolher um horário. A empresa entrará em contato para confirmar o horário de ${deliveryWord} do veículo.</p>`;
       longNote.hidden = false;
       return;
     }
     const availableSlots = data.slots.filter((s) => s.status === 'available');
-    const durNote = data.duration_minutes ? `<p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${isUtilityCategory(data.vehicle_category) ? ' (inclui acréscimo para utilitário)' : ''}</p>` : '';
     if (availableSlots.length === 0) {
-      grid.innerHTML = `${durNote}<div class="error-box">Este dia acabou de ficar sem horários disponíveis. Selecione outra data.</div>`;
+      grid.innerHTML = `<div class="error-box">Este dia acabou de ficar sem horários disponíveis. Selecione outra data.</div>`;
       return;
     }
-    grid.innerHTML = durNote;
+    grid.innerHTML = '';
+    infoNote.hidden = false;
     availableSlots.forEach((s) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'slot-btn';
       btn.dataset.time = s.time;
-      let label = s.time;
+      let endLabel = '';
       let fullLabel = s.time;
       if (s.end_time) {
         if (s.end_date && s.end_date !== state.date) {
           const endShort = parseDate(s.end_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-          label = `${s.time} até ${endShort} às ${s.end_time}`;
+          endLabel = `até ${endShort} às ${s.end_time}`;
           fullLabel = `${s.time} até ${formatDateShort(s.end_date)} às ${s.end_time}`;
         } else {
-          label = `${s.time} às ${s.end_time}`;
-          fullLabel = label;
+          endLabel = `às ${s.end_time}`;
+          fullLabel = `${s.time} às ${s.end_time}`;
         }
       }
-      btn.textContent = label;
+      btn.innerHTML = `
+        <svg class="slot-btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg>
+        <span class="slot-btn-start">${s.time}</span>
+        ${endLabel ? `<span class="slot-btn-end">${endLabel}</span>` : ''}
+      `;
       btn.title = s.reason || fullLabel;
+      btn.setAttribute('aria-pressed', state.slot === s.time ? 'true' : 'false');
       if (state.slot === s.time) btn.classList.add('selected');
       btn.addEventListener('click', () => {
         state.slot = s.time;
@@ -873,8 +888,12 @@
         state.slotEndTime = s.end_time || null;
         state.slotDuration = data.duration_minutes || null;
         saveState();
-        grid.querySelectorAll('.slot-btn').forEach((c) => c.classList.remove('selected'));
+        grid.querySelectorAll('.slot-btn').forEach((c) => {
+          c.classList.remove('selected');
+          c.setAttribute('aria-pressed', 'false');
+        });
         btn.classList.add('selected');
+        btn.setAttribute('aria-pressed', 'true');
       });
       grid.appendChild(btn);
     });

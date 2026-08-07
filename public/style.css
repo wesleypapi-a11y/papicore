@@ -372,6 +372,7 @@ body.booking-app {
 .title-highlight { color: var(--accent); }
 .step-subtitle { color: var(--text-soft); font-size: 16px; margin-top: 12px; }
 .step[data-step="1"] .step-subtitle { font-size: 17px; }
+.calendar-note { color: var(--text-muted); font-size: 13px; margin-top: 8px; line-height: 1.5; }
 .title-rule {
   display: block;
   width: 58px;
@@ -695,42 +696,93 @@ body.booking-app {
 
 /* ---------- slots ---------- */
 
+.slot-summary-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin: 18px 0 16px;
+}
+.slot-summary-service { font-size: 17px; font-weight: 700; color: var(--text); }
+.slot-summary-duration { font-size: 14px; color: var(--text-soft); margin-top: 6px; }
+.slot-summary-duration strong { color: var(--text); font-weight: 700; }
+
+.slot-date-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 20px;
+}
+.slot-date-line svg { color: var(--accent); flex-shrink: 0; }
+
+.slot-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0 0 22px;
+}
+
 .slots-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, max-content));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
   align-items: stretch;
+  margin-bottom: 18px;
 }
 
 .slot-btn {
-  width: fit-content;
-  min-width: 104px;
-  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 240px;
   height: auto;
-  min-height: 48px;
-  padding: 12px 16px;
+  min-height: 84px;
+  padding: 14px 12px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   border-radius: var(--radius-sm);
   background: var(--card);
   border: 2px solid var(--border);
   color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
   text-align: center;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  line-height: 1.3;
-  transition: border-color 0.12s, background 0.12s;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
-.slot-btn:hover { border-color: var(--accent); }
-.slot-btn.selected { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.slot-btn-icon { color: var(--accent); flex-shrink: 0; }
+.slot-btn-start { font-size: 18px; font-weight: 800; color: var(--text); line-height: 1.2; letter-spacing: -0.2px; }
+.slot-btn-end { font-size: 12px; font-weight: 500; color: var(--text-soft); overflow-wrap: anywhere; word-break: break-word; }
+
+.slot-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3);
+}
+.slot-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.slot-btn.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 22px rgba(var(--tenant-primary-rgb, 255, 122, 0), 0.35);
+}
+.slot-btn.selected .slot-btn-start { color: var(--text); }
+.slot-btn.selected .slot-btn-end { color: var(--text-soft); }
 .slot-btn.disabled { color: var(--text-muted); opacity: 0.45; cursor: not-allowed; }
 
-.slot-duration-note { color: var(--text-muted); font-size: 14px; margin: 0 0 14px; }
+.slot-info-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.slot-info-note svg { color: var(--accent); flex-shrink: 0; }
 
 .slot-long-message {
   border: 1px dashed var(--accent);
@@ -1539,6 +1591,11 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .appointment-actions { gap: 6px; }
 }
 
+/* Horários (etapa "Data e horário"): tablet — 3 cards por linha */
+@media (max-width: 900px) {
+  .slots-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
 @media (max-width: 700px) {
   /* ---------- booking ---------- */
   .site-header { height: 74px; padding: 0 16px; }
@@ -1553,6 +1610,7 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .pix-code-wrap { flex-direction: column; }
   .pix-code-wrap .btn { width: 100%; }
   .service-grid { grid-template-columns: 1fr; }
+  .slots-grid { grid-template-columns: repeat(2, 1fr); }
   .address-grid { grid-template-columns: 1fr; }
   .field-row { flex-direction: column; gap: 0; }
   .form-grid { grid-template-columns: 1fr; }
@@ -1566,7 +1624,7 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .progress li .lbl { font-size: 10px; margin-bottom: 8px; }
   .progress li .dot-wrap { --dot-r: 11px; }
   .progress li .dot { width: 22px; height: 22px; font-size: 11px; }
-  .slot-btn { font-size: 14px; }
+  .slot-btn-start { font-size: 16px; }
   .step-title { font-size: 30px; }
   .step[data-step="1"] .step-title { font-size: 38px; }
   .footer-inner { grid-template-columns: 1fr; gap: 22px; text-align: center; justify-items: center; }
@@ -1670,6 +1728,7 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 @media (max-width: 400px) {
   .step-title { font-size: 26px; }
   .step[data-step="1"] .step-title { font-size: 34px; }
+  .slots-grid { grid-template-columns: 1fr; }
   .modal-actions { flex-direction: column; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .qr-image svg { width: 200px; height: 200px; }
@@ -1687,6 +1746,7 @@ html.lock-mobile .unit-grid { grid-template-columns: 1fr; }
 html.lock-mobile .category-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-mobile .payment-grid { grid-template-columns: 1fr; }
 html.lock-mobile .service-grid { grid-template-columns: 1fr; }
+html.lock-mobile .slots-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-mobile .address-grid { grid-template-columns: 1fr; }
 html.lock-mobile .field-row { flex-direction: column; gap: 0; }
 html.lock-mobile .form-grid { grid-template-columns: 1fr; }
@@ -1706,7 +1766,7 @@ html.lock-mobile .progress li { flex: 1; padding: 8px 2px; }
 html.lock-mobile .progress li .dot-wrap { --dot-r: 11px; }
 html.lock-mobile .progress li .dot { width: 22px; height: 22px; font-size: 11px; }
 html.lock-mobile .progress li .lbl { font-size: 10px; margin-bottom: 8px; }
-html.lock-mobile .slot-btn { font-size: 14px; }
+html.lock-mobile .slot-btn-start { font-size: 16px; }
 html.lock-mobile .footer-inner { grid-template-columns: 1fr; gap: 22px; text-align: center; justify-items: center; }
 html.lock-mobile .footer-copy { text-align: center; }
 
@@ -1816,6 +1876,7 @@ html.lock-desktop .unit-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-desktop .category-grid { grid-template-columns: repeat(4, 1fr); }
 html.lock-desktop .payment-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-desktop .service-grid { grid-template-columns: repeat(2, 1fr); }
+html.lock-desktop .slots-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 html.lock-desktop .address-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-desktop .field-row { flex-direction: row; gap: 14px; }
 html.lock-desktop .form-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1829,7 +1890,6 @@ html.lock-desktop .pix-code-wrap .btn { width: auto; }
 html.lock-desktop .success-actions .btn { min-width: 320px; }
 html.lock-desktop .progress { min-width: 720px; }
 html.lock-desktop .progress li .lbl { font-size: 12px; margin-bottom: 10px; }
-html.lock-desktop .slot-btn { font-size: 13px; }
 html.lock-desktop .footer-inner { grid-template-columns: 1.3fr 1fr 1fr; text-align: left; justify-items: stretch; }
 html.lock-desktop .footer-copy { text-align: right; }
 

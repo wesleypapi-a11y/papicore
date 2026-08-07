@@ -132,7 +132,8 @@
 
       <section class="step" data-step="4" hidden>
         <header class="step-head">
-          <h2 class="step-title">Data e horário</h2>
+          <h2 class="step-title">Escolha o horário</h2>
+          <p class="calendar-note" id="calendarNote" hidden></p>
           <p class="step-subtitle" id="dateSubtitle">Escolha uma data</p>
         </header>
         <div id="unitBlock" hidden>
@@ -140,13 +141,24 @@
           <div class="unit-grid" id="unitGrid"></div>
         </div>
         <div class="calendar" id="calendar"></div>
-        <p class="calendar-note" id="calendarNote" hidden></p>
         <div id="slotBlock" hidden>
+          <div class="slot-summary-card" id="slotSummaryCard">
+            <p class="slot-summary-service" id="slotServiceName"></p>
+            <p class="slot-summary-duration" id="slotDurationLine" hidden></p>
+          </div>
+          <p class="slot-date-line" id="slotDateLine">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="3" /><path d="M3 9h18M8 2v4M16 2v4" /></svg>
+            <span id="slotDateText"></span>
+          </p>
+          <hr class="slot-divider" />
           <h3 class="review-section-title">Horários disponíveis</h3>
-          <p class="step-subtitle" id="slotSubtitle"></p>
           <div id="slotLoading" class="loading" hidden>Consultando horários...</div>
           <div id="slotLongNote" hidden></div>
-          <div class="slots-grid" id="slotsGrid"></div>
+          <div class="slots-grid" id="slotsGrid" role="group" aria-label="Horários disponíveis"></div>
+          <p class="slot-info-note" id="slotInfoNote" hidden>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M12 16v-5M12 8h.01" /></svg>
+            <span>Os horários exibidos já consideram a duração total do serviço.</span>
+          </p>
         </div>
       </section>
 
