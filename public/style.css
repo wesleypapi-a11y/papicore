@@ -1669,8 +1669,18 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .agenda-appt-name, .agenda-appt-sub { font-size: 11px; white-space: normal; line-height: 1.2; }
   .agenda-appt-time { display: none; }
   .agenda-appt-head { flex-wrap: wrap; }
+}
 
-  /* tabelas viram cartões empilhados */
+/*
+ * Tabelas do Admin (Agendamentos, Financeiro, Serviços, ...) viram cartões
+ * empilhados. Breakpoint próprio (768px, cobre tablets em pé) em vez de
+ * reaproveitar o @media (max-width: 700px) acima — aquele bloco também
+ * estiliza o fluxo público de agendamento, então mexer no valor dele
+ * mudaria a página pública sem necessidade. Isso é o que faltava para as
+ * telas com tabela (a mais larga é a de Agendamentos) acompanharem o
+ * mesmo padrão "sem rolagem horizontal" que as abas em grid/card já têm.
+ */
+@media (max-width: 768px) {
   .table-wrap { overflow: visible; }
   .table-wrap table, .table-wrap thead, .table-wrap tbody,
   .table-wrap tr, .table-wrap th, .table-wrap td { display: block; }
