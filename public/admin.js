@@ -3523,6 +3523,12 @@
     return `/api/branding/${kind}?v=${encodeURIComponent(ts || '')}`;
   }
 
+  const BRAND_MESSAGES = {
+    logo: { uploaded: 'Logo enviada.', removed: 'Logo removida.' },
+    favicon: { uploaded: 'Favicon enviado.', removed: 'Favicon removido.' },
+    'admin-icon': { uploaded: 'Ícone do Admin enviado.', removed: 'Ícone do Admin removido.' }
+  };
+
   function themeCardHtml(theme, isSelected, isSaved) {
     const c = theme.colors;
     const dots = [c.primary, c.secondary, c.accent, c.background, c.surface, c.success].map(
@@ -3559,25 +3565,51 @@
 
     function paint() {
       const b = data.branding;
-      const hasLogo = b.has_logo, hasFav = b.has_favicon, ts = b.updated_at;
+      const hasLogo = b.has_logo, hasFav = b.has_favicon, hasAdminIcon = b.has_admin_icon, ts = b.updated_at;
+      const companyName = (state.settings && state.settings.company_name) || 'Sua empresa';
       container.innerHTML = `
         <div class="panel">
-          <h3 class="review-section-title">Logo e favicon</h3>
+          <h3 class="review-section-title">Logo, favicon e ícone do Admin</h3>
           <div class="branding-grid">
             <div class="branding-card">
+              <h4 class="branding-card-title">Logo da empresa</h4>
               <div class="branding-preview"><img data-preview="logo" src="${hasLogo ? escapeHtml(brandingAssetUrl('logo', ts)) : '/assets/logo.png'}" alt="Logo atual" /></div>
               <p class="sub">PNG, JPG ou WEBP (máx 3 MB)</p>
               <div class="branding-actions">
-                ${hasLogo ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove-logo">Remover</button>' : ''}
+                ${hasLogo ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove" data-brand-kind="logo">Remover</button>' : ''}
                 <label class="btn btn-ghost btn-sm branding-upload">${hasLogo ? 'Substituir' : 'Enviar logo'}<input type="file" data-brand-file="logo" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" hidden /></label>
               </div>
             </div>
             <div class="branding-card">
+              <h4 class="branding-card-title">Favicon / ícone público</h4>
               <div class="branding-preview"><img data-preview="favicon" src="${hasFav ? escapeHtml(brandingAssetUrl('favicon', ts)) : '/assets/favicon.png'}" alt="Favicon atual" /></div>
-              <p class="sub">PNG ou ICO (máx 1 MB) — também vira o ícone do app no celular, use uma imagem quadrada (ex.: 512×512)</p>
+              <p class="sub">PNG ou ICO (máx 1 MB) — ícone do agendamento público quando instalado no celular, use uma imagem quadrada (ex.: 512×512)</p>
               <div class="branding-actions">
-                ${hasFav ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove-favicon">Remover</button>' : ''}
+                ${hasFav ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove" data-brand-kind="favicon">Remover</button>' : ''}
                 <label class="btn btn-ghost btn-sm branding-upload">${hasFav ? 'Substituir' : 'Enviar favicon'}<input type="file" data-brand-file="favicon" accept=".png,.ico,image/png,image/x-icon,image/vnd.microsoft.icon" hidden /></label>
+              </div>
+            </div>
+            <div class="branding-card">
+              <h4 class="branding-card-title">Ícone do Admin</h4>
+              <div class="branding-preview"><img data-preview="admin-icon" src="${escapeHtml(brandingAssetUrl('admin-icon', ts))}" alt="Ícone do Admin atual" /></div>
+              <p class="sub">Ícone usado quando o painel administrativo é instalado ou adicionado à tela inicial do celular. Recomendado: 512×512, PNG ou WEBP, quadrado, sem textos pequenos (máx 3 MB).</p>
+              <div class="branding-actions">
+                ${hasAdminIcon ? '<button type="button" class="btn btn-outline btn-sm" data-brand-action="remove" data-brand-kind="admin-icon">Remover</button>' : ''}
+                <label class="btn btn-ghost btn-sm branding-upload">${hasAdminIcon ? 'Substituir' : 'Enviar imagem'}<input type="file" data-brand-file="admin-icon" accept=".png,.jpg,.jpeg,.webp,.ico,image/png,image/jpeg,image/webp,image/x-icon,image/vnd.microsoft.icon" hidden /></label>
+              </div>
+              ${!hasAdminIcon ? '<p class="sub branding-fallback-note">Sem imagem própria, o Admin usa o favicon, depois a logo, e por fim o ícone padrão do PapiCore.</p>' : ''}
+            </div>
+          </div>
+          <div class="branding-preview-sim">
+            <p class="sub" style="margin-bottom:8px;">Como aparecerá na tela inicial do celular:</p>
+            <div class="branding-preview-sim-row">
+              <div class="branding-preview-sim-item">
+                <img src="${hasFav ? escapeHtml(brandingAssetUrl('favicon', ts)) : '/assets/favicon.png'}" alt="" />
+                <span>${escapeHtml(companyName)}</span>
+              </div>
+              <div class="branding-preview-sim-item">
+                <img src="${escapeHtml(brandingAssetUrl('admin-icon', ts))}" alt="" />
+                <span>${escapeHtml(companyName)} Admin</span>
               </div>
             </div>
           </div>
@@ -3598,14 +3630,14 @@
 
       const box = container.querySelector('.branding-grid').closest('.panel');
       box.onclick = async (e) => {
-        const btn = e.target.closest('[data-brand-action]');
+        const btn = e.target.closest('[data-brand-action="remove"]');
         if (!btn) return;
-        const kind = btn.dataset.brandAction === 'remove-logo' ? 'logo' : 'favicon';
+        const kind = btn.dataset.brandKind;
         try {
           showLoader();
           const res = await api(`/api/admin/branding/${kind}`, { method: 'DELETE' });
           data.branding = res.branding;
-          toast(kind === 'logo' ? 'Logo removida.' : 'Favicon removido.', 'success');
+          toast(BRAND_MESSAGES[kind].removed, 'success');
           paint();
         } catch (err) {
           toast(err.message, 'error');
@@ -3623,7 +3655,7 @@
             showLoader();
             const res = await apiForm(`/api/admin/branding/${kind}`, fd);
             data.branding = res.branding;
-            toast(kind === 'logo' ? 'Logo enviada.' : 'Favicon enviado.', 'success');
+            toast(BRAND_MESSAGES[kind].uploaded, 'success');
             paint();
           } catch (err) {
             toast(err.message, 'error');

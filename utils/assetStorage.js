@@ -2,11 +2,13 @@
  * assetStorage.js
  *
  * Armazenamento dos assets de identidade visual por empresa (tenant):
- * logo, favicon e o QR Code do Pix (pagamento).
+ * logo, favicon, o ícone do Admin (PWA administrativo) e o QR Code do
+ * Pix (pagamento).
  *
  * Estrutura no disco (relativa a DATA_DIR):
  *   assets/tenant_XXXX/logo.<png|jpg|webp>
  *   assets/tenant_XXXX/favicon.<png|ico>
+ *   assets/tenant_XXXX/admin_icon.<png|jpg|webp|ico>
  *   assets/tenant_XXXX/pix_qr.<png|jpg|webp>
  *
  * DATA_DIR é resolvido aqui, em um único ponto, seguindo o mesmo padrão de
@@ -37,12 +39,23 @@ const FAVICON_MIME_EXT = {
   'image/vnd.microsoft.icon': '.ico'
 };
 
+/* Ícone do Admin/PWA administrativo: aceita os formatos seguros do sistema
+   (PNG, JPG, WEBP — os mesmos da logo) além do ICO do favicon. */
+const ADMIN_ICON_MIME_EXT = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/x-icon': '.ico',
+  'image/vnd.microsoft.icon': '.ico'
+};
+
 /* QR Code do Pix aceita os mesmos formatos da logo (PNG, JPG ou WEBP). */
 const PIX_QR_MIME_EXT = LOGO_MIME_EXT;
 
 const KIND_MIME_EXT = {
   logo: LOGO_MIME_EXT,
   favicon: FAVICON_MIME_EXT,
+  admin_icon: ADMIN_ICON_MIME_EXT,
   pix_qr: PIX_QR_MIME_EXT
 };
 

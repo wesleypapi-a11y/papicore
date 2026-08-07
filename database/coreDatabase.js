@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS tenant_branding (
   tenant_id INTEGER NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
   logo_path TEXT,
   favicon_path TEXT,
+  admin_icon_path TEXT,
   primary_color TEXT,
   secondary_color TEXT,
   accent_color TEXT,
@@ -581,6 +582,9 @@ function migrateBrandingThemeColumns() {
   ensureColumn('tenant_branding', 'border_color', 'TEXT');
   ensureColumn('tenant_branding', 'success_color', 'TEXT');
   ensureColumn('tenant_branding', 'danger_color', 'TEXT');
+  /* Ícone do Admin/PWA administrativo — idempotente, empresas antigas ficam
+     com admin_icon_path NULL e usam o fallback (favicon → logo → padrão). */
+  ensureColumn('tenant_branding', 'admin_icon_path', 'TEXT');
 }
 
 /* Marca quando a senha do usuário foi trocada pela última vez (reset
@@ -2344,7 +2348,7 @@ function getTenantBranding(tenantId) {
  * favicon são sempre relativos a DATA_DIR (ex: assets/tenant_0001/logo.png).
  */
 const BRANDING_FIELDS = [
-  'logo_path', 'favicon_path', 'browser_title', 'theme_key',
+  'logo_path', 'favicon_path', 'admin_icon_path', 'browser_title', 'theme_key',
   'primary_color', 'secondary_color', 'accent_color',
   'background_color', 'surface_color', 'text_color', 'muted_color',
   'border_color', 'success_color', 'danger_color'
@@ -2387,6 +2391,10 @@ function updateTenantLogo(tenantId, assetPath) {
 
 function updateTenantFavicon(tenantId, assetPath) {
   return upsertTenantBranding(tenantId, { favicon_path: assetPath || null });
+}
+
+function updateTenantAdminIcon(tenantId, assetPath) {
+  return upsertTenantBranding(tenantId, { admin_icon_path: assetPath || null });
 }
 
 /* ---------- Contratos ---------- */
@@ -2910,6 +2918,7 @@ module.exports = {
   deleteTenantBranding,
   updateTenantLogo,
   updateTenantFavicon,
+  updateTenantAdminIcon,
   /* contratos */
   getContractCompanySettings,
   upsertContractCompanySettings,

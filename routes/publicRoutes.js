@@ -16,11 +16,13 @@ const router = express.Router();
 
 router.use(domainTenantMiddleware);
 
-/* Identidade visual pública (logo/favicon por domínio) */
+/* Identidade visual pública (logo/favicon/ícone do Admin por domínio) */
 router.get('/branding', brandingController.publicBranding);
 router.get('/branding/logo', brandingController.publicLogo);
 router.get('/branding/favicon', brandingController.publicFavicon);
+router.get('/branding/admin-icon', brandingController.publicAdminIcon);
 router.get('/branding/manifest', brandingController.publicManifest);
+router.get('/branding/admin-manifest', brandingController.adminManifest);
 
 /* Pagamento via Pix: imagem do QR Code final configurada no admin */
 router.get('/payment/pix-qr', pixController.publicPixQr);

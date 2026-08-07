@@ -95,17 +95,20 @@ router.delete('/settings/pix-qr', pixController.removePixQr);
 router.get('/legal-documents', legalDocumentController.list);
 router.get('/legal-documents/:id', legalDocumentController.getOne);
 
-/* Aba Aparência (Configurações > Aparência): logo, favicon e tema de cores
-   do próprio tenant. O tenant nunca vem da URL/body — sempre de req.tenant,
-   resolvido pelo tenantMiddleware a partir do usuário autenticado. */
+/* Aba Aparência (Configurações > Aparência): logo, favicon, ícone do Admin e
+   tema de cores do próprio tenant. O tenant nunca vem da URL/body — sempre de
+   req.tenant, resolvido pelo tenantMiddleware a partir do usuário autenticado. */
 router.get('/branding', brandingController.getAdminBranding);
 router.put('/branding/theme', brandingController.updateAdminTheme);
 router.get('/branding/logo', brandingController.serveAdminLogo);
 router.get('/branding/favicon', brandingController.serveAdminFavicon);
+router.get('/branding/admin-icon', brandingController.serveAdminAdminIcon);
 router.post('/branding/logo', brandingController.uploadAdminLogo);
 router.post('/branding/favicon', brandingController.uploadAdminFavicon);
+router.post('/branding/admin-icon', brandingController.uploadAdminAdminIcon);
 router.delete('/branding/logo', brandingController.removeAdminLogo);
 router.delete('/branding/favicon', brandingController.removeAdminFavicon);
+router.delete('/branding/admin-icon', brandingController.removeAdminAdminIcon);
 
 /* Contrato da própria empresa com a PapiCore (somente leitura/download —
    quem cria e finaliza contratos é o painel do desenvolvedor). */

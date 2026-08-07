@@ -107,10 +107,13 @@ router.delete('/tenants/:id', developerController.deleteTenantHandler);
 router.get('/tenants/:id/branding', brandingController.getDeveloperBranding);
 router.get('/tenants/:id/branding/logo', brandingController.serveLogo);
 router.get('/tenants/:id/branding/favicon', brandingController.serveFavicon);
+router.get('/tenants/:id/branding/admin-icon', brandingController.serveAdminIcon);
 router.post('/tenants/:id/branding/logo', brandingController.uploadLogo);
 router.post('/tenants/:id/branding/favicon', brandingController.uploadFavicon);
+router.post('/tenants/:id/branding/admin-icon', brandingController.uploadAdminIcon);
 router.delete('/tenants/:id/branding/logo', brandingController.removeLogo);
 router.delete('/tenants/:id/branding/favicon', brandingController.removeFavicon);
+router.delete('/tenants/:id/branding/admin-icon', brandingController.removeAdminIcon);
 
 /* Domínios por empresa */
 router.get('/tenants/:id/domains', developerController.listDomainsHandler);

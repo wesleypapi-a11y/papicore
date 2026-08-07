@@ -92,11 +92,22 @@
       });
     }
 
-    if (branding.has_favicon && branding.favicon_url) {
-      const link = document.getElementById('pageFavicon');
-      if (link) link.href = branding.favicon_url;
+    /* Páginas do Admin marcam os links de ícone com data-icon-kind="admin" no
+       HTML (ex.: admin.html) para usar o admin_icon do tenant em vez do
+       favicon público — o agendamento público nunca usa admin_icon. A rota
+       /api/branding/admin-icon já resolve a cadeia de fallback no servidor
+       (admin_icon -> favicon -> logo -> padrão), então admin_icon_url sempre
+       aponta para um ícone válido. */
+    const link = document.getElementById('pageFavicon');
+    const touch = document.getElementById('appleTouchIcon');
+    const isAdminIcon = link && link.dataset.iconKind === 'admin';
+
+    if (isAdminIcon) {
+      if (link) link.href = branding.admin_icon_url;
       /* Ícone do app instalado no celular (iOS usa o apple-touch-icon). */
-      const touch = document.getElementById('appleTouchIcon');
+      if (touch) touch.href = branding.admin_icon_url;
+    } else if (branding.has_favicon && branding.favicon_url) {
+      if (link) link.href = branding.favicon_url;
       if (touch) touch.href = branding.favicon_url;
     }
 

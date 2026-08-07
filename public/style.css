@@ -1239,8 +1239,9 @@ body.booking-app {
 
 /* ---------- aparência (logo/favicon + tema de cores) ---------- */
 
-.branding-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.branding-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
 .branding-card { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); }
+.branding-card-title { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--text); }
 .branding-preview {
   display: flex; align-items: center; justify-content: center;
   height: 110px; margin-bottom: 10px;
@@ -1250,6 +1251,16 @@ body.booking-app {
 .branding-preview img { max-width: 85%; max-height: 85px; object-fit: contain; }
 .branding-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .branding-upload { cursor: pointer; }
+.branding-fallback-note { margin-top: 8px; }
+
+.branding-preview-sim { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.branding-preview-sim-row { display: flex; gap: 28px; flex-wrap: wrap; }
+.branding-preview-sim-item { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 84px; text-align: center; }
+.branding-preview-sim-item img {
+  width: 64px; height: 64px; object-fit: contain; border-radius: 16px;
+  border: 1px solid var(--border); background: var(--card); padding: 6px;
+}
+.branding-preview-sim-item span { font-size: 12px; color: var(--text-soft); line-height: 1.3; }
 
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 .theme-card {
@@ -1881,7 +1892,7 @@ html.lock-desktop .address-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-desktop .field-row { flex-direction: row; gap: 14px; }
 html.lock-desktop .form-grid { grid-template-columns: repeat(2, 1fr); }
 html.lock-desktop .form-grid .span-2 { grid-column: span 2; }
-html.lock-desktop .branding-grid { grid-template-columns: repeat(2, 1fr); }
+html.lock-desktop .branding-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 html.lock-desktop .theme-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 html.lock-desktop .nav-row { flex-direction: row; }
 html.lock-desktop .nav-row .btn { width: auto; }

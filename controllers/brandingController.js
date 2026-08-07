@@ -1,16 +1,20 @@
 /*
  * brandingController.js
  *
- * Identidade visual por empresa (tenant): logo e favicon.
+ * Identidade visual por empresa (tenant): logo, favicon e o ícone do Admin
+ * (PWA administrativo).
  *
  * Área do desenvolvedor (protegida por requireDeveloper):
  *   GET    /api/developer/tenants/:id/branding            -> metadados
  *   GET    /api/developer/tenants/:id/branding/logo       -> arquivo
  *   GET    /api/developer/tenants/:id/branding/favicon    -> arquivo
+ *   GET    /api/developer/tenants/:id/branding/admin-icon -> arquivo
  *   POST   /api/developer/tenants/:id/branding/logo       -> upload
  *   POST   /api/developer/tenants/:id/branding/favicon    -> upload
+ *   POST   /api/developer/tenants/:id/branding/admin-icon -> upload
  *   DELETE /api/developer/tenants/:id/branding/logo       -> remover
  *   DELETE /api/developer/tenants/:id/branding/favicon    -> remover
+ *   DELETE /api/developer/tenants/:id/branding/admin-icon -> remover
  *
  * Aba Aparência do admin do tenant (protegida por requireAuth + tenantMiddleware;
  * o tenant é sempre o do usuário autenticado, nunca vindo da URL/body):
@@ -18,15 +22,21 @@
  *   PUT    /api/admin/branding/theme      -> aplica um preset de tema (utils/themePresets.js)
  *   GET    /api/admin/branding/logo       -> arquivo
  *   GET    /api/admin/branding/favicon    -> arquivo
+ *   GET    /api/admin/branding/admin-icon -> arquivo
  *   POST   /api/admin/branding/logo       -> upload
  *   POST   /api/admin/branding/favicon    -> upload
+ *   POST   /api/admin/branding/admin-icon -> upload
  *   DELETE /api/admin/branding/logo       -> remover
  *   DELETE /api/admin/branding/favicon    -> remover
+ *   DELETE /api/admin/branding/admin-icon -> remover
  *
  * Público (tenant resolvido pelo domínio da requisição):
  *   GET /api/branding          -> JSON com URLs e fallbacks
  *   GET /api/branding/logo     -> arquivo
  *   GET /api/branding/favicon  -> arquivo
+ *   GET /api/branding/admin-icon -> arquivo (fallback: favicon -> logo -> padrão)
+ *   GET /api/branding/manifest        -> manifest PWA público (usa o favicon)
+ *   GET /api/branding/admin-manifest  -> manifest PWA do painel admin (usa o admin_icon)
  *
  * Logo e favicon da tela de login do painel do desenvolvedor (não são de
  * nenhum tenant):
@@ -50,6 +60,7 @@ const {
   upsertTenantBranding,
   updateTenantLogo,
   updateTenantFavicon,
+  updateTenantAdminIcon,
   logActivity
 } = require('../database/coreDatabase');
 const {
@@ -75,11 +86,42 @@ const {
 
 const LOGO_LIMIT = 3 * 1024 * 1024;  /* 3 MB */
 const FAVICON_LIMIT = 1 * 1024 * 1024;  /* 1 MB */
+const ADMIN_ICON_LIMIT = 3 * 1024 * 1024;  /* 3 MB */
 
 /* Arquivos padrão atuais da plataforma, usados quando o tenant não tem asset próprio. */
 const DEFAULT_ASSET = {
   logo: path.join(__dirname, '..', 'public', 'assets', 'logo.png'),
-  favicon: path.join(__dirname, '..', 'public', 'assets', 'favicon.png')
+  favicon: path.join(__dirname, '..', 'public', 'assets', 'favicon.png'),
+  admin_icon: path.join(__dirname, '..', 'public', 'images', 'icons', 'icon-512.png')
+};
+
+/* Mensagens de upload/remoção por tipo de asset (mantidas iguais às atuais
+   para logo/favicon — nada quebra na UI/logs existentes). */
+const ASSET_VERBS = {
+  logo: { updated: 'Logo atualizada', removed: 'Logo removida' },
+  favicon: { updated: 'Favicon atualizado', removed: 'Favicon removido' },
+  admin_icon: { updated: 'Ícone do Admin atualizado', removed: 'Ícone do Admin removido' }
+};
+
+/* Atualiza a coluna certa de tenant_branding de acordo com o tipo de asset. */
+const DB_UPDATE_BY_KIND = {
+  logo: updateTenantLogo,
+  favicon: updateTenantFavicon,
+  admin_icon: updateTenantAdminIcon
+};
+
+/* Mensagem de formato inválido no fileFilter do multer por tipo. */
+const MIME_ERROR_BY_KIND = {
+  logo: 'Formato de logo inválido. Use PNG, JPG ou WEBP.',
+  favicon: 'Formato de favicon inválido. Use PNG ou ICO.',
+  admin_icon: 'Formato de ícone inválido. Use PNG, JPG, WEBP ou ICO.'
+};
+
+/* Mensagem quando o "magic number" do arquivo não corresponde a imagem. */
+const SNIFF_ERROR_BY_KIND = {
+  logo: 'O arquivo enviado não é uma imagem válida (PNG, JPG ou WEBP).',
+  favicon: 'O arquivo enviado não é um favicon válido (PNG ou ICO).',
+  admin_icon: 'O arquivo enviado não é um ícone válido (PNG, JPG, WEBP ou ICO).'
 };
 
 /* Chaves internas dos assets de plataforma (tela de login do painel do
@@ -133,6 +175,7 @@ function brandingPayload(tenantId) {
   return {
     has_logo: Boolean(row && row.logo_path),
     has_favicon: Boolean(row && row.favicon_path),
+    has_admin_icon: Boolean(row && row.admin_icon_path),
     browser_title: (row && row.browser_title) || null,
     theme_key: resolvedThemeKey(row),
     colors: resolvedColors(row),
@@ -161,7 +204,8 @@ function tenantFromAuth(req) {
 /* ---------- Upload ---------- */
 
 function multerFor(kind, resolveTenant) {
-  const limits = kind === 'logo' ? { fileSize: LOGO_LIMIT } : { fileSize: FAVICON_LIMIT };
+  const limits = { fileSize: kind === 'favicon' ? FAVICON_LIMIT : LOGO_LIMIT };
+  if (kind === 'admin_icon') limits.fileSize = ADMIN_ICON_LIMIT;
   return multer({
     storage: multer.diskStorage({
       destination(req, file, cb) {
@@ -181,14 +225,7 @@ function multerFor(kind, resolveTenant) {
     limits,
     fileFilter(req, file, cb) {
       if (!isAllowedMime(kind, file.mimetype)) {
-        return cb(
-          new AppError(
-            400,
-            kind === 'logo'
-              ? 'Formato de logo inválido. Use PNG, JPG ou WEBP.'
-              : 'Formato de favicon inválido. Use PNG ou ICO.'
-          )
-        );
+        return cb(new AppError(400, MIME_ERROR_BY_KIND[kind]));
       }
       cb(null, true);
     }
@@ -224,21 +261,13 @@ function uploadAsset(kind, resolveTenant, actionName) {
       const sniffed = sniffMime(savedPath);
       if (!sniffed || !extensionFor(kind, sniffed)) {
         unlinkIfExists(savedPath);
-        return next(
-          new AppError(
-            400,
-            kind === 'logo'
-              ? 'O arquivo enviado não é uma imagem válida (PNG, JPG ou WEBP).'
-              : 'O arquivo enviado não é um favicon válido (PNG ou ICO).'
-          )
-        );
+        return next(new AppError(400, SNIFF_ERROR_BY_KIND[kind]));
       }
 
       const relPath = path.relative(ASSETS_DIR, savedPath).split(path.sep).join('/');
       try {
         removeOtherVersion(tenant.id, kind, savedPath);
-        if (kind === 'logo') updateTenantLogo(tenant.id, relPath);
-        else updateTenantFavicon(tenant.id, relPath);
+        DB_UPDATE_BY_KIND[kind](tenant.id, relPath);
       } catch (dbErr) {
         unlinkIfExists(savedPath);
         return next(dbErr);
@@ -248,7 +277,7 @@ function uploadAsset(kind, resolveTenant, actionName) {
         req.user.id,
         tenant.id,
         actionName.updated,
-        kind === 'logo' ? 'Logo atualizada' : 'Favicon atualizado'
+        ASSET_VERBS[kind].updated
       );
       return res.status(201).json({ success: true, branding: brandingPayload(tenant.id) });
     });
@@ -262,14 +291,13 @@ function removeAsset(kind, resolveTenant, actionName) {
     const tenant = resolveTenant(req);
 
     removeAssetFile(tenant.id, kind);
-    if (kind === 'logo') updateTenantLogo(tenant.id, null);
-    else updateTenantFavicon(tenant.id, null);
+    DB_UPDATE_BY_KIND[kind](tenant.id, null);
 
     logActivity(
       req.user.id,
       tenant.id,
       actionName.removed,
-      kind === 'logo' ? 'Logo removida' : 'Favicon removido'
+      ASSET_VERBS[kind].removed
     );
     return res.json({ success: true, branding: brandingPayload(tenant.id) });
   };
@@ -311,6 +339,7 @@ function getBrandingHandler(resolveTenant, opts = {}) {
       const ts = encodeURIComponent(b.updated_at || '');
       b.logo_url = b.has_logo ? `/api/developer/tenants/${tenant.id}/branding/logo?v=${ts}` : null;
       b.favicon_url = b.has_favicon ? `/api/developer/tenants/${tenant.id}/branding/favicon?v=${ts}` : null;
+      b.admin_icon_url = b.has_admin_icon ? `/api/developer/tenants/${tenant.id}/branding/admin-icon?v=${ts}` : null;
     }
     return res.json(payload);
   };
@@ -356,8 +385,15 @@ function publicBranding(req, res) {
     browser_title: b.browser_title || t.name,
     has_logo: b.has_logo,
     has_favicon: b.has_favicon,
+    has_admin_icon: b.has_admin_icon,
     logo_url: b.has_logo ? `/api/branding/logo?v=${ts}` : null,
     favicon_url: b.has_favicon ? `/api/branding/favicon?v=${ts}` : null,
+    /* Sempre presente (não só quando has_admin_icon): a rota resolve a cadeia
+       de fallback admin_icon -> favicon -> logo -> padrão no servidor, então
+       o cliente sempre tem uma URL válida para o ícone efetivo do Admin. O
+       ?v=updated_at muda sempre que qualquer um desses três assets muda,
+       evitando ícone “preso” em cache (ETAPA 7). */
+    admin_icon_url: `/api/branding/admin-icon?v=${ts}`,
     theme_key: b.theme_key,
     colors: b.colors
   });
@@ -371,11 +407,45 @@ function publicAsset(kind) {
   };
 }
 
+/* Ícone do Admin em rota pública com a cadeia de fallback da ETAPA 8:
+   admin_icon → favicon → logo → ícone padrão do PapiCore. Usado pelo
+   favicon/apple-touch-icon do painel e pelos ícones do manifest admin. */
+function servePublicAdminIcon(req, res) {
+  const t = req.tenantFromDomain;
+  if (!t) throw new AppError(404, 'Domínio não cadastrado.');
+  for (const kind of ['admin_icon', 'favicon', 'logo']) {
+    const file = storedFilePath(t.id, kind);
+    if (file) {
+      res.set('Cache-Control', 'public, max-age=31536000, immutable');
+      return res.sendFile(file);
+    }
+  }
+  res.set('Cache-Control', 'public, max-age=3600');
+  return res.sendFile(DEFAULT_ASSET.admin_icon);
+}
+
+/* Tipo MIME canônico do manifest a partir do arquivo efetivo no disco. */
+function manifestIconType(file) {
+  if (/\.ico$/i.test(file)) return 'image/x-icon';
+  if (/\.webp$/i.test(file)) return 'image/webp';
+  return 'image/png';
+}
+
+/* Ícone efetivo de um tenant em ordem de prioridade (fallback da ETAPA 8). */
+function fallbackStoredFile(tenantId, kinds) {
+  for (const kind of kinds) {
+    const file = storedFilePath(tenantId, kind);
+    if (file) return { file, kind };
+  }
+  return null;
+}
+
 /*
  * Manifest PWA por empresa (GET /api/branding/manifest): quando o tenant
  * envia um favicon no admin, ele vira o ícone do app instalado no celular
  * (Android usa o manifest; iOS usa o apple-touch-icon apontado para o mesmo
  * arquivo). Sem favicon próprio, cai para os ícones padrão da plataforma.
+ * O agendamento PÚBLICO usa sempre o favicon — nunca o admin_icon.
  */
 function publicManifest(req, res) {
   const t = req.tenantFromDomain;
@@ -388,11 +458,10 @@ function publicManifest(req, res) {
   let icons;
   if (b.has_favicon) {
     const file = storedFilePath(t.id, 'favicon');
-    const isIco = file && /\.ico$/i.test(file);
     icons = [{
       src: `/api/branding/favicon?v=${ts}`,
       sizes: 'any',
-      type: isIco ? 'image/x-icon' : 'image/png',
+      type: manifestIconType(file),
       purpose: 'any'
     }];
   } else {
@@ -404,12 +473,70 @@ function publicManifest(req, res) {
 
   return res
     .set('Content-Type', 'application/manifest+json; charset=utf-8')
+    /* O manifest em si nunca fica em cache de longa duração — só os ícones
+       que ele referencia (?v=updated_at) têm max-age de 1 ano. Assim o app
+       instalado sempre relê um manifest atualizado, mesmo que o navegador
+       ainda esteja com a versão antiga do ícone em cache local. */
+    .set('Cache-Control', 'no-cache')
     .json({
       name: t.name,
       short_name: String(t.name || 'PapiCore').slice(0, 12),
       description: `Agendamento online — ${t.name}.`,
       start_url: '/',
       scope: '/',
+      display: 'standalone',
+      background_color: theme.background || '#ffffff',
+      theme_color: theme.primary || '#ffffff',
+      lang: 'pt-BR',
+      icons
+    });
+}
+
+/*
+ * Manifest PWA do painel ADMIN (GET /api/branding/admin-manifest): usa o
+ * admin_icon do tenant; sem ele, aplica a cadeia de fallback
+ * admin_icon → favicon → logo → ícones padrão. Nome = "<empresa> Admin".
+ * Servido dinamicamente por domínio — cada tenant vê apenas o próprio.
+ */
+function adminManifest(req, res) {
+  const t = req.tenantFromDomain;
+  if (!t) throw new AppError(404, 'Domínio não cadastrado.');
+
+  const b = brandingPayload(t.id);
+  const theme = b.colors || getDefaultThemePreset().colors;
+  const ts = encodeURIComponent(b.updated_at || '');
+
+  let icons;
+  const found = fallbackStoredFile(t.id, ['admin_icon', 'favicon', 'logo']);
+  if (found) {
+    const publicKind = found.kind === 'admin_icon' ? 'admin-icon' : found.kind;
+    icons = [{
+      src: `/api/branding/${publicKind}?v=${ts}`,
+      sizes: 'any',
+      type: manifestIconType(found.file),
+      purpose: 'any'
+    }];
+  } else {
+    icons = [
+      { src: '/images/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/images/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' }
+    ];
+  }
+
+  const firstWord = String(t.name || 'PapiCore').trim().split(/\s+/)[0] || 'PapiCore';
+  return res
+    .set('Content-Type', 'application/manifest+json; charset=utf-8')
+    /* O manifest em si nunca fica em cache de longa duração — só os ícones
+       que ele referencia (?v=updated_at) têm max-age de 1 ano. Assim o app
+       instalado sempre relê um manifest atualizado, mesmo que o navegador
+       ainda esteja com a versão antiga do ícone em cache local. */
+    .set('Cache-Control', 'no-cache')
+    .json({
+      name: `${t.name} Admin`,
+      short_name: String(`${firstWord} Admin`).slice(0, 12),
+      description: `Painel administrativo — ${t.name}.`,
+      start_url: '/admin',
+      scope: '/admin',
       display: 'standalone',
       background_color: theme.background || '#ffffff',
       theme_color: theme.primary || '#ffffff',
@@ -526,8 +653,10 @@ function serveLoginAsset(kind) {
    alterando pela aba Aparência. */
 const DEV_LOGO_ACTIONS = { updated: 'BRANDING_LOGO_UPDATED', removed: 'BRANDING_LOGO_REMOVED' };
 const DEV_FAVICON_ACTIONS = { updated: 'BRANDING_FAVICON_UPDATED', removed: 'BRANDING_FAVICON_REMOVED' };
+const DEV_ADMIN_ICON_ACTIONS = { updated: 'BRANDING_ADMIN_ICON_UPDATED', removed: 'BRANDING_ADMIN_ICON_REMOVED' };
 const TENANT_LOGO_ACTIONS = { updated: 'TENANT_LOGO_UPDATED', removed: 'TENANT_LOGO_REMOVED' };
 const TENANT_FAVICON_ACTIONS = { updated: 'TENANT_FAVICON_UPDATED', removed: 'TENANT_FAVICON_REMOVED' };
+const TENANT_ADMIN_ICON_ACTIONS = { updated: 'TENANT_ADMIN_ICON_UPDATED', removed: 'TENANT_ADMIN_ICON_REMOVED' };
 
 module.exports = {
   /* --- Desenvolvedor (painel do desenvolvedor, tenant pela URL) --- */
@@ -535,26 +664,34 @@ module.exports = {
   getDeveloperBranding: getBrandingHandler(tenantFromParam, { developerUrls: true }),
   uploadLogo: uploadAsset('logo', tenantFromParam, DEV_LOGO_ACTIONS),
   uploadFavicon: uploadAsset('favicon', tenantFromParam, DEV_FAVICON_ACTIONS),
+  uploadAdminIcon: uploadAsset('admin_icon', tenantFromParam, DEV_ADMIN_ICON_ACTIONS),
   removeLogo: removeAsset('logo', tenantFromParam, DEV_LOGO_ACTIONS),
   removeFavicon: removeAsset('favicon', tenantFromParam, DEV_FAVICON_ACTIONS),
+  removeAdminIcon: removeAsset('admin_icon', tenantFromParam, DEV_ADMIN_ICON_ACTIONS),
   serveLogo: serveAsset('logo', tenantFromParam),
   serveFavicon: serveAsset('favicon', tenantFromParam),
+  serveAdminIcon: serveAsset('admin_icon', tenantFromParam),
 
   /* --- Admin do tenant (aba Aparência, tenant pelo usuário autenticado) --- */
   getAdminBranding: getBrandingHandler(tenantFromAuth, { includeThemes: true }),
   updateAdminTheme: updateTheme,
   uploadAdminLogo: uploadAsset('logo', tenantFromAuth, TENANT_LOGO_ACTIONS),
   uploadAdminFavicon: uploadAsset('favicon', tenantFromAuth, TENANT_FAVICON_ACTIONS),
+  uploadAdminAdminIcon: uploadAsset('admin_icon', tenantFromAuth, TENANT_ADMIN_ICON_ACTIONS),
   removeAdminLogo: removeAsset('logo', tenantFromAuth, TENANT_LOGO_ACTIONS),
   removeAdminFavicon: removeAsset('favicon', tenantFromAuth, TENANT_FAVICON_ACTIONS),
+  removeAdminAdminIcon: removeAsset('admin_icon', tenantFromAuth, TENANT_ADMIN_ICON_ACTIONS),
   serveAdminLogo: serveAsset('logo', tenantFromAuth),
   serveAdminFavicon: serveAsset('favicon', tenantFromAuth),
+  serveAdminAdminIcon: serveAsset('admin_icon', tenantFromAuth),
 
   /* --- Público (resolve pelo domínio) --- */
   publicBranding,
   publicLogo: publicAsset('logo'),
   publicFavicon: publicAsset('favicon'),
+  publicAdminIcon: servePublicAdminIcon,
   publicManifest,
+  adminManifest,
 
   /* --- Login do painel do desenvolvedor (assets da plataforma) --- */
   getLoginLogoHandler: getLoginAssetHandler('logo'),
