@@ -183,7 +183,7 @@ function validateAppointmentInput(body, opts = {}) {
   if (!vehicle_plate || !isValidPlate(vehicle_plate)) {
     throw new AppError(400, 'Informe uma placa válida. Use o formato ABC-1234 ou Mercosul.');
   }
-  if (!vehicle_color || String(vehicle_color).trim().length < 2) {
+  if (!opts.allowMissingVehicleColor && (!vehicle_color || String(vehicle_color).trim().length < 2)) {
     throw new AppError(400, 'Informe a cor do veículo.');
   }
   const category = String(vehicle_category || '').toLowerCase();

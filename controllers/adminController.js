@@ -106,7 +106,7 @@ function getAppointment(req, res) {
 
 function createAppointment(req, res) {
   const db = getDb();
-  const data = validateAppointmentInput(req.body, { allowStatus: true });
+  const data = validateAppointmentInput(req.body, { allowStatus: true, allowMissingVehicleColor: true });
   const settings = getSettings();
   const capacity = data.unit ? (data.unit.capacity || 1) : (settings.capacity || 1);
 
@@ -164,7 +164,7 @@ function updateAppointment(req, res) {
   const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
 
-  const data = validateAppointmentInput(req.body, { allowStatus: true });
+  const data = validateAppointmentInput(req.body, { allowStatus: true, allowMissingVehicleColor: true });
   const customer = customerService.ensureCustomerFromAppointment(db, data).customer;
   const vehicleResult = data.vehicle_plate ? customerService.ensureVehicleFromAppointment(db, customer.id, data) : null;
   const vehicle = vehicleResult && vehicleResult.vehicle ? vehicleResult.vehicle : null;

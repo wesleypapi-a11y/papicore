@@ -1605,7 +1605,6 @@
             <select id="apptService"><option value="">—</option>${serviceOpts}</select></div>
           <div class="field">${fieldHtml('apptName', 'Nome', v('customer_name'), 'text', 'Cliente')}</div>
           <div class="field">${fieldHtml('apptPhone', 'Telefone', v('customer_phone'), 'text', '(00) 00000-0000')}</div>
-          <div class="field">${fieldHtml('apptBrand', 'Marca', v('vehicle_brand'), 'text', 'Marca')}</div>
           <div class="field">${fieldHtml('apptModel', 'Modelo', v('vehicle_model'), 'text', 'Modelo')}</div>
           <div class="field"><label for="apptCategory">Categoria</label>
             <select id="apptCategory">${catOpts}</select></div>
@@ -1663,11 +1662,11 @@
         service_id: Number($('apptService').value),
         customer_name: $('apptName').value,
         customer_phone: $('apptPhone').value,
-        vehicle_brand: $('apptBrand').value,
+        vehicle_brand: appt ? appt.vehicle_brand : null,
         vehicle_model: $('apptModel').value,
         vehicle_year: null,
         vehicle_plate: $('apptPlate').value || null,
-        vehicle_color: null,
+        vehicle_color: appt ? appt.vehicle_color : null,
         vehicle_category: $('apptCategory').value,
         appointment_date: $('apptDate').value,
         start_time: $('apptTime').value,
