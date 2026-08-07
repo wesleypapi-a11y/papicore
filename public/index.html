@@ -78,14 +78,10 @@
     <form id="bookingForm" novalidate>
       <section class="step" data-step="1" hidden>
         <header class="step-head">
-          <h2 class="step-title">Vamos começar?</h2>
-          <p class="step-subtitle">Escolha a forma de atendimento e informe seus dados.</p>
+          <h2 class="step-title">Dados</h2>
+          <p class="step-subtitle">Informe seus dados para contato e escolha a forma de atendimento.</p>
           <span class="title-rule"></span>
         </header>
-        <div class="modality-section">
-          <h3 class="review-section-title">Forma de atendimento</h3>
-          <div class="modality-grid" id="modalityGrid"></div>
-        </div>
         <h3 class="review-section-title">Seus dados</h3>
         <div class="field">
           <label for="customerName">Nome completo</label>
@@ -94,6 +90,10 @@
         <div class="field">
           <label for="customerPhone">WhatsApp / Telefone</label>
           <input type="tel" id="customerPhone" inputmode="numeric" autocomplete="tel" placeholder="(00) 00000-0000" />
+        </div>
+        <div class="modality-section">
+          <h3 class="review-section-title">Forma de atendimento</h3>
+          <div class="modality-grid" id="modalityGrid"></div>
         </div>
       </section>
 
