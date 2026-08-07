@@ -40,8 +40,8 @@
   let legalModalReturnFocus = null;
   let legalModalKeydownHandler = null;
 
-  const STEP_LABELS = ['Atendimento', 'Dados', 'Veículo', 'Data', 'Serviço', 'Horário', 'Revisão', 'Pagamento'];
-  const TOTAL_STEPS = 8;
+  const STEP_LABELS = ['Dados', 'Veículo', 'Serviço', 'Data e horário', 'Revisão & pagamento', 'Confirmação'];
+  const TOTAL_STEPS = 5;
 
   const PAYMENT_METHODS = [
     { key: 'local', name: 'Pagamento no local', desc: 'Pague em dinheiro ou no meio que preferir na hora do serviço.' },
@@ -207,7 +207,10 @@
     renderProgress();
     renderModalities();
     renderCategoryOptions();
-    renderCalendar();
+    if (state.services.length) {
+      renderCalendar();
+      renderSlots();
+    }
     goToStep(state.currentStep || 1, true);
     bindGlobal();
 
@@ -293,7 +296,7 @@
     const wrap = $('progressWrap');
     const list = $('progress');
     list.innerHTML = '';
-    for (let i = 1; i <= TOTAL_STEPS; i += 1) {
+    for (let i = 1; i <= STEP_LABELS.length; i += 1) {
       const li = document.createElement('li');
       li.dataset.step = i;
       li.innerHTML = `<span class="lbl">${STEP_LABELS[i - 1]}</span><span class="dot-wrap"><span class="dot">${i}</span></span>`;
@@ -311,7 +314,7 @@
       li.classList.toggle('active', n === state.currentStep);
     });
     const fill = $('pageProgressFill');
-    if (fill) fill.style.width = ((state.currentStep - 1) / (TOTAL_STEPS - 1) * 100) + '%';
+    if (fill) fill.style.width = ((state.currentStep - 1) / (STEP_LABELS.length - 1) * 100) + '%';
   }
 
   /* ---------- steps ---------- */
@@ -337,13 +340,11 @@
   function validateStep(n) {
     if (n === 1) {
       if (!state.modality) { alert('Selecione a forma de atendimento.'); return false; }
-    }
-    if (n === 2) {
       if (state.customer.name.trim().length < 3) { alert('Informe seu nome completo.'); return false; }
       const ph = digits(state.customer.phone);
       if (ph.length < 10) { alert('Informe um telefone válido com DDD.'); return false; }
     }
-    if (n === 3) {
+    if (n === 2) {
       if (state.vehicle.brand.trim().length < 2) { alert('Informe a marca do veículo.'); return false; }
       if (state.vehicle.model.trim().length < 2) { alert('Informe o modelo do veículo.'); return false; }
       if (!/^\d{4}$/.test(state.vehicle.year.trim())) { alert('Informe o ano do veículo.'); return false; }
@@ -351,20 +352,16 @@
       if (state.vehicle.color.trim().length < 2) { alert('Informe a cor do veículo.'); return false; }
       if (!state.vehicle.category) { alert('Selecione a categoria do veículo.'); return false; }
     }
+    if (n === 3) {
+      if (!state.services.length) { alert('Selecione ao menos um serviço.'); return false; }
+    }
     if (n === 4) {
       if (state.modality.slug === 'in-store' && !state.unit) { alert('Selecione a unidade de atendimento.'); return false; }
       if (!state.date) { alert('Selecione a data do agendamento.'); return false; }
-    }
-    if (n === 5) {
-      if (!state.services.length) { alert('Selecione ao menos um serviço.'); return false; }
-    }
-    if (n === 6) {
       if (!state.longService && !state.slot) { alert('Selecione um horário.'); return false; }
     }
-    if (n === 7) {
+    if (n === 5) {
       if (!validateAddressSubmit()) return false;
-    }
-    if (n === 8) {
       if (!state.paymentMethod) { alert('Selecione a forma de pagamento.'); return false; }
       if (state.paymentMethod === 'card' && !state.cardPaid) {
         alert('Finalize o pagamento com o cartão antes de enviar.');
@@ -382,11 +379,16 @@
   }
 
   function stepRender(n) {
-    if (n === 4) renderCalendar();
-    if (n === 5) renderCatalog();
-    if (n === 6) renderSlots();
-    if (n === 7) renderReview();
-    if (n === 8) renderPayment();
+    if (n === 1) renderModalities();
+    if (n === 3) renderCatalog();
+    if (n === 4) {
+      renderCalendar();
+      renderSlots();
+    }
+    if (n === 5) {
+      renderReview();
+      renderPayment();
+    }
   }
 
   /* ---------- step 1: modalities ---------- */
@@ -420,19 +422,21 @@
         state.unit = null;
         state.date = null;
         state.services = [];
-      state.slot = null;
-      state.slotEndDate = null;
-      state.slotEndTime = null;
-      state.slotDuration = null;
-      state.longService = false;
-      state.estimatedEnd = null;
-      state.address = {};
+        state.slot = null;
+        state.slotEndDate = null;
+        state.slotEndTime = null;
+        state.slotDuration = null;
+        state.longService = false;
+        state.estimatedEnd = null;
+        state.address = {};
         state.responsible_name = '';
         state.key_delivery_confirmed = false;
         state.has_water_access = false;
         state.has_power_access = false;
         state.paymentMethod = '';
         state.cardPaid = false;
+        slotCache = {};
+        calendarCache = {};
         saveState();
         grid.querySelectorAll('.modality-card').forEach((c) => c.classList.remove('selected'));
         card.classList.add('selected');
@@ -462,6 +466,7 @@
       if (state.vehicle.category === key) btn.classList.add('selected');
       btn.addEventListener('click', () => {
         state.vehicle.category = key;
+        state.date = null;
         state.slot = null;
         state.slotEndDate = null;
         state.slotEndTime = null;
@@ -469,6 +474,7 @@
         state.longService = false;
         state.estimatedEnd = null;
         slotCache = {};
+        calendarCache = {};
         saveState();
         grid.querySelectorAll('.category-option').forEach((c) => c.classList.remove('selected'));
         btn.classList.add('selected');
@@ -505,21 +511,26 @@
       card.addEventListener('click', () => {
         state.unit = u;
         state.date = null;
-        state.services = [];
         state.slot = null;
         state.slotEndDate = null;
         state.slotEndTime = null;
         state.slotDuration = null;
+        state.longService = false;
+        state.estimatedEnd = null;
+        slotCache = {};
+        calendarCache = {};
         saveState();
         renderCalendar();
+        renderSlots();
       });
       grid.appendChild(card);
     });
   }
 
   const calView = { month: null };
+  let calendarCache = {};
 
-  function renderCalendar() {
+  async function renderCalendar() {
     renderUnits();
     const today = new Date();
     if (!calView.month) calView.month = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -532,13 +543,11 @@
     const month = monthStart.getMonth();
     const firstDow = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const working = (state.unit && state.unit.working_days && state.unit.working_days.length)
-      ? state.unit.working_days
-      : (state.settings.working_days && state.settings.working_days.length ? state.settings.working_days : [1, 2, 3, 4, 5, 6]);
+    const serviceIds = state.services.map((s) => s.id);
 
-    $('dateSubtitle').textContent = state.modality && state.modality.slug === 'in-store'
-      ? 'Escolha a unidade e depois o dia disponível.'
-      : 'Escolha o dia disponível.';
+    $('dateSubtitle').textContent = (state.modality && state.modality.slug === 'in-store' && !state.unit)
+      ? 'Escolha a unidade de atendimento.'
+      : 'Escolha uma data';
 
     const cal = $('calendar');
     cal.innerHTML = `
@@ -550,24 +559,46 @@
       <div class="cal-week">
         ${WEEKDAY_LABELS.map((w) => `<span class="cal-wd">${w}</span>`).join('')}
       </div>
-      <div class="cal-grid"></div>
+      <div class="cal-grid"><div class="loading" style="grid-column: 1 / -1;">Analisando a agenda...</div></div>
     `;
     const gridEl = cal.querySelector('.cal-grid');
+
+    const cacheKey = `${state.modality.id}|${state.unit ? state.unit.id : ''}|${serviceIds.slice().sort((a, b) => a - b).join(',')}|${year}-${month}|${state.vehicle.category}`;
+    if (!calendarCache[cacheKey]) {
+      try {
+        const params = new URLSearchParams({
+          modality_id: state.modality.id,
+          service_ids: serviceIds.join(','),
+          year: String(year),
+          month: String(month + 1),
+          vehicle_category: state.vehicle.category
+        });
+        if (state.unit) params.set('unit_id', state.unit.id);
+        calendarCache[cacheKey] = await api('/api/availability/calendar?' + params.toString());
+      } catch (err) {
+        gridEl.innerHTML = `<div class="error-box" style="grid-column: 1 / -1;">${escapeHtml(err.message)}</div>`;
+        return;
+      }
+    }
+    const monthData = calendarCache[cacheKey];
+    const byDate = new Map(monthData.days.map((d) => [d.date, d]));
+    let noCapacityDays = 0;
+
     for (let i = 0; i < firstDow; i += 1) gridEl.appendChild(document.createElement('span'));
     for (let day = 1; day <= daysInMonth; day += 1) {
       const dateStr = toDateStr(new Date(year, month, day));
-      const isWorking = working.includes(new Date(year, month, day).getDay());
-      const isPast = dateStr < todayStr();
-      const enabled = isWorking && !isPast;
+      const info = byDate.get(dateStr);
+      const isAvailable = info && info.state === 'available';
+      if (info && info.state === 'no_capacity') noCapacityDays += 1;
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'cal-day' + (enabled ? '' : ' disabled');
+      btn.className = 'cal-day' + (isAvailable ? '' : ' disabled');
       if (state.date === dateStr) btn.classList.add('selected');
       btn.textContent = String(day);
-      if (enabled) {
+      if (info && info.reason) btn.title = info.reason;
+      if (isAvailable) {
         btn.addEventListener('click', () => {
           state.date = dateStr;
-          state.services = [];
           state.slot = null;
           state.slotEndDate = null;
           state.slotEndTime = null;
@@ -577,10 +608,20 @@
           saveState();
           gridEl.querySelectorAll('.cal-day').forEach((c) => c.classList.remove('selected'));
           btn.classList.add('selected');
+          renderSlots();
         });
       }
       gridEl.appendChild(btn);
     }
+
+    const note = $('calendarNote');
+    if (noCapacityDays > 0) {
+      note.textContent = 'Dias bloqueados no mês não têm horário suficiente para o serviço selecionado.';
+      note.hidden = false;
+    } else {
+      note.hidden = true;
+    }
+
     cal.querySelector('[data-nav="1"]').addEventListener('click', () => {
       calView.month = new Date(year, month + 1, 1);
       renderCalendar();
@@ -683,10 +724,15 @@
               });
               card.classList.add('selected');
             }
+            state.date = null;
             state.slot = null;
             state.slotEndDate = null;
             state.slotEndTime = null;
             state.slotDuration = null;
+            state.longService = false;
+            state.estimatedEnd = null;
+            slotCache = {};
+            calendarCache = {};
             saveState();
           });
           list.appendChild(card);
@@ -699,11 +745,17 @@
     }
   }
 
-  /* ---------- step 6: slots ---------- */
+  /* ---------- step 4 (Data e horário): horários ---------- */
 
   let slotCache = {};
 
   async function renderSlots() {
+    const block = $('slotBlock');
+    if (!state.date) {
+      block.hidden = true;
+      return;
+    }
+    block.hidden = false;
     const grid = $('slotsGrid');
     const loading = $('slotLoading');
     const subtitle = $('slotSubtitle');
@@ -758,14 +810,17 @@
       longNote.hidden = false;
       return;
     }
+    const availableSlots = data.slots.filter((s) => s.status === 'available');
     const durNote = data.duration_minutes ? `<p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${data.vehicle_category === 'pickup' ? ' (inclui acréscimo para picape)' : ''}</p>` : '';
+    if (availableSlots.length === 0) {
+      grid.innerHTML = `${durNote}<div class="error-box">Este dia acabou de ficar sem horários disponíveis. Selecione outra data.</div>`;
+      return;
+    }
     grid.innerHTML = durNote;
-    data.slots.forEach((s) => {
+    availableSlots.forEach((s) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'slot-btn';
-      const available = s.status === 'available';
-      if (!available) btn.classList.add('disabled');
       btn.dataset.time = s.time;
       let label = s.time;
       let fullLabel = s.time;
@@ -781,26 +836,21 @@
       }
       btn.textContent = label;
       btn.title = s.reason || fullLabel;
-      if (state.slot === s.time && available) btn.classList.add('selected');
-      if (available) {
-        btn.addEventListener('click', () => {
-          state.slot = s.time;
-          state.slotEndDate = s.end_date || state.date;
-          state.slotEndTime = s.end_time || null;
-          state.slotDuration = data.duration_minutes || null;
-          saveState();
-          grid.querySelectorAll('.slot-btn').forEach((c) => c.classList.remove('selected'));
-          btn.classList.add('selected');
-        });
-      }
+      if (state.slot === s.time) btn.classList.add('selected');
+      btn.addEventListener('click', () => {
+        state.slot = s.time;
+        state.slotEndDate = s.end_date || state.date;
+        state.slotEndTime = s.end_time || null;
+        state.slotDuration = data.duration_minutes || null;
+        saveState();
+        grid.querySelectorAll('.slot-btn').forEach((c) => c.classList.remove('selected'));
+        btn.classList.add('selected');
+      });
       grid.appendChild(btn);
     });
-    if (data.slots.length === 0) {
-      grid.innerHTML = `<div class="error-box">Nenhum horário disponível neste dia.</div>`;
-    }
   }
 
-  /* ---------- step 7: review + address ---------- */
+  /* ---------- step 5: review + address ---------- */
 
   function renderAddress() {
     const block = $('addressBlock');
@@ -939,7 +989,7 @@
     `;
   }
 
-  /* ---------- step 8: payment ---------- */
+  /* ---------- step 5: payment ---------- */
 
   function renderPayment() {
     const grid = $('paymentGrid');

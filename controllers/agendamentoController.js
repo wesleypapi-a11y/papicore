@@ -3,6 +3,7 @@ const { computeSetupStatus } = require('../database/tenantSchema');
 const { storedFilePath } = require('../utils/assetStorage');
 const {
   getAvailability,
+  getMonthAvailability,
   getUnit,
   getModality,
   getService
@@ -194,6 +195,50 @@ function checkAvailability(req, res) {
   return res.json(availability);
 }
 
+/* Calendário mensal público: para cada dia do mês informa se comporta o
+   serviço selecionado (mesma engine de horários do /availability). O
+   frontend desabilita automaticamente os dias sem intervalo contínuo
+   suficiente — o cliente nunca clica em um dia que não caberia. */
+function getCalendarAvailability(req, res) {
+  const modalityId = Number(req.query.modality_id);
+  const serviceIdsRaw = String(req.query.service_ids || req.query.service_id || '').trim();
+  const year = Number(req.query.year);
+  const month = Number(req.query.month);
+  const unitId = req.query.unit_id ? Number(req.query.unit_id) : null;
+  const category = req.query.vehicle_category ? String(req.query.vehicle_category).toLowerCase() : 'hatch';
+
+  if (!modalityId) throw new AppError(400, 'Informe o campo modality_id.');
+  if (!serviceIdsRaw) throw new AppError(400, 'Informe ao menos um serviço.');
+  if (!Number.isInteger(year) || year < 2020 || year > 2100) throw new AppError(400, 'Ano inválido.');
+  if (!Number.isInteger(month) || month < 1 || month > 12) throw new AppError(400, 'Mês inválido.');
+  if (!VEHICLE_CATEGORIES.includes(category)) {
+    throw new AppError(400, 'Categoria de veículo inválida (use hatch, sedan, suv ou pickup).');
+  }
+
+  const modality = getModality(modalityId);
+  if (!modality || !modality.active) throw new AppError(404, 'Forma de atendimento não encontrada.');
+
+  const serviceIds = serviceIdsRaw.split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const services = serviceIds.map((id) => getService(id));
+  if (!services.length || services.some((s) => !s || !s.active)) {
+    throw new AppError(404, 'Serviço não encontrado.');
+  }
+
+  const settings = getDb().prepare('SELECT * FROM company_settings WHERE id = 1').get() || {};
+
+  let unit = null;
+  if (modality.slug === 'in-store') {
+    if (!unitId) throw new AppError(400, 'Informe o campo unit_id para esta modalidade.');
+    unit = getUnit(unitId);
+    if (!unit || !unit.active) throw new AppError(404, 'Unidade não encontrada.');
+  } else if (unitId) {
+    unit = getUnit(unitId);
+  }
+
+  const availability = getMonthAvailability({ year, month, services, modality, unit, settings, category });
+  return res.json(availability);
+}
+
 function createAppointmentPublic(req, res) {
   const appointment = createAppointment(req.body, requestMeta(req));
   const { enqueueEvent, EVENTS } = require('../services/whatsappService');
@@ -261,6 +306,7 @@ module.exports = {
   listModalities,
   getCatalog,
   checkAvailability,
+  getCalendarAvailability,
   createAppointmentPublic,
   getPublicLegalDocument,
   getByCode

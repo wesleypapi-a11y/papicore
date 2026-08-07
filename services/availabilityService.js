@@ -1,11 +1,11 @@
 const { getDb } = require('../database/tenantDatabase');
 const {
-  AppError,
   ACTIVE_STATUSES,
   parseWorkingDays,
   isWorkingDay,
   nowDateTime,
-  minutesOf
+  minutesOf,
+  todayStr
 } = require('../utils/helpers');
 const {
   lunchConfig,
@@ -79,10 +79,11 @@ function getConflicts(fromDate, toDate, unitIdForScope) {
     .all(...params);
 }
 
-function getAvailability({ date, service = null, services = null, category = 'hatch', modality, unit = null, settings, includeAppointments = false }) {
-  const db = getDb();
-  const svcList = services && services.length ? services : (service ? [service] : []);
-
+/* Calcula tudo que diz respeito a UM dia (funcionamento, bloqueios,
+   agendamentos, capacidade) e gera a lista de horários. Extraído de
+   getAvailability para ser reutilizado pelo calendário mensal — a lógica de
+   agenda é uma única (nunca duplicada). */
+function computeDayAvailability({ date, svcList, category = 'hatch', unit = null, settings }) {
   const opening = unit ? unit.opening_time : (settings && settings.default_opening_time) || '08:00';
   const closing = unit ? unit.closing_time : (settings && settings.default_closing_time) || '17:00';
   const interval = unit ? unit.appointment_interval : (settings && settings.default_interval) || 60;
@@ -90,7 +91,7 @@ function getAvailability({ date, service = null, services = null, category = 'ha
   const workingDays = unit ? parseWorkingDays(unit.working_days) : parseWorkingDays((settings && settings.working_days) || []);
   const lunch = lunchConfig(unit, settings);
 
-  const duration = svcList.length ? svcList.reduce((sum, s) => sum + serviceDuration(s, category), 0) : interval;
+  const duration = svcList && svcList.length ? svcList.reduce((sum, s) => sum + serviceDuration(s, category), 0) : interval;
   const daily = dailyProductiveMinutes(opening, closing, lunch.start, lunch.end);
   const longService = isLongService(duration);
 
@@ -146,7 +147,7 @@ function getAvailability({ date, service = null, services = null, category = 'ha
           end_time: end.time,
           status: 'occupied',
           reason: capacity === 1 ? 'Horário ocupado' : 'Capacidade esgotada',
-          appointment: includeAppointments && overlapping.length ? overlapping[0] : null
+          appointment: null
         });
       } else {
         slotList.push({ time, end_date: end.date, end_time: end.time, status: 'available' });
@@ -154,15 +155,51 @@ function getAvailability({ date, service = null, services = null, category = 'ha
     }
   }
 
+  return {
+    opening,
+    closing,
+    interval,
+    capacity,
+    workingDays,
+    lunch,
+    duration,
+    daily,
+    longService,
+    working,
+    fullDayBlock,
+    blockedTimes,
+    blockedRanges,
+    fullDayBlockedDates,
+    engineOpts,
+    slotList,
+    now
+  };
+}
+
+function getAvailability({ date, service = null, services = null, category = 'hatch', modality, unit = null, settings, includeAppointments = false }) {
+  const svcList = services && services.length ? services : (service ? [service] : []);
+  const info = computeDayAvailability({ date, svcList, category, unit, settings });
+
+  const slotList = info.slotList.map((s) => {
+    if (includeAppointments && s.status === 'occupied') {
+      const startDT = dateTimeStr(date, s.time);
+      const endDT = dateTimeStr(s.end_date || date, s.end_time);
+      const overlap = getConflicts(date, s.end_date || date, unit ? unit.id : null)
+        .filter((c) => datetimeOverlap(startDT, endDT, dateTimeStr(c.appointment_date, c.start_time), dateTimeStr(c.end_date || c.appointment_date, c.end_time)));
+      return { ...s, appointment: overlap.length ? overlap[0] : null };
+    }
+    return s;
+  });
+
   let estimatedEnd = null;
-  if (longService) {
-    estimatedEnd = computeEndDateTime(date, opening, duration, engineOpts);
+  if (info.longService) {
+    estimatedEnd = computeEndDateTime(date, info.opening, info.duration, info.engineOpts);
   }
 
   return {
     date,
-    working,
-    full_day_blocked: Boolean(fullDayBlock),
+    working: info.working,
+    full_day_blocked: Boolean(info.fullDayBlock),
     modality_id: modality ? modality.id : null,
     modality_slug: modality ? modality.slug : null,
     service_id: svcList.length === 1 ? svcList[0].id : null,
@@ -170,15 +207,84 @@ function getAvailability({ date, service = null, services = null, category = 'ha
     service_ids: svcList.map((s) => s.id),
     service_names: svcList.map((s) => s.name),
     vehicle_category: category,
-    duration_minutes: duration,
-    is_long_service: longService,
+    duration_minutes: info.duration,
+    is_long_service: info.longService,
     estimated_end_date: estimatedEnd ? estimatedEnd.date : null,
     estimated_end_time: estimatedEnd ? estimatedEnd.time : null,
     unit_id: unit ? unit.id : null,
     unit_name: unit ? unit.name : null,
-    capacity,
+    capacity: info.capacity,
     slots: slotList
   };
 }
 
-module.exports = { getAvailability, getUnit, getModality, getService, getBlocked, getConflicts, getFullDayBlockedDates };
+/* Disponibilidade de um mês inteiro para o calendário público: marca cada dia
+   como 'available' (clicável), 'no_capacity' (não comporta o serviço),
+   'closed', 'blocked' (bloqueio de dia inteiro) ou 'past'. Reutiliza a MESMA
+   engine de horários (computeDayAvailability) — um dia só é liberado quando
+   existe ao menos um horário de início onde o serviço inteiro cabe. */
+function getMonthAvailability({ year, month, services = null, category = 'hatch', modality, unit = null, settings }) {
+  const svcList = services && services.length ? services : [];
+  const monthIndex = month - 1;
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const today = todayStr();
+
+  const days = [];
+  let duration = 0;
+  let longService = false;
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const info = computeDayAvailability({ date: dateStr, svcList, category, unit, settings });
+    duration = info.duration;
+    longService = info.longService;
+
+    let state;
+    let reason = null;
+    if (dateStr < today) {
+      state = 'past';
+      reason = 'Data no passado';
+    } else if (!info.working) {
+      state = 'closed';
+      reason = 'Sem atendimento neste dia';
+    } else if (info.fullDayBlock) {
+      state = 'blocked';
+      reason = 'Dia bloqueado';
+    } else if (info.slotList.some((s) => s.status === 'available')) {
+      state = 'available';
+    } else if (dateStr === today && info.slotList.some((s) => s.status === 'past')) {
+      state = 'no_capacity';
+      reason = 'Sem horários restantes neste dia';
+    } else {
+      state = 'no_capacity';
+      reason = 'Sem horário suficiente para este serviço';
+    }
+    days.push({ date: dateStr, state, reason });
+  }
+
+  return {
+    year,
+    month: monthIndex + 1,
+    modality_id: modality ? modality.id : null,
+    modality_slug: modality ? modality.slug : null,
+    service_ids: svcList.map((s) => s.id),
+    service_names: svcList.map((s) => s.name),
+    vehicle_category: category,
+    duration_minutes: duration,
+    is_long_service: longService,
+    unit_id: unit ? unit.id : null,
+    unit_name: unit ? unit.name : null,
+    days
+  };
+}
+
+module.exports = {
+  getAvailability,
+  getMonthAvailability,
+  computeDayAvailability,
+  getUnit,
+  getModality,
+  getService,
+  getBlocked,
+  getConflicts,
+  getFullDayBlockedDates
+};

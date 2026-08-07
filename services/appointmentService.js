@@ -435,7 +435,7 @@ function assertSlotAvailable({ appointment_date, end_date, start_time, end_time,
       dateTimeStr(c.end_date || c.appointment_date, c.end_time)
     ));
   if (conflicts.length >= capacity) {
-    throw new AppError(409, 'Este horário não está mais disponível. Escolha outro horário.');
+    throw new AppError(409, 'Este horário acabou de ficar indisponível. Escolha outro horário.');
   }
 }
 
@@ -461,7 +461,7 @@ function createAppointment(body, meta = {}) {
     const endDT = dateTimeStr(data.end_date, data.end_time);
     const c = countOverlaps(startDT, endDT, data.unit ? data.unit.id : null);
     if (c >= capacity) {
-      throw new AppError(409, 'Este horário não está mais disponível. Escolha outro horário.');
+      throw new AppError(409, 'Este horário acabou de ficar indisponível. Escolha outro horário.');
     }
     const legalDocs = legalDocumentService.validateLegalAcceptance(db, body.legalAcceptance);
     const appointment = insertAppointment(data);

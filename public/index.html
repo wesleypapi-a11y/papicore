@@ -78,18 +78,15 @@
     <form id="bookingForm" novalidate>
       <section class="step" data-step="1" hidden>
         <header class="step-head">
-          <h2 class="step-title">Como você quer<br /><span class="title-highlight">ser atendido?</span></h2>
-          <p class="step-subtitle">Escolha a forma de atendimento para continuar.</p>
+          <h2 class="step-title">Vamos começar?</h2>
+          <p class="step-subtitle">Escolha a forma de atendimento e informe seus dados.</p>
           <span class="title-rule"></span>
         </header>
-        <div class="modality-grid" id="modalityGrid"></div>
-      </section>
-
-      <section class="step" data-step="2" hidden>
-        <header class="step-head">
-          <h2 class="step-title">Dados pessoais</h2>
-          <p class="step-subtitle">Informe seus dados para contato.</p>
-        </header>
+        <div class="modality-section">
+          <h3 class="review-section-title">Forma de atendimento</h3>
+          <div class="modality-grid" id="modalityGrid"></div>
+        </div>
+        <h3 class="review-section-title">Seus dados</h3>
         <div class="field">
           <label for="customerName">Nome completo</label>
           <input type="text" id="customerName" autocomplete="name" placeholder="Seu nome completo" />
@@ -100,7 +97,7 @@
         </div>
       </section>
 
-      <section class="step" data-step="3" hidden>
+      <section class="step" data-step="2" hidden>
         <header class="step-head">
           <h2 class="step-title">Dados do veículo</h2>
           <p class="step-subtitle">Conte pra gente qual é o seu veículo.</p>
@@ -178,19 +175,7 @@
         </div>
       </section>
 
-      <section class="step" data-step="4" hidden>
-        <header class="step-head">
-          <h2 class="step-title">Escolha a data</h2>
-        </header>
-        <div id="unitBlock" hidden>
-          <p class="step-subtitle">Selecione a unidade de atendimento.</p>
-          <div class="unit-grid" id="unitGrid"></div>
-        </div>
-        <p class="step-subtitle" id="dateSubtitle">Escolha o dia disponível.</p>
-        <div class="calendar" id="calendar"></div>
-      </section>
-
-      <section class="step" data-step="5" hidden>
+      <section class="step" data-step="3" hidden>
         <header class="step-head">
           <h2 class="step-title">Escolha o serviço</h2>
           <p class="step-subtitle" id="catalogSubtitle"></p>
@@ -198,33 +183,38 @@
         <div id="catalog"></div>
       </section>
 
-      <section class="step" data-step="6" hidden>
+      <section class="step" data-step="4" hidden>
         <header class="step-head">
-          <h2 class="step-title">Escolha o horário</h2>
-          <p class="step-subtitle" id="slotSubtitle"></p>
+          <h2 class="step-title">Data e horário</h2>
+          <p class="step-subtitle" id="dateSubtitle">Escolha uma data</p>
         </header>
-        <div id="slotLoading" class="loading" hidden>Consultando horários...</div>
-        <div id="slotLongNote" hidden></div>
-        <div class="slots-grid" id="slotsGrid"></div>
+        <div id="unitBlock" hidden>
+          <p class="step-subtitle">Selecione a unidade de atendimento.</p>
+          <div class="unit-grid" id="unitGrid"></div>
+        </div>
+        <div class="calendar" id="calendar"></div>
+        <p class="calendar-note" id="calendarNote" hidden></p>
+        <div id="slotBlock" hidden>
+          <h3 class="review-section-title">Horários disponíveis</h3>
+          <p class="step-subtitle" id="slotSubtitle"></p>
+          <div id="slotLoading" class="loading" hidden>Consultando horários...</div>
+          <div id="slotLongNote" hidden></div>
+          <div class="slots-grid" id="slotsGrid"></div>
+        </div>
       </section>
 
-      <section class="step" data-step="7" hidden>
+      <section class="step" data-step="5" hidden>
         <header class="step-head">
-          <h2 class="step-title">Revisão e envio</h2>
+          <h2 class="step-title">Revisão, pagamento e termos</h2>
+          <p class="step-subtitle">Confira os dados, escolha como pagar e envie a solicitação.</p>
         </header>
+        <div class="review-card" id="reviewCard"></div>
         <div id="addressBlock" hidden></div>
         <div class="field">
           <label for="customerNotes">Observações <span class="opt">(opcional)</span></label>
           <textarea id="customerNotes" rows="3" placeholder="Alguma observação para a equipe?"></textarea>
         </div>
-        <div class="review-card" id="reviewCard"></div>
-      </section>
-
-      <section class="step" data-step="8" hidden>
-        <header class="step-head">
-          <h2 class="step-title">Forma de pagamento</h2>
-          <p class="step-subtitle">Escolha como deseja pagar pelo serviço.</p>
-        </header>
+        <h3 class="review-section-title">Forma de pagamento</h3>
         <div class="payment-grid" id="paymentGrid"></div>
         <div class="payment-detail" id="paymentDetail" hidden></div>
 
