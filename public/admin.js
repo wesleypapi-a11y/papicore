@@ -88,12 +88,26 @@
     detail: 'action-btn-neutral',
     delete: 'action-btn-danger'
   };
+  /* Texto curto exibido ao lado do ícone só no cartão mobile (ver
+     .action-btn-text no CSS) — o title/aria-label continuam com o texto
+     completo de ACTION_LABELS, sem mudar nada de acessibilidade. */
+  const ACTION_SHORT_LABELS = {
+    accept: 'Confirmar',
+    complete: 'Concluir',
+    reject: 'Recusar',
+    cancel: 'Cancelar',
+    edit: 'Editar',
+    detail: 'Visualizar',
+    delete: 'Excluir'
+  };
+
   function actionButton(action, id, opts) {
     opts = opts || {};
     const icon = opts.icon || action;
     const cls = opts.cls || ACTION_CLASSES[icon];
     const label = opts.label || ACTION_LABELS[action] || ACTION_LABELS[icon];
-    return `<button type="button" class="action-btn ${cls}" data-action="${action}" data-id="${id}" title="${label}" aria-label="${label}">${ACTION_ICONS[icon]}</button>`;
+    const shortLabel = opts.shortLabel || ACTION_SHORT_LABELS[action] || ACTION_SHORT_LABELS[icon] || label;
+    return `<button type="button" class="action-btn ${cls}" data-action="${action}" data-id="${id}" title="${label}" aria-label="${label}">${ACTION_ICONS[icon]}<span class="action-btn-text">${shortLabel}</span></button>`;
   }
 
   let state = {

@@ -1673,12 +1673,13 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 
 /*
  * Tabelas do Admin (Agendamentos, Financeiro, Serviços, ...) viram cartões
- * empilhados. Breakpoint próprio (768px, cobre tablets em pé) em vez de
- * reaproveitar o @media (max-width: 700px) acima — aquele bloco também
- * estiliza o fluxo público de agendamento, então mexer no valor dele
- * mudaria a página pública sem necessidade. Isso é o que faltava para as
- * telas com tabela (a mais larga é a de Agendamentos) acompanharem o
- * mesmo padrão "sem rolagem horizontal" que as abas em grid/card já têm.
+ * empilhados — UMA coluna só, tudo em pilha vertical, igual ao padrão que já
+ * funciona bem no Financeiro. Breakpoint próprio (768px, cobre tablets em
+ * pé) em vez de reaproveitar o @media (max-width: 700px) acima — aquele
+ * bloco também estiliza o fluxo público de agendamento, então mexer no
+ * valor dele mudaria a página pública sem necessidade. Nunca usar
+ * overflow-x aqui: o objetivo é não ter conteúdo mais largo que a tela, não
+ * mascarar com scroll.
  */
 @media (max-width: 768px) {
   .table-wrap { overflow: visible; }
@@ -1688,12 +1689,13 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   .table-wrap tbody { display: grid; gap: 12px; }
   .table-wrap tr {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px 16px;
+    grid-template-columns: 1fr;
+    gap: 12px;
     padding: 14px;
     background: var(--bg-soft);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
+    width: 100%;
   }
   .table-wrap tr:hover { border-color: var(--border-strong); }
   .table-wrap td { border: none; padding: 0; font-size: 13px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
@@ -1705,21 +1707,58 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
     text-transform: uppercase;
     letter-spacing: 0.3px;
     color: var(--text-muted);
-    margin-bottom: 2px;
+    margin-bottom: 4px;
   }
+  /* Ícones só nesta faixa, só nos rótulos conhecidos — puramente cosmético,
+     não depende de dado novo nem muda o <thead> (desktop fica intocado). */
+  .table-wrap td[data-label="Código"]::before { content: "🔖 Código"; }
+  .table-wrap td[data-label="Cliente"]::before { content: "👤 Cliente"; }
+  .table-wrap td[data-label="Data"]::before { content: "📅 Data"; }
+  .table-wrap td[data-label="Serviço"]::before { content: "🧽 Serviço"; }
+  .table-wrap td[data-label="Total"]::before { content: "💰 Total"; }
+  .table-wrap td[data-label="Valor"]::before { content: "💰 Valor"; }
+  .table-wrap td[data-label="Status"]::before { content: "🟡 Status"; }
   .table-wrap td.cell-actions {
-    grid-column: 1 / -1;
     border-top: 1px dashed var(--border);
-    padding-top: 10px;
+    padding-top: 12px;
     margin-top: 2px;
   }
   .table-wrap td.cell-actions::before { display: none; }
   .table-wrap td.cell-actions .row-actions { justify-content: flex-start; }
-  .table-wrap td.cell-actions .row-actions .btn { flex: 1; }
-  .table-wrap td.cell-actions .appointment-actions { justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
-  .table-wrap td.cell-actions .action-btn { width: 40px; height: 40px; }
-  .table-wrap td.cell-actions .action-btn svg { width: 20px; height: 20px; }
+  .table-wrap td.cell-actions .row-actions .btn { flex: 1 1 100%; }
+
+  /* Botões de ação (Confirmar/Recusar/Editar/Detalhes/Excluir): grade de
+     2 colunas, alvo de toque grande, ícone + texto visível — nunca ícone
+     sozinho cortado. Quando sobra um botão ímpar (ex.: 5 no total), ele
+     ocupa a linha toda sozinho em vez de ficar espremido. */
+  .table-wrap td.cell-actions .appointment-actions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    justify-content: stretch;
+    flex-wrap: unset;
+    white-space: normal;
+  }
+  .table-wrap td.cell-actions .action-btn {
+    width: auto;
+    height: auto;
+    padding: 10px 12px;
+    gap: 8px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .table-wrap td.cell-actions .action-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .table-wrap td.cell-actions .action-btn:nth-child(odd):last-child { grid-column: 1 / -1; }
   .table-wrap tr:hover td { background: transparent; }
+}
+
+/* Texto do botão de ação: some no desktop (ícone compacto de sempre) e só
+   aparece dentro do cartão mobile acima — mesmo componente, sem duplicar
+   marcação por tela. */
+.action-btn-text { display: none; }
+@media (max-width: 768px) {
+  .table-wrap td.cell-actions .appointment-actions .action-btn-text { display: inline; }
 }
 
 /* Modais viram "bottom sheet" em telas pequenas */
