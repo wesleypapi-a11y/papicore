@@ -13,6 +13,11 @@
  *   - refreshStatus marca connected com número do dono quando a Evolution
  *     responde "open";
  *   - envio real via whatsappService.processOne passa pela Evolution;
+ *   - instance fantasma: Evolution 404 "does not exist" → FAILED + missing_remote;
+ *   - instância existente mas fechada → FAILED sem enviar;
+ *   - fluxo idempotente do connect: não-existe (create), existe-close (reutiliza),
+ *     "name already in use" (reconsulta e reutiliza), open (conectado sem QR),
+ *     concorrência (1 create remoto) e conflito não recuperável (409 sanitizado);
  *   - isolamento por tenant no registro core.
  *
  * Roda em DATA_DIR temporário (não toca os dados reais):
@@ -301,6 +306,7 @@ test('admin: conexão do cliente reflete QR e actions connect/disconnect', async
   process.env.WHATSAPP_ENABLED = 'true';
   const calls = [];
   const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { state: 'close' } }),
     '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR2' }),
     '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
     '/instance/logout/tenant_0001_torque_detail': () => jsonResponse({})
@@ -504,6 +510,161 @@ test('instância existe mas fechada na Evolution → FAILED sem enviar', async (
   } finally {
     restore();
     delete process.env.WHATSAPP_MAX_RETRIES;
+    setRealProvider(false);
+  }
+});
+
+/* ---------- Fluxo idempotente do connect (PASSO 2–4) ---------- */
+
+test('connect A: instância não existe → create, webhook e QR', async () => {
+  setRealProvider(true);
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse(
+      { response: { message: 'The "tenant_0001_torque_detail" instance does not exist' } }, false, 404),
+    '/instance/create': () => jsonResponse({ instance: { instanceName: INSTANCE, status: 'close' } }),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR-A' })
+  }, calls);
+
+  try {
+    const r = await whatsappService.connect(tenant);
+    assert(r.ok === true && r.status === 'connecting' && r.qr === 'data:image/png;base64,QR-A', 'QR devolvido');
+    assert(calls.filter((c) => c.url === '/instance/create').length === 1, `create chamado exatamente uma vez (veio ${calls.filter((c) => c.url === '/instance/create').length})`);
+    assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook configurado');
+    assert(calls.some((c) => c.url === '/instance/connect/tenant_0001_torque_detail'), 'QR solicitado');
+    const row = core.getEvolutionInstance(tenant.id);
+    assert(row && row.status === 'connecting' && row.qr_base64 === 'data:image/png;base64,QR-A', 'registro local sincronizado');
+  } finally {
+    restore();
+    setRealProvider(false);
+  }
+});
+
+test('connect B: instância já existe (close) → reutiliza sem criar', async () => {
+  setRealProvider(true);
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { state: 'close' } }),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR-B' })
+  }, calls);
+
+  try {
+    const r = await whatsappService.connect(tenant);
+    assert(r.ok === true && r.status === 'connecting' && r.qr === 'data:image/png;base64,QR-B', 'QR da instância reutilizada');
+    assert(!calls.some((c) => c.url === '/instance/create'), 'create NÃO é chamado quando a instância existe');
+    assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook configurado');
+    assert(calls.some((c) => c.url === '/instance/connect/tenant_0001_torque_detail'), 'QR solicitado');
+  } finally {
+    restore();
+    setRealProvider(false);
+  }
+});
+
+test('connect C: create responde "name already in use" → reconsulta e reutiliza', async () => {
+  setRealProvider(true);
+  const calls = [];
+  let stateCalls = 0;
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => {
+      stateCalls += 1;
+      if (stateCalls === 1) {
+        return jsonResponse({ response: { message: 'The "tenant_0001_torque_detail" instance does not exist' } }, false, 404);
+      }
+      return jsonResponse({ instance: { state: 'close' } });
+    },
+    '/instance/create': () => jsonResponse(
+      { response: { message: 'This name "tenant_0001_torque_detail" is already in use.' } }, false, 400),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR-C' })
+  }, calls);
+
+  try {
+    const r = await whatsappService.connect(tenant);
+    assert(r.ok === true && r.status === 'connecting' && r.qr === 'data:image/png;base64,QR-C', 'continua após already in use (não vira 502)');
+    assert(calls.filter((c) => c.url === '/instance/create').length === 1, `create tentado uma vez (veio ${calls.filter((c) => c.url === '/instance/create').length})`);
+    assert(stateCalls >= 3, `reconsulta o estado (chamadas: ${stateCalls})`);
+    assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook configurado após reconciliação');
+    assert(calls.some((c) => c.url === '/instance/connect/tenant_0001_torque_detail'), 'QR solicitado');
+  } finally {
+    restore();
+    setRealProvider(false);
+  }
+});
+
+test('connect D: instância já aberta (open) → conectado sem criar nem gerar QR', async () => {
+  setRealProvider(true);
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { state: 'open', number: '5512999991111' } }),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({})
+  }, calls);
+
+  try {
+    const r = await whatsappService.connect(tenant);
+    assert(r.ok === true && r.status === 'connected', `conectado (veio ${r.status})`);
+    assert(!calls.some((c) => c.url === '/instance/create'), 'create NÃO é chamado');
+    assert(!calls.some((c) => c.url === '/instance/connect/'), 'QR NÃO é solicitado');
+    const row = core.getEvolutionInstance(tenant.id);
+    assert(row && row.status === 'connected' && !row.qr_base64, 'registro local connected sem QR');
+  } finally {
+    restore();
+    setRealProvider(false);
+  }
+});
+
+test('connect E: requisições simultâneas → somente uma criação remota (lock)', async () => {
+  setRealProvider(true);
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse(
+      { response: { message: 'The "tenant_0001_torque_detail" instance does not exist' } }, false, 404),
+    '/instance/create': () => jsonResponse({ instance: { instanceName: INSTANCE, status: 'close' } }),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR-E' })
+  }, calls);
+
+  try {
+    const [a, b, c] = await Promise.all([
+      whatsappService.connect(tenant),
+      whatsappService.connect(tenant),
+      whatsappService.connect(tenant)
+    ]);
+    assert(a.ok === true && b.ok === true && c.ok === true, 'todas as chamadas completam');
+    assert(calls.filter((x) => x.url === '/instance/create').length === 1,
+      `apenas 1 create remoto (veio ${calls.filter((x) => x.url === '/instance/create').length})`);
+  } finally {
+    restore();
+    setRealProvider(false);
+  }
+});
+
+test('connect F: conflito não recuperável → 409 com código sanitizado (não 502)', async () => {
+  setRealProvider(true);
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse(
+      { response: { message: 'The "tenant_0001_torque_detail" instance does not exist' } }, false, 404),
+    '/instance/create': () => jsonResponse(
+      { response: { message: 'This name "tenant_0001_torque_detail" is already in use.' } }, false, 400)
+  }, calls);
+
+  try {
+    const r = await whatsappService.connect(tenant);
+    assert(r.error === true && r.code === 'instance_name_conflict', `código instance_name_conflict (veio ${r.code})`);
+    assert(!/apikey|authorization|token/i.test(r.message), 'mensagem sem segredos');
+    assert(r.message.includes('já está em uso'), `explica o conflito (${r.message})`);
+    assert(calls.filter((c) => c.url === '/instance/create').length === 1, 'create tentado só uma vez');
+
+    /* O controller não devolve 502 genérico: 409 + código interno sanitizado. */
+    let httpErr = null;
+    try { await callController(connectConnection, null, null); } catch (e) { httpErr = e; }
+    assert(httpErr && httpErr.status === 409, `HTTP 409 (veio ${httpErr && httpErr.status})`);
+    assert(httpErr && httpErr.extra && httpErr.extra.code === 'INSTANCE_NAME_CONFLICT',
+      `code INSTANCE_NAME_CONFLICT (veio ${httpErr && httpErr.extra && httpErr.extra.code})`);
+  } finally {
+    restore();
     setRealProvider(false);
   }
 });

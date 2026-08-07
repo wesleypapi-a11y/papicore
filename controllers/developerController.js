@@ -1409,7 +1409,11 @@ async function tenantWhatsappConnectHandler(req, res) {
   const result = await whatsappService.connect(tenant, { force: false });
   if (result.error) {
     console.error(`[whatsapp] connect (dev) falhou (tenant ${tenant.id}): ${result.code || 'erro'} — ${result.message}`);
-    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+    throw new AppError(
+      whatsappService.connectErrorHttpStatus(result),
+      whatsappService.friendlyErrorMessage(result),
+      { code: whatsappService.connectErrorCode(result) }
+    );
   }
   return res.json(result);
 }
@@ -1419,7 +1423,11 @@ async function tenantWhatsappReconnectHandler(req, res) {
   const result = await whatsappService.reconnect(tenant);
   if (result.error) {
     console.error(`[whatsapp] reconnect (dev) falhou (tenant ${tenant.id}): ${result.code || 'erro'} — ${result.message}`);
-    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+    throw new AppError(
+      whatsappService.connectErrorHttpStatus(result),
+      whatsappService.friendlyErrorMessage(result),
+      { code: whatsappService.connectErrorCode(result) }
+    );
   }
   return res.json(result);
 }

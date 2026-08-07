@@ -110,7 +110,11 @@ async function connectConnection(req, res) {
   const result = await whatsappService.connect(req.tenant);
   if (result.error) {
     console.error(`[whatsapp] connect falhou (tenant ${req.tenant && req.tenant.id}): ${result.code || 'erro'} — ${result.message}`);
-    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+    throw new AppError(
+      whatsappService.connectErrorHttpStatus(result),
+      whatsappService.friendlyErrorMessage(result),
+      { code: whatsappService.connectErrorCode(result) }
+    );
   }
   return res.json(result);
 }
@@ -119,7 +123,11 @@ async function reconnectConnection(req, res) {
   const result = await whatsappService.reconnect(req.tenant);
   if (result.error) {
     console.error(`[whatsapp] reconnect falhou (tenant ${req.tenant && req.tenant.id}): ${result.code || 'erro'} — ${result.message}`);
-    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+    throw new AppError(
+      whatsappService.connectErrorHttpStatus(result),
+      whatsappService.friendlyErrorMessage(result),
+      { code: whatsappService.connectErrorCode(result) }
+    );
   }
   return res.json(result);
 }

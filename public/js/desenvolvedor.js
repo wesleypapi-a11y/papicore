@@ -187,6 +187,8 @@
     const id=b.dataset.tenantId,action=b.dataset.evoAction;
     const data=state.evolution||{};
     const inst=(data.instances||[]).find(x=>String(x.tenant_id)===id)||{};
+    const prevDisabled=b.disabled;
+    b.disabled=true;
     try{
       if(action==='qr'){
         const conn=await api(`/api/developer/whatsapp/tenants/${id}`);
@@ -204,6 +206,7 @@
       }
       evolution();
     }catch(err){toast(err.message);evolution()}
+    finally{b.disabled=prevDisabled}
   }
 
   /* ---------- Aba "API" ---------- */

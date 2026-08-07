@@ -165,6 +165,11 @@ const LOG_ACTIONS = {
   ERROR: 'WHATSAPP_ERROR'
 };
 
+/* Lock por instância (PASSO 4): impede cliques simultâneos de dispararem
+   vários create/QR em paralelo para a mesma instância. A segunda requisição
+   aguarda a operação em andamento e reutiliza o resultado dela. */
+const connectLocks = new Map();
+
 /* ---------- Configuração (lida dinamicamente para permitir testes) ---------- */
 
 function isWhatsappEnabled() {
@@ -766,15 +771,32 @@ async function connect(tenant, { force = false } = {}) {
     return { error: true, code: 'evolution_not_configured', message: 'Evolution API ainda não está configurada no painel do desenvolvedor.' };
   }
 
-  /* Falha de rede/timeout com a Evolution vira erro tratado (e logado), nunca
-     exceção crua que derruba a requisição em 500 sem mensagem amigável. */
-  try {
+  /* PASSO 4 — concorrência: se já existe uma conexão em andamento para esta
+     instância, reutiliza o resultado dela em vez de iniciar outra operação. */
+  const inflight = connectLocks.get(instanceName);
+  if (inflight) {
+    try {
+      const reused = await inflight;
+      return reused;
+    } catch (err) {
+      /* operação anterior falhou com exceção: segue e tenta de novo */
+    }
+  }
+
+  const promise = (async () => {
+    /* Falha de rede/timeout com a Evolution vira erro tratado (e logado), nunca
+       exceção crua que derruba a requisição em 500 sem mensagem amigável. */
     const outcome = await connectEvolution(tenant, { force, instanceName, settings });
     if (outcome.error) {
       console.error(`[whatsapp] Falha ao conectar "${instanceName}" (${outcome.code || 'erro'}): ${outcome.message}`);
       logWhatsapp(LOG_ACTIONS.ERROR, tenantId, `${outcome.code || 'erro'}: ${outcome.message}`);
     }
     return outcome;
+  })();
+
+  connectLocks.set(instanceName, promise);
+  try {
+    return await promise;
   } catch (err) {
     console.error(`[whatsapp] Falha de comunicação ao conectar "${instanceName}":`, err && err.message);
     logWhatsapp(LOG_ACTIONS.ERROR, tenantId, `evolution_unreachable: ${(err && err.message) || String(err)}`);
@@ -782,10 +804,34 @@ async function connect(tenant, { force = false } = {}) {
       upsertEvolutionInstance(tenantId, { status: 'error', qr_base64: '', last_error: 'Não foi possível falar com a Evolution. Verifique se o servidor da Evolution está online.' });
     } catch { /* auditoria não pode quebrar a resposta */ }
     return { error: true, code: 'evolution_unreachable', message: 'Não foi possível falar com a Evolution. Verifique se o servidor da Evolution está online.' };
+  } finally {
+    if (connectLocks.get(instanceName) === promise) connectLocks.delete(instanceName);
   }
 }
 
-/* Fluxo real da Evolution (separado para o try/catch de comunicação). */
+/* Consulta a existência real da instância na Evolution (connectionState).
+   Retorna { exists: true|false|null } — null significa "não foi possível
+   confirmar" (falha de rede), caso em que NÃO se deve criar cegamente. */
+async function remoteInstanceState(instanceName, settings) {
+  try {
+    const state = await evolutionProvider.getState(instanceName, settings);
+    if (state.ok) return { exists: true, state };
+    const missing = state.status === 404 ||
+      /does not exist|not found|not_found|não encontr/i.test(state.message || '');
+    return { exists: missing ? false : true, state };
+  } catch (err) {
+    return { exists: null, error: err.message };
+  }
+}
+
+/* Fluxo real da Evolution (separado para o try/catch de comunicação).
+   Idempotente (PASSO 2):
+     1. verifica a existência real da instância;
+     2. cria SOMENTE se confirmado que não existe;
+     3. "name already in use" vira reconsulta → reutiliza a existente;
+     4. configura o webhook;
+     5. consulta connectionState → se open, conectado sem QR;
+     6. senão solicita o QR e sincroniza o banco local. */
 async function connectEvolution(tenant, { force, instanceName, settings }) {
   const tenantId = tenant.id;
   let current = getEvolutionInstance(tenantId);
@@ -796,29 +842,50 @@ async function connectEvolution(tenant, { force, instanceName, settings }) {
     try { await evolutionProvider.disconnect(current.instance_name, settings); } catch { /* best-effort */ }
   }
 
-  /* Consulta o estado real na Evolution para decidir entre criar e reutilizar.
-     Nunca recria uma instância que já existe no servidor. */
-  let remote = null;
-  try {
-    remote = await evolutionProvider.getState(instanceName, settings);
-  } catch (err) {
-    remote = { ok: false, status: 0, message: err.message };
-  }
-  const instanceMissing = !remote.ok &&
-    (remote.status === 404 || /does not exist|not found|not_found|não encontrad/i.test(remote.message || ''));
+  /* 1. Existe de verdade na Evolution? */
+  let probe = await remoteInstanceState(instanceName, settings);
 
-  const needsCreate = instanceMissing || !current || current.status === 'missing_remote';
-  if (needsCreate) {
+  /* 2. Cria somente se confirmado que não existe. */
+  if (probe.exists === false) {
     const created = await evolutionProvider.createInstance(instanceName, settings);
     if (created.error && !created.already_exists) {
-      return { error: true, code: 'instance_create_failed', message: `Não foi possível criar a instância: ${created.message}` };
-    }
-    /* already_exists (corrida/duplicidade): segue e reutiliza a existente. */
-    if (!created.error) {
+      /* Falha real — mas pode ter havido corrida (outro pedido criou entre a
+         consulta e o create). Reconsulta antes de desistir. */
+      const recheck = await remoteInstanceState(instanceName, settings);
+      if (recheck.exists === true) {
+        current = getEvolutionInstance(tenantId);
+        probe = recheck;
+      } else {
+        upsertEvolutionInstance(tenantId, { status: 'error', last_error: created.message });
+        return {
+          error: true,
+          code: created.code === 'name_in_use' ? 'instance_name_conflict' : 'instance_create_failed',
+          message: created.code === 'name_in_use'
+            ? `O nome "${instanceName}" já está em uso na Evolution, mas a instância não pôde ser verificada para reutilização.`
+            : `Não foi possível criar a instância: ${created.message}`
+        };
+      }
+    } else if (created.error && created.already_exists) {
+      /* "name already in use" (PASSO 2.4): não devolve erro — reconsulta a
+         existente e reutiliza. Só falha se continuar inacessível. */
+      const recheck = await remoteInstanceState(instanceName, settings);
+      if (recheck.exists !== true) {
+        upsertEvolutionInstance(tenantId, { status: 'error', last_error: created.message });
+        return {
+          error: true,
+          code: 'instance_name_conflict',
+          message: `O nome "${instanceName}" já está em uso na Evolution, mas a instância não pôde ser verificada para reutilização.`
+        };
+      }
+      current = getEvolutionInstance(tenantId);
+      probe = recheck;
+    } else {
       logWhatsapp(LOG_ACTIONS.INSTANCE_CREATED, tenantId, { instance_name: instanceName });
+      current = getEvolutionInstance(tenantId);
     }
   }
 
+  /* 3. Sincroniza o registro local (criado ou atualizado). */
   upsertEvolutionInstance(tenantId, {
     tenant_id: tenantId,
     database_name: tenant.database_name,
@@ -828,6 +895,7 @@ async function connectEvolution(tenant, { force, instanceName, settings }) {
     last_error: null
   });
 
+  /* 4. Configura o webhook. */
   const webhookToken = ensureWebhookToken(tenantId);
   const publicUrl = String(process.env.PAPICORE_PUBLIC_URL || process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
   if (!/^https:\/\//i.test(publicUrl)) {
@@ -843,14 +911,30 @@ async function connectEvolution(tenant, { force, instanceName, settings }) {
     return { error: true, code: 'webhook_failed', message: `A instância foi criada, mas o webhook não pôde ser configurado: ${webhook.message}` };
   }
 
+  /* 5. Estado real: se já estiver open, retorna conectado sem gerar QR. */
+  const state = await remoteInstanceState(instanceName, settings);
+  if (state.exists === true && state.state && state.state.connected) {
+    const existing = getEvolutionInstance(tenantId);
+    upsertEvolutionInstance(tenantId, {
+      status: 'connected',
+      qr_base64: '',
+      last_error: null,
+      connected_at: (existing && existing.connected_at) || dateTimeNow(),
+      last_connection: dateTimeNow()
+    });
+    logWhatsapp(LOG_ACTIONS.CONNECTED, tenantId, { instance_name: instanceName });
+    return { ok: true, status: 'connected', message: 'A instância já está conectada na Evolution.' };
+  }
+
+  /* 6. Solicita o QR Code. */
   const qr = await evolutionProvider.generateQRCode(instanceName, settings);
   if (qr.error) {
     upsertEvolutionInstance(tenantId, { status: 'error', last_error: qr.message });
     return { error: true, code: 'qr_failed', message: `Não foi possível obter o QR Code: ${qr.message}` };
   }
 
-  /* Instância já conectada (state open): não deixa o painel preso em
-     "Gerando QR Code…". Atualiza o status local e avisa o usuário. */
+  /* Instância conectou enquanto gerávamos o QR (state open sem base64):
+     não deixa o painel preso em "Gerando QR Code…". */
   if (!qr.qr && qr.state === 'open') {
     const existing = getEvolutionInstance(tenantId);
     upsertEvolutionInstance(tenantId, {
@@ -885,6 +969,7 @@ function friendlyErrorMessage(result) {
     evolution_not_configured: 'A Evolution ainda não está configurada no painel do desenvolvedor.',
     evolution_unreachable: 'A Evolution está indisponível. Verifique se o servidor da Evolution está online e tente novamente.',
     instance_create_failed: 'A instância ainda não existe na Evolution e não foi possível criá-la automaticamente.',
+    instance_name_conflict: 'O nome desta instância já está em uso na Evolution e ela não pôde ser verificada para reutilização.',
     webhook_failed: 'A instância foi criada, mas o webhook não pôde ser configurado.',
     qr_failed: 'Não foi possível gerar o QR Code. Tente novamente.',
     public_url_missing: 'A URL pública HTTPS do PapiCore ainda não está configurada.',
@@ -895,6 +980,43 @@ function friendlyErrorMessage(result) {
   const code = result && result.code;
   if (code && messages[code]) return messages[code];
   return (result && result.message) || 'Não foi possível gerar o QR Code.';
+}
+
+/* Mapeia o código de erro do connect para um status HTTP coerente (PASSO 3).
+   Conflito não recuperável de nome de instância vira 409 (não 502 genérico);
+   falhas de dependência (Evolution/QR/webhook) continuam 502; configuração
+   ausente vira 503/500. */
+function connectErrorHttpStatus(result) {
+  switch (result && result.code) {
+    case 'instance_name_conflict':
+    case 'connect_in_progress':
+      return 409;
+    case 'public_url_missing':
+      return 500;
+    case 'evolution_not_configured':
+      return 503;
+    case 'instance_create_failed':
+    case 'webhook_failed':
+    case 'qr_failed':
+    case 'evolution_unreachable':
+    default:
+      return 502;
+  }
+}
+
+/* Código interno sanitizado (sem segredos) exposto ao front junto do erro. */
+function connectErrorCode(result) {
+  switch (result && result.code) {
+    case 'instance_name_conflict': return 'INSTANCE_NAME_CONFLICT';
+    case 'connect_in_progress': return 'CONNECT_IN_PROGRESS';
+    case 'evolution_not_configured': return 'EVOLUTION_NOT_CONFIGURED';
+    case 'public_url_missing': return 'PUBLIC_URL_MISSING';
+    case 'instance_create_failed': return 'INSTANCE_CREATE_FAILED';
+    case 'webhook_failed': return 'WEBHOOK_FAILED';
+    case 'qr_failed': return 'QR_FAILED';
+    case 'evolution_unreachable': return 'EVOLUTION_UNREACHABLE';
+    default: return 'CONNECT_FAILED';
+  }
 }
 
 async function disconnect(tenant) {
@@ -1454,6 +1576,8 @@ module.exports = {
   refreshStatus,
   testConnection,
   friendlyErrorMessage,
+  connectErrorHttpStatus,
+  connectErrorCode,
   ensureWebhookToken,
   configureWebhook,
   /* reconciliação / segurança */

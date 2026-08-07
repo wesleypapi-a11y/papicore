@@ -132,12 +132,14 @@ function extractErrorMessage(data, status) {
 
 /* A Evolution rejeita a criação de um nome de instância já existente. Em vez
    de tratar como falha fatal (que vira 502 no reconnect), o serviço reutiliza
-   a instância existente e apenas gera um novo QR. */
+   a instância existente e apenas gera um novo QR. Aceita 400 e 409 (a v2.3.7
+   responde 400; versões mais novas podem usar 409 Conflict). */
 function isAlreadyExistsError(data, status) {
   const message = String(
     data && ((data.response && data.response.message) || data.message || data.error) || ''
   ).toLowerCase();
-  return status === 400 && /already|exists|existente|em uso|in use/i.test(message);
+  if (status !== 400 && status !== 409) return false;
+  return /already|exists|existente|em uso|in use|name.*use/i.test(message);
 }
 
 /* ---------- Ações remotas ---------- */
@@ -178,10 +180,12 @@ async function createInstance(instanceName, settings) {
     body: { instanceName, integration: 'WHATSAPP-BAILEYS', qrcode: true }
   });
   if (!ok) {
+    const already = isAlreadyExistsError(data, status);
     return {
       error: true,
       status,
-      already_exists: isAlreadyExistsError(data, status),
+      already_exists: already,
+      code: already ? 'name_in_use' : undefined,
       message: extractErrorMessage(data, status)
     };
   }
