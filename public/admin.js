@@ -2950,6 +2950,7 @@
           <h3 class="review-section-title">Escaneie o QR Code para conectar</h3>
           <p class="sub" style="margin-top:0;">Abra o WhatsApp no seu celular, toque em <strong>Menu (⋮) &gt; Aparelhos conectados &gt; Conectar um aparelho</strong> e escaneie o código abaixo. Ele expira em poucos minutos.</p>
           ${conn.qr ? `<div class="wa-qr-wrap"><img class="wa-qr" src="${escapeHtml(conn.qr)}" alt="QR Code do WhatsApp" /></div>` : conn.qr_expired ? '<p class="sub">O QR Code anterior <strong>expirou</strong>. Gere um novo QR para continuar.</p>' : '<p class="sub">Gerando QR Code… aguarde e recarregue a página.</p>'}
+          ${conn.instance && conn.instance.last_error ? `<p class="error">${escapeHtml(conn.instance.last_error)}</p>` : ''}
           ${conn.mode === 'simulation' ? '<p class="sub">Este é um <strong>QR de simulação</strong> (MODO SIMULAÇÃO) — nenhuma conta real é usada enquanto a plataforma não liberar a Evolution.</p>' : ''}
           <div class="actions">
             <button type="button" class="btn btn-ghost waReconnect">Gerar novo QR</button>
@@ -3000,11 +3001,16 @@
         toast(conn.status === 'connected' ? 'WhatsApp conectado.' : `Status: ${conn.status}`, conn.status === 'connected' ? 'success' : 'info');
         return;
       }
-      await api(`/api/admin/whatsapp/connection/${map[action]}`, { method: 'POST' });
-      toast(action === 'connect' ? 'QR Code gerado. Escaneie com o WhatsApp.' : action === 'reconnect' ? 'Novo QR Code gerado.' : 'WhatsApp desconectado.', 'success');
+      const result = await api(`/api/admin/whatsapp/connection/${map[action]}`, { method: 'POST' });
+      if (result.status === 'connected') {
+        toast(result.message || 'WhatsApp já está conectado.', 'info');
+      } else {
+        toast(action === 'connect' ? 'QR Code gerado. Escaneie com o WhatsApp.' : action === 'reconnect' ? 'Novo QR Code gerado.' : 'WhatsApp desconectado.', 'success');
+      }
       renderWhatsappConnection($('whatsappTabBody'));
     } catch (e) {
       toast(e.message, 'error');
+      renderWhatsappConnection($('whatsappTabBody'));
     } finally {
       hideLoader();
     }

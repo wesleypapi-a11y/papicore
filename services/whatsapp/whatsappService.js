@@ -549,17 +549,48 @@ async function processOne(db, row) {
       errorText = 'WhatsApp não configurado (Evolution API sem URL/chave).';
     } else {
       const registered = getEvolutionInstanceByInstanceName(instanceName);
-      if (!registered || registered.status !== 'connected') {
+      if (!registered) {
         outcome = 'FAILED';
-        errorText = 'A instância WhatsApp do tenant não está conectada.';
+        errorText = 'A instância WhatsApp do tenant não está cadastrada.';
       } else {
-        const result = await evolutionProvider.sendText(instanceName, row.recipient, row.message_text, evolutionProvider.getSettings());
-        if (result.error || result.skipped) {
+        /* Verifica a instância de verdade na Evolution antes de enviar: o
+           status local pode estar "connected" por herança do modo MOCK ou de
+           webhook antigo, mas a instância pode não existir mais no servidor.
+           Nunca envia para um "nome fantasma". */
+        const settings = evolutionProvider.getSettings();
+        let remote;
+        try {
+          remote = await evolutionProvider.getState(instanceName, settings);
+        } catch (err) {
+          remote = { ok: false, status: 0, message: err.message };
+        }
+
+        const instanceMissing = !remote.ok &&
+          (remote.status === 404 || /does not exist|not found|not_found/i.test(remote.message || ''));
+        if (instanceMissing) {
+          upsertEvolutionInstance(registered.tenant_id, { status: 'missing_remote', qr_base64: '', last_error: `Instância "${instanceName}" não encontrada na Evolution.` });
           outcome = 'FAILED';
-          errorText = result.message || result.reason || `Falha de envio (HTTP ${result.status}).`;
+          errorText = `A instância "${instanceName}" não existe na Evolution. Reconecte o WhatsApp da empresa para recriá-la.`;
+        } else if (!remote.ok) {
+          outcome = 'FAILED';
+          errorText = `Não foi possível verificar a instância na Evolution (HTTP ${remote.status || 'erro'}).`;
+        } else if (!remote.connected) {
+          outcome = 'FAILED';
+          errorText = 'A instância WhatsApp do tenant não está conectada na Evolution (estado: ' + (remote.status || 'unknown') + ').';
         } else {
-          outcome = 'SENT';
-          logWhatsapp(LOG_ACTIONS.MESSAGE_SENT, registered.tenant_id, { outbox_id: row.id, event_key: row.event_key, provider_message_id: result.id || '' });
+          upsertEvolutionInstance(registered.tenant_id, {
+            status: 'connected',
+            owner_number: remote.owner_number || registered.owner_number,
+            last_connection: dateTimeNow()
+          });
+          const result = await evolutionProvider.sendText(instanceName, row.recipient, row.message_text, settings);
+          if (result.error || result.skipped) {
+            outcome = 'FAILED';
+            errorText = result.message || result.reason || `Falha de envio (HTTP ${result.status}).`;
+          } else {
+            outcome = 'SENT';
+            logWhatsapp(LOG_ACTIONS.MESSAGE_SENT, registered.tenant_id, { outbox_id: row.id, event_key: row.event_key, provider_message_id: result.id || '' });
+          }
         }
       }
     }
@@ -693,9 +724,15 @@ function ensureWebhookToken(tenantId) {
 }
 
 /*
- * Conecta uma empresa: em MOCK simula o QR; com Evolution cria a instância,
- * busca o QR Code e devolve ao front para exibição. O status fica
- * "connecting" até o usuário escanear.
+ * Conecta uma empresa: em MOCK simula o QR; com Evolution cria a instância
+ * (apenas se ainda não existir), busca o QR Code e devolve ao front para
+ * exibição. O status fica "connecting" até o usuário escanear.
+ *
+ * No reconnect (force=true) a instância NÃO é recriada: ela é deslogada na
+ * Evolution (novo pareamento) e o QR é regenerado na instância existente.
+ * Antes era feito logout + delete local + createInstance — o create falhava
+ * com 400 ("instance already exists") quando a instância ainda existia no
+ * servidor, e o controller devolvia 502.
  */
 async function connect(tenant, { force = false } = {}) {
   const providerName = activeProviderName();
@@ -703,7 +740,7 @@ async function connect(tenant, { force = false } = {}) {
   const instanceName = instanceNameFromDatabaseName(tenant.database_name);
 
   if (isReservedInstanceName(instanceName)) {
-    return { error: true, message: 'O nome desta instância é reservado para a PapiCore e não pode ser usado por uma empresa.' };
+    return { error: true, code: 'reserved_instance', message: 'O nome desta instância é reservado para a PapiCore e não pode ser usado por uma empresa.' };
   }
 
   if (providerName === PROVIDER_MOCK) {
@@ -729,21 +766,57 @@ async function connect(tenant, { force = false } = {}) {
     return { error: true, code: 'evolution_not_configured', message: 'Evolution API ainda não está configurada no painel do desenvolvedor.' };
   }
 
-  const current = getEvolutionInstance(tenantId);
+  /* Falha de rede/timeout com a Evolution vira erro tratado (e logado), nunca
+     exceção crua que derruba a requisição em 500 sem mensagem amigável. */
+  try {
+    const outcome = await connectEvolution(tenant, { force, instanceName, settings });
+    if (outcome.error) {
+      console.error(`[whatsapp] Falha ao conectar "${instanceName}" (${outcome.code || 'erro'}): ${outcome.message}`);
+      logWhatsapp(LOG_ACTIONS.ERROR, tenantId, `${outcome.code || 'erro'}: ${outcome.message}`);
+    }
+    return outcome;
+  } catch (err) {
+    console.error(`[whatsapp] Falha de comunicação ao conectar "${instanceName}":`, err && err.message);
+    logWhatsapp(LOG_ACTIONS.ERROR, tenantId, `evolution_unreachable: ${(err && err.message) || String(err)}`);
+    try {
+      upsertEvolutionInstance(tenantId, { status: 'error', qr_base64: '', last_error: 'Não foi possível falar com a Evolution. Verifique se o servidor da Evolution está online.' });
+    } catch { /* auditoria não pode quebrar a resposta */ }
+    return { error: true, code: 'evolution_unreachable', message: 'Não foi possível falar com a Evolution. Verifique se o servidor da Evolution está online.' };
+  }
+}
+
+/* Fluxo real da Evolution (separado para o try/catch de comunicação). */
+async function connectEvolution(tenant, { force, instanceName, settings }) {
+  const tenantId = tenant.id;
+  let current = getEvolutionInstance(tenantId);
+
+  /* Desconecta o aparelho na Evolution para forçar novo QR — sem excluir a
+     instância. Se ela não existir, o erro é ignorado (best-effort). */
   if (force && current) {
-    try { await evolutionProvider.disconnect(current.instance_name, settings); } catch { /* ignora */ }
-    deleteEvolutionInstance(tenantId);
+    try { await evolutionProvider.disconnect(current.instance_name, settings); } catch { /* best-effort */ }
   }
 
-  /* Instância que sumiu da Evolution (reconciliação) ou nunca existiu: recria. */
-  const needsCreate = !current || force || current.status === 'missing_remote';
+  /* Consulta o estado real na Evolution para decidir entre criar e reutilizar.
+     Nunca recria uma instância que já existe no servidor. */
+  let remote = null;
+  try {
+    remote = await evolutionProvider.getState(instanceName, settings);
+  } catch (err) {
+    remote = { ok: false, status: 0, message: err.message };
+  }
+  const instanceMissing = !remote.ok &&
+    (remote.status === 404 || /does not exist|not found|not_found|não encontrad/i.test(remote.message || ''));
+
+  const needsCreate = instanceMissing || !current || current.status === 'missing_remote';
   if (needsCreate) {
     const created = await evolutionProvider.createInstance(instanceName, settings);
-    if (created.error) {
-      logWhatsapp(LOG_ACTIONS.ERROR, tenantId, `Falha ao criar instância: ${created.message}`);
-      return { error: true, message: `Não foi possível criar a instância: ${created.message}` };
+    if (created.error && !created.already_exists) {
+      return { error: true, code: 'instance_create_failed', message: `Não foi possível criar a instância: ${created.message}` };
     }
-    logWhatsapp(LOG_ACTIONS.INSTANCE_CREATED, tenantId, { instance_name: instanceName });
+    /* already_exists (corrida/duplicidade): segue e reutiliza a existente. */
+    if (!created.error) {
+      logWhatsapp(LOG_ACTIONS.INSTANCE_CREATED, tenantId, { instance_name: instanceName });
+    }
   }
 
   upsertEvolutionInstance(tenantId, {
@@ -759,7 +832,7 @@ async function connect(tenant, { force = false } = {}) {
   const publicUrl = String(process.env.PAPICORE_PUBLIC_URL || process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
   if (!/^https:\/\//i.test(publicUrl)) {
     upsertEvolutionInstance(tenantId, { status: 'error', last_error: 'PAPICORE_PUBLIC_URL HTTPS não configurada.' });
-    return { error: true, message: 'Configure PAPICORE_PUBLIC_URL com a URL HTTPS pública antes de conectar.' };
+    return { error: true, code: 'public_url_missing', message: 'Configure PAPICORE_PUBLIC_URL com a URL HTTPS pública antes de conectar.' };
   }
   const webhook = await evolutionProvider.setWebhook(instanceName, {
     url: `${publicUrl}/api/webhooks/whatsapp`,
@@ -767,14 +840,28 @@ async function connect(tenant, { force = false } = {}) {
   }, settings);
   if (webhook.error) {
     upsertEvolutionInstance(tenantId, { status: 'error', last_error: webhook.message });
-    return { error: true, message: `Instância criada, mas o webhook não pôde ser configurado: ${webhook.message}` };
+    return { error: true, code: 'webhook_failed', message: `A instância foi criada, mas o webhook não pôde ser configurado: ${webhook.message}` };
   }
 
   const qr = await evolutionProvider.generateQRCode(instanceName, settings);
   if (qr.error) {
     upsertEvolutionInstance(tenantId, { status: 'error', last_error: qr.message });
-    logWhatsapp(LOG_ACTIONS.ERROR, tenantId, `Falha ao obter QR: ${qr.message}`);
-    return { error: true, message: `Não foi possível obter o QR Code: ${qr.message}` };
+    return { error: true, code: 'qr_failed', message: `Não foi possível obter o QR Code: ${qr.message}` };
+  }
+
+  /* Instância já conectada (state open): não deixa o painel preso em
+     "Gerando QR Code…". Atualiza o status local e avisa o usuário. */
+  if (!qr.qr && qr.state === 'open') {
+    const existing = getEvolutionInstance(tenantId);
+    upsertEvolutionInstance(tenantId, {
+      status: 'connected',
+      qr_base64: '',
+      last_error: null,
+      connected_at: (existing && existing.connected_at) || dateTimeNow(),
+      last_connection: dateTimeNow()
+    });
+    logWhatsapp(LOG_ACTIONS.CONNECTED, tenantId, { instance_name: instanceName });
+    return { ok: true, status: 'connected', message: 'A instância já está conectada na Evolution.' };
   }
 
   upsertEvolutionInstance(tenantId, {
@@ -784,11 +871,30 @@ async function connect(tenant, { force = false } = {}) {
     last_qr_generated: dateTimeNow()
   });
   logWhatsapp(LOG_ACTIONS.QR_GENERATED, tenantId, { instance_name: instanceName });
-  return { ok: true, status: 'connecting', qr: qr.qr };
+  return { ok: true, status: 'connecting', qr: qr.qr, code: qr.code || '', pairing_code: qr.pairingCode || '' };
 }
 
 async function reconnect(tenant) {
   return connect(tenant, { force: true });
+}
+
+/* Mensagem amigável para o painel a partir do código de erro retornado pelo
+   connect/disconnect. O detalhe técnico fica nos logs do servidor. */
+function friendlyErrorMessage(result) {
+  const messages = {
+    evolution_not_configured: 'A Evolution ainda não está configurada no painel do desenvolvedor.',
+    evolution_unreachable: 'A Evolution está indisponível. Verifique se o servidor da Evolution está online e tente novamente.',
+    instance_create_failed: 'A instância ainda não existe na Evolution e não foi possível criá-la automaticamente.',
+    webhook_failed: 'A instância foi criada, mas o webhook não pôde ser configurado.',
+    qr_failed: 'Não foi possível gerar o QR Code. Tente novamente.',
+    public_url_missing: 'A URL pública HTTPS do PapiCore ainda não está configurada.',
+    reserved_instance: 'O nome desta instância é reservado para a PapiCore e não pode ser usado por uma empresa.',
+    already_connected: 'A instância já está conectada na Evolution.',
+    evolution_not_configured_legacy: 'Evolution API ainda não está configurada no painel do desenvolvedor.'
+  };
+  const code = result && result.code;
+  if (code && messages[code]) return messages[code];
+  return (result && result.message) || 'Não foi possível gerar o QR Code.';
 }
 
 async function disconnect(tenant) {
@@ -1347,6 +1453,7 @@ module.exports = {
   disconnect,
   refreshStatus,
   testConnection,
+  friendlyErrorMessage,
   ensureWebhookToken,
   configureWebhook,
   /* reconciliação / segurança */

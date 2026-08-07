@@ -1407,14 +1407,20 @@ async function getTenantWhatsappHandler(req, res) {
 async function tenantWhatsappConnectHandler(req, res) {
   const tenant = requireTenant(req.params.tenantId);
   const result = await whatsappService.connect(tenant, { force: false });
-  if (result.error) throw new AppError(502, result.message || 'Falha ao conectar.');
+  if (result.error) {
+    console.error(`[whatsapp] connect (dev) falhou (tenant ${tenant.id}): ${result.code || 'erro'} — ${result.message}`);
+    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+  }
   return res.json(result);
 }
 
 async function tenantWhatsappReconnectHandler(req, res) {
   const tenant = requireTenant(req.params.tenantId);
   const result = await whatsappService.reconnect(tenant);
-  if (result.error) throw new AppError(502, result.message || 'Falha ao reconectar.');
+  if (result.error) {
+    console.error(`[whatsapp] reconnect (dev) falhou (tenant ${tenant.id}): ${result.code || 'erro'} — ${result.message}`);
+    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+  }
   return res.json(result);
 }
 

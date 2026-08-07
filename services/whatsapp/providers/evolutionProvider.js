@@ -130,6 +130,16 @@ function extractErrorMessage(data, status) {
   return text.replace(/apikey|authorization|token/gi, 'credencial').slice(0, 500);
 }
 
+/* A Evolution rejeita a criação de um nome de instância já existente. Em vez
+   de tratar como falha fatal (que vira 502 no reconnect), o serviço reutiliza
+   a instância existente e apenas gera um novo QR. */
+function isAlreadyExistsError(data, status) {
+  const message = String(
+    data && ((data.response && data.response.message) || data.message || data.error) || ''
+  ).toLowerCase();
+  return status === 400 && /already|exists|existente|em uso|in use/i.test(message);
+}
+
 /* ---------- Ações remotas ---------- */
 
 async function testConnection(settingsOverride) {
@@ -167,7 +177,14 @@ async function createInstance(instanceName, settings) {
     method: 'POST',
     body: { instanceName, integration: 'WHATSAPP-BAILEYS', qrcode: true }
   });
-  if (!ok) return { error: true, status, message: extractErrorMessage(data, status) };
+  if (!ok) {
+    return {
+      error: true,
+      status,
+      already_exists: isAlreadyExistsError(data, status),
+      message: extractErrorMessage(data, status)
+    };
+  }
   return { ok: true, data };
 }
 
@@ -220,7 +237,7 @@ async function logout(instanceName, settings) {
 
 async function getState(instanceName, settings) {
   const { ok, status, data } = await apiFetch(settings, ENDPOINTS.connectionState(instanceName));
-  if (!ok) return { ok: false, status };
+  if (!ok) return { ok: false, status, message: extractErrorMessage(data, status) };
   const remote = (data && data.instance) || {};
   const state = remote.state || remote.status || remote.connectionStatus || 'closed';
   return {
@@ -338,6 +355,7 @@ module.exports = {
   isConfigured,
   sanitizeSettings,
   toInternationalPhone,
+  isAlreadyExistsError,
   testConnection,
   listInstances,
   createInstance,

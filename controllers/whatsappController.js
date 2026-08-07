@@ -108,13 +108,19 @@ function getConnection(req, res) {
 
 async function connectConnection(req, res) {
   const result = await whatsappService.connect(req.tenant);
-  if (result.error) throw new AppError(502, result.message || 'Falha ao conectar o WhatsApp.');
+  if (result.error) {
+    console.error(`[whatsapp] connect falhou (tenant ${req.tenant && req.tenant.id}): ${result.code || 'erro'} — ${result.message}`);
+    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+  }
   return res.json(result);
 }
 
 async function reconnectConnection(req, res) {
   const result = await whatsappService.reconnect(req.tenant);
-  if (result.error) throw new AppError(502, result.message || 'Falha ao reconectar o WhatsApp.');
+  if (result.error) {
+    console.error(`[whatsapp] reconnect falhou (tenant ${req.tenant && req.tenant.id}): ${result.code || 'erro'} — ${result.message}`);
+    throw new AppError(502, whatsappService.friendlyErrorMessage(result));
+  }
   return res.json(result);
 }
 

@@ -2,10 +2,16 @@
 /*
  * testWhatsappEvolutionLive.js
  *
- * Teste LIVE contra a Evolution API real (2.3.7). NÃO envia mensagem, NÃO
- * desconecta e NÃO exclui NENHUMA instância — apenas lê:
- *   1. GET /instance/fetchInstances            (conectividade + apikey)
- *   2. GET /instance/connectionState/{instance}(estado da papicore_support)
+ * Teste LIVE contra a Evolution API real (2.3.7). SOMENTE LEITURA: NÃO cria
+ * instância, NÃO gera QR, NÃO envia mensagem, NÃO desconecta e NÃO exclui
+ * NENHUMA instância. Executa apenas:
+ *   1. GET /instance/fetchInstances              listar todas as instâncias;
+ *   2. GET /instance/connectionState/{instance}  estado real de cada uma;
+ *   3. leitura (readonly) do banco local papi_core.db → evolution_instances.
+ *
+ * Saída: tabela "nome da instância | estado remoto | existe no banco local
+ * | status local" para todas as instâncias remotas + os nomes-alvo de tenant
+ * + os registros locais órfãos.
  *
  * Só executa com ALLOW_LIVE_EVOLUTION_TEST=true (proteção contra chamadas
  * acidentais em testes/CI). A API key nunca é impressa; o provider já
@@ -102,20 +108,62 @@ async function shutdown(code) {
   const list = await provider.listInstances(settings);
   if (list.error) { fail(list.message); return shutdown(1); }
   if (!Array.isArray(list.instances)) { fail('fetchInstances não retornou uma lista.'); return shutdown(1); }
-  console.log(`[test-live] 1. fetchInstances OK — ${list.instances.length} instância(s) na Evolution (papicore_support incluída).`);
+  console.log(`[test-live] 1. fetchInstances OK — ${list.instances.length} instância(s) na Evolution.`);
 
-  /* 2. Localiza a instância central de suporte. */
-  const support = list.instances.find((i) => i.name === 'papicore_support');
-  if (!support) { fail('instância papicore_support não encontrada na Evolution.'); return shutdown(1); }
-  console.log(`[test-live] 2. papicore_support encontrada — status remoto: ${support.status}`);
+  /* 2. Estado real de cada instância remota (connectionState, somente leitura). */
+  const remoteState = new Map();
+  for (const i of list.instances) {
+    const state = await provider.getState(i.name, settings);
+    remoteState.set(i.name, state.ok ? (state.status || i.status || 'desconhecido') : `erro HTTP ${state.status}`);
+  }
 
-  /* 3. connectionState da papicore_support (somente leitura). */
-  const state = await provider.getState('papicore_support', settings);
-  if (!state.ok) { fail(`connectionState(papicore_support) falhou: ${state.status || 'erro'}`); return shutdown(1); }
-  console.log(`[test-live] 3. connectionState(papicore_support) OK — estado: ${state.status}${state.owner_number ? `, número: ${state.owner_number}` : ''}`);
+  /* 3. Banco local (readonly): evolution_instances. */
+  const path = require('path');
+  const corePath = path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'papi_core.db');
+  const localByName = new Map();
+  try {
+    const Database = require('better-sqlite3');
+    const core = new Database(corePath, { readonly: true });
+    for (const row of core.prepare('SELECT instance_name, status, tenant_id FROM evolution_instances').all()) {
+      localByName.set(row.instance_name, row);
+    }
+    core.close();
+    console.log(`[test-live] 3. banco local lido (readonly): ${corePath} — ${localByName.size} registro(s) de instância.`);
+  } catch (err) {
+    console.log(`[test-live] 3. aviso: banco local não lido (${err.message}).`);
+  }
+
+  /* 4. Tabela: instâncias remotas + nomes-alvo + registros locais órfãos. */
+  const TARGETS = ['tenant_0001_torque_detail', 'tenant_0002_iva_detalhes'];
+  const allNames = [...new Set([...remoteState.keys(), ...TARGETS, ...localByName.keys()])].sort();
+
+  console.log('');
+  console.log('nome da instância | estado remoto | existe no banco local | status local');
+  console.log('------------------ | -------------- | ---------------------- | ------------');
+  for (const name of allNames) {
+    const remoteExists = remoteState.has(name);
+    const remote = remoteExists ? remoteState.get(name) : 'não existe na Evolution';
+    const local = localByName.get(name);
+    const localYes = local ? 'sim' : 'não';
+    const localStatus = local ? local.status : '—';
+    console.log(`${name} | ${remote} | ${localYes} | ${localStatus}`);
+  }
+  console.log('');
+
+  /* 5. Confirmação dos nomes-alvo (objetivo do comando). */
+  const targetChecks = [];
+  for (const name of TARGETS) {
+    const remoteExists = remoteState.has(name);
+    const local = localByName.get(name);
+    targetChecks.push(
+      `${name}: ${remoteExists ? 'EXISTE na Evolution' : 'NÃO existe na Evolution'}` +
+      ` — ${local ? `no banco local (status ${local.status})` : 'sem registro no banco local'}`
+    );
+  }
+  console.log('[test-live] 2. ' + targetChecks.join(' | '));
 
   console.log(
-    '[test-live] SUCESSO. Nenhuma instância excluída, nenhum logout executado, nenhuma mensagem enviada.'
+    '[test-live] SUCESSO. Nenhuma instância criada, nenhum QR, nenhuma mensagem enviada, nenhum logout/exclusão — somente leitura.'
   );
   await shutdown(0);
 })().catch(async (err) => {

@@ -196,14 +196,14 @@
       }
       if(action==='disconnect'){if(!confirm(`Desconectar o WhatsApp da empresa "${inst.name||id}"?`))return;}
       if(action==='connect'||action==='reconnect'){
-        await api(`/api/developer/whatsapp/tenants/${id}/${action}`,{method:'POST'});
-        toast('QR Code gerado. Abra em "Ver QR Code" ou peça ao cliente para escanear no painel.');
+        const r=await api(`/api/developer/whatsapp/tenants/${id}/${action}`,{method:'POST'});
+        toast(r.status==='connected'?(r.message||'Instância já conectada.'):'QR Code gerado. Abra em "Ver QR Code" ou peça ao cliente para escanear no painel.');
       }else if(action==='disconnect'){
         await api(`/api/developer/whatsapp/tenants/${id}/disconnect`,{method:'POST'});
         toast('WhatsApp desconectado.');
       }
       evolution();
-    }catch(err){toast(err.message)}
+    }catch(err){toast(err.message);evolution()}
   }
 
   /* ---------- Aba "API" ---------- */

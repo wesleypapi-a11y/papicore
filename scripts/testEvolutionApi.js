@@ -355,6 +355,7 @@ test('envio real: processOne passa pela Evolution e marca SENT', async () => {
   process.env.WHATSAPP_ENABLED = 'true';
   const calls = [];
   const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { state: 'open', number: '5511999998888' } }),
     '/message/sendText/tenant_0001_torque_detail': () => jsonResponse({ key: { id: 'EVO-MSG-1' } })
   }, calls);
 
@@ -382,6 +383,8 @@ test('envio real: processOne passa pela Evolution e marca SENT', async () => {
     assert(row.status === 'SENT', `enviada de verdade (veio ${row.status})`);
     assert(row.sent_at, 'sent_at preenchido');
 
+    const stateCall = calls.find((c) => c.url === '/instance/connectionState/tenant_0001_torque_detail');
+    assert(stateCall, 'instância verificada na Evolution antes de enviar');
     const sendCall = calls.find((c) => c.url === '/message/sendText/tenant_0001_torque_detail');
     assert(sendCall, 'sendText chamado na instância certa');
     assert(sendCall.body.number === '5511977770002', `número normalizado (veio ${sendCall.body.number})`);
@@ -417,6 +420,92 @@ test('developer overview: visão geral com empresas e instâncias', async () => 
   assert(r.result.whatsapp && r.result.whatsapp.provider === 'evolution', 'provider evolution quando ativa');
   assert(r.result.whatsapp.mock === false, 'não é mock quando evolution ativa');
   process.env.WHATSAPP_ENABLED = 'false';
+});
+
+test('instance fantasma: Evolution 404 "does not exist" → FAILED e status missing_remote', async () => {
+  setRealProvider(true);
+  process.env.WHATSAPP_MAX_RETRIES = '1';
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse(
+      { response: { message: 'The "tenant_0001_torque_detail" instance does not exist' } },
+      false, 404
+    )
+  }, calls);
+
+  try {
+    let enqueued;
+    runWithTenant(db, () => {
+      enqueued = whatsappService.enqueueEvent('APPOINTMENT_CONFIRMED', {
+        id: 888003,
+        customer_phone: '(11) 97777-0003',
+        appointment_code: 'EVO-FANTASMA',
+        appointment_date: '2026-08-12',
+        start_time: '09:00',
+        end_time: '10:00',
+        customer_name: 'Fantasma',
+        service_name: 'Teste',
+        vehicle_brand: 'A',
+        vehicle_model: 'B',
+        total_price: 0,
+        customer_package_id: null
+      });
+    });
+    assert(enqueued.skipped !== true, 'enfileirada');
+
+    await whatsappService.processOutbox({ db });
+    const row = db.prepare('SELECT * FROM whatsapp_outbox WHERE idempotency_key = ?').get('APPOINTMENT_CONFIRMED:888003');
+    assert(row && row.status === 'FAILED', `final FAILED (veio ${row && row.status})`);
+    assert(row.last_error && row.last_error.includes('não existe na Evolution'), `erro explica instância fantasma (${row.last_error})`);
+    assert(!calls.some((c) => c.url.startsWith('/message/sendText/')), 'sendText NÃO é chamado para instância inexistente');
+
+    const coreRow = core.getEvolutionInstance(tenant.id);
+    assert(coreRow && coreRow.status === 'missing_remote', `registro vira missing_remote (veio ${coreRow && coreRow.status})`);
+  } finally {
+    restore();
+    delete process.env.WHATSAPP_MAX_RETRIES;
+    setRealProvider(false);
+  }
+});
+
+test('instância existe mas fechada na Evolution → FAILED sem enviar', async () => {
+  setRealProvider(true);
+  process.env.WHATSAPP_MAX_RETRIES = '1';
+  const calls = [];
+  const restore = stubFetch({
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { state: 'close' } })
+  }, calls);
+
+  try {
+    let enqueued;
+    runWithTenant(db, () => {
+      enqueued = whatsappService.enqueueEvent('APPOINTMENT_CONFIRMED', {
+        id: 888004,
+        customer_phone: '(11) 97777-0004',
+        appointment_code: 'EVO-FECHADA',
+        appointment_date: '2026-08-12',
+        start_time: '09:00',
+        end_time: '10:00',
+        customer_name: 'Fechada',
+        service_name: 'Teste',
+        vehicle_brand: 'A',
+        vehicle_model: 'B',
+        total_price: 0,
+        customer_package_id: null
+      });
+    });
+    assert(enqueued.skipped !== true, 'enfileirada');
+
+    await whatsappService.processOutbox({ db });
+    const row = db.prepare('SELECT * FROM whatsapp_outbox WHERE idempotency_key = ?').get('APPOINTMENT_CONFIRMED:888004');
+    assert(row && row.status === 'FAILED', `final FAILED (veio ${row && row.status})`);
+    assert((row.last_error || '').includes('não está conectada'), `erro cita desconexão (${row.last_error})`);
+    assert(!calls.some((c) => c.url.startsWith('/message/sendText/')), 'sendText NÃO é chamado');
+  } finally {
+    restore();
+    delete process.env.WHATSAPP_MAX_RETRIES;
+    setRealProvider(false);
+  }
 });
 
 test('disconnect limpa registro e volta ao MOCK', async () => {
