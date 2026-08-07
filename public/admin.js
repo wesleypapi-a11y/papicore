@@ -61,9 +61,19 @@
   /* Resumo de veículo/serviços reaproveitado pelo card mobile de
      Agendamentos (ver renderAppointments) e pelo modal de detalhes. */
   const STATUS_EMOJI = { pending: '🟡', confirmed: '🟢', completed: '🔵', rejected: '🔴', cancelled: '⚪' };
+  /* Só "Aguardando confirmação" precisa de versão curta — os demais status
+     já são compactos. Label só visual no card mobile; o status real
+     gravado no banco não muda. */
+  const STATUS_SHORT_LABELS = { pending: 'Pendente' };
   function vehicleSummary(a) {
     const parts = `${a.vehicle_brand || ''} ${a.vehicle_model || ''}`.trim();
     return parts + (a.vehicle_year ? ' · ' + a.vehicle_year : '');
+  }
+  /* Data curta (DD/MM, sem ano) para a linha condensada do card mobile. */
+  function toDateShortBR(dateStr) {
+    if (!dateStr) return '';
+    const [, m, d] = dateStr.slice(0, 10).split('-');
+    return `${d}/${m}`;
   }
   function servicesSummary(a) {
     let list = [];
@@ -1047,6 +1057,78 @@
 
   /* ---------- appointments ---------- */
 
+  /* Botões de ação disponíveis para um agendamento, de acordo com o status
+     — única fonte da regra "quais ações cada status permite", usada tanto
+     pela linha desktop quanto pelo card mobile (nenhuma delas decide isso
+     por conta própria). */
+  function appointmentActionsHtml(a) {
+    const actions = [];
+    if (a.status === 'pending') {
+      actions.push(actionButton('accept', a.id));
+      actions.push(actionButton('reject', a.id));
+    }
+    if (a.status === 'confirmed') {
+      actions.push(actionButton('complete', a.id));
+      actions.push(actionButton('cancel', a.id));
+    }
+    if (a.status === 'pending' || a.status === 'confirmed') {
+      actions.push(actionButton('edit', a.id));
+    }
+    actions.push(actionButton('detail', a.id));
+    actions.push(actionButton('delete', a.id));
+    return actions.join('');
+  }
+
+  /* Linha da tabela desktop — layout inalterado. */
+  function renderAppointmentRowDesktop(a, actionsHtml) {
+    return `
+      <tr>
+        <td><strong>${escapeHtml(a.appointment_code)}</strong></td>
+        <td>${escapeHtml(a.customer_name)}<br /><span class="muted">${escapeHtml(a.customer_phone)}</span></td>
+        <td>${toDateBR(a.appointment_date)}<br /><span class="muted">${escapeHtml(appointmentTimeLabel(a))}${isLongAppointment(a) ? '' : ' → ' + (a.end_date && a.end_date !== a.appointment_date ? toDateBR(a.end_date) + ' ' : '') + escapeHtml(a.end_time || '—')}</span></td>
+        <td>${escapeHtml(a.service_name || '—')}<br /><span class="muted">${escapeHtml(a.modality_name || '')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</span></td>
+        <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}<br />${a.payment_method ? `<span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
+        <td>${badge(a.status)}</td>
+        <td><div class="appointment-actions">${actionsHtml}</div></td>
+      </tr>`;
+  }
+
+  /*
+   * Card mobile — componente próprio (NÃO é a tabela virando bloco), pensado
+   * para consulta rápida de muitos agendamentos, no estilo lista de pedidos
+   * (iFood/Mercado Pago): uma linha por bloco de informação, sem rótulo,
+   * sem emoji grande — só o essencial para reconhecer o agendamento de
+   * relance. O resto (telefone completo, forma de pagamento, modalidade,
+   * lista inteira de serviços) fica em Visualizar/Editar, não aqui.
+   */
+  function renderAppointmentCardMobile(a, actionsHtml) {
+    const svc = servicesSummary(a);
+    const timeRange = isLongAppointment(a) ? 'Horário a confirmar' : `${a.start_time || '—'} às ${a.end_time || '—'}`;
+    const metaParts = [];
+    if (a.vehicle_model) metaParts.push(escapeHtml(a.vehicle_model));
+    metaParts.push(toDateShortBR(a.appointment_date));
+    metaParts.push(timeRange);
+
+    return `
+      <div class="appt-card">
+        <div class="appt-card-head">
+          <span class="appt-card-code">${escapeHtml(a.appointment_code)}</span>
+          <span class="appt-card-status status-${a.status}">${STATUS_EMOJI[a.status] || ''} ${STATUS_SHORT_LABELS[a.status] || STATUS_LABELS[a.status] || a.status}</span>
+        </div>
+        <div class="appt-card-name">${escapeHtml(a.customer_name)}</div>
+        <div class="appt-card-meta">${metaParts.join(' &bull; ')}</div>
+        <div class="appt-card-services">
+          ${svc.count > 1 ? `<div class="appt-card-services-count">${svc.count} serviços</div>` : `<div class="appt-card-services-count">1 serviço</div>`}
+          <div class="appt-card-service-line">
+            <span class="appt-card-service-name">${escapeHtml(svc.first)}</span>
+            ${svc.extra > 0 ? `<span class="appt-card-extra">+${svc.extra} adicional${svc.extra === 1 ? '' : 'ais'}</span>` : ''}
+          </div>
+        </div>
+        <div class="appt-card-price">${money(a.total_price)}${a.price_is_estimate ? ' <span class="appt-card-estimate">est.</span>' : ''}</div>
+        <div class="appt-card-actions">${actionsHtml}</div>
+      </div>`;
+  }
+
   async function renderAppointments() {
     const el = $('view-appointments');
     const params = new URLSearchParams({ status: state.appointmentStatus });
@@ -1062,68 +1144,13 @@
       return `<button class="tab ${state.appointmentStatus === s ? 'active' : ''}" data-status="${s}">${label} <span class="count">${n}</span></button>`;
     }).join('');
 
-    const rowsAndCards = data.map((a) => {
-      const actions = [];
-      if (a.status === 'pending') {
-        actions.push(actionButton('accept', a.id));
-        actions.push(actionButton('reject', a.id));
-      }
-      if (a.status === 'confirmed') {
-        actions.push(actionButton('complete', a.id));
-        actions.push(actionButton('cancel', a.id));
-      }
-      if (a.status === 'pending' || a.status === 'confirmed') {
-        actions.push(actionButton('edit', a.id));
-      }
-      actions.push(actionButton('detail', a.id));
-      actions.push(actionButton('delete', a.id));
-      const actionsHtml = actions.join('');
-
-      const row = `
-        <tr>
-          <td><strong>${escapeHtml(a.appointment_code)}</strong></td>
-          <td>${escapeHtml(a.customer_name)}<br /><span class="muted">${escapeHtml(a.customer_phone)}</span></td>
-          <td>${toDateBR(a.appointment_date)}<br /><span class="muted">${escapeHtml(appointmentTimeLabel(a))}${isLongAppointment(a) ? '' : ' → ' + (a.end_date && a.end_date !== a.appointment_date ? toDateBR(a.end_date) + ' ' : '') + escapeHtml(a.end_time || '—')}</span></td>
-          <td>${escapeHtml(a.service_name || '—')}<br /><span class="muted">${escapeHtml(a.modality_name || '')}${a.unit_name ? ' · ' + escapeHtml(a.unit_name) : ''}</span></td>
-          <td>${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}<br />${a.payment_method ? `<span class="muted">${escapeHtml(PAYMENT_LABELS[a.payment_method] || a.payment_method)}</span>` : ''}</td>
-          <td>${badge(a.status)}</td>
-          <td><div class="appointment-actions">${actionsHtml}</div></td>
-        </tr>`;
-
-      /* Card mobile — layout próprio (não é a tabela reaproveitada), denso
-         como um app: cada linha é um dado só, sem rótulo separado, com
-         ícone identificando o campo. Serviços múltiplos viram um resumo
-         ("N serviços" + primeiro + "+X adicionais") em vez da lista
-         inteira — ver Visualizar/Editar para a lista completa. */
-      const svc = servicesSummary(a);
-      const timeRange = isLongAppointment(a)
-        ? 'Horário a confirmar'
-        : `${a.start_time || '—'} às ${a.end_time || '—'}`;
-      const vehicle = vehicleSummary(a);
-      const card = `
-        <div class="appt-card">
-          <div class="appt-card-top">
-            <span class="appt-card-code">${escapeHtml(a.appointment_code)}</span>
-            <span class="badge badge-${a.status} appt-card-badge">${STATUS_EMOJI[a.status] || ''} ${STATUS_LABELS[a.status] || a.status}</span>
-          </div>
-          <div class="appt-card-row appt-card-name">👤 ${escapeHtml(a.customer_name)}</div>
-          <div class="appt-card-row muted">📞 ${escapeHtml(a.customer_phone)}</div>
-          ${vehicle ? `<div class="appt-card-row muted">🚗 ${escapeHtml(vehicle)}</div>` : ''}
-          <div class="appt-card-row">📅 ${toDateBR(a.appointment_date)} &nbsp;🕐 ${escapeHtml(timeRange)}</div>
-          ${svc.count > 1 ? `<div class="appt-card-row">🧽 ${svc.count} serviços</div>` : ''}
-          <div class="appt-card-row appt-card-service-line">
-            <span class="appt-card-service-name">${svc.count === 1 ? '🧽 ' : ''}${escapeHtml(svc.first)}</span>
-            ${svc.extra > 0 ? `<span class="appt-card-extra">+${svc.extra} adicional${svc.extra === 1 ? '' : 'ais'}</span>` : ''}
-          </div>
-          <div class="appt-card-row appt-card-price">💰 ${money(a.total_price)}${a.price_is_estimate ? ' <span class="muted">(est.)</span>' : ''}</div>
-          <div class="appt-card-actions">${actionsHtml}</div>
-        </div>`;
-
-      return { row, card };
+    const rows = [];
+    const cards = [];
+    data.forEach((a) => {
+      const actionsHtml = appointmentActionsHtml(a);
+      rows.push(renderAppointmentRowDesktop(a, actionsHtml));
+      cards.push(renderAppointmentCardMobile(a, actionsHtml));
     });
-
-    const rows = rowsAndCards.map((x) => x.row).join('');
-    const cards = rowsAndCards.map((x) => x.card).join('');
 
     el.innerHTML = `
       <div class="admin-header">
@@ -1135,10 +1162,10 @@
         <div class="panel appt-table-panel">
           <div class="table-wrap"><table>
             <thead><tr><th>Código</th><th>Cliente</th><th>Data</th><th>Serviço</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
-            <tbody>${rows}</tbody>
+            <tbody>${rows.join('')}</tbody>
           </table></div>
         </div>
-        <div class="appt-cards">${cards}</div>
+        <div class="appt-cards">${cards.join('')}</div>
       ` : '<div class="panel"><div class="empty-state">Nenhum agendamento neste filtro.</div></div>'}
     `;
 

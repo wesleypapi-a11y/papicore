@@ -1762,67 +1762,118 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 }
 
 /*
- * Card mobile de Agendamentos — NÃO é a tabela reaproveitada (diferente do
- * .table-wrap acima, usado por Financeiro/Serviços): densidade de app
- * (WhatsApp/Nubank/iFood), uma linha por dado, sem rótulo separado, sem
- * lista de serviços expandida. renderAppointments() já gera as duas
- * marcações (tabela + .appt-cards) a partir dos mesmos dados; aqui só
- * decide qual delas fica visível em cada largura.
+ * Card mobile de Agendamentos — componente PRÓPRIO, não derivado da tabela
+ * nem do card genérico do Financeiro/Serviços (.table-wrap): densidade de
+ * lista de pedidos (iFood/Mercado Pago/WhatsApp), poucas linhas, sem
+ * rótulo, sem emoji grande — só o texto essencial pra reconhecer o
+ * agendamento de relance. renderAppointmentRowDesktop()/
+ * renderAppointmentCardMobile() (admin.js) geram as duas marcações a
+ * partir do mesmo objeto e dos mesmos botões de ação; aqui só decide qual
+ * fica visível em cada largura. Meta de altura: ~230-300px por card.
  */
 .appt-cards { display: none; }
 @media (max-width: 768px) {
   .appt-table-panel { display: none; }
-  .appt-cards { display: grid; gap: 10px; }
+  .appt-cards { display: grid; gap: 8px; }
 
   .appt-card {
     background: var(--bg-soft);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 14px 16px;
+    padding: 14px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
   }
-  .appt-card-top {
+  .appt-card-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 6px 10px;
-    margin-bottom: 6px;
+    gap: 8px;
+    min-width: 0;
   }
-  .appt-card-code { font-size: 17px; font-weight: 700; color: var(--text); }
-  .appt-card-badge { font-size: 11px; white-space: normal; }
-  .appt-card-row {
+  .appt-card-code {
     font-size: 14px;
+    font-weight: 700;
     color: var(--text);
-    line-height: 1.35;
-    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .appt-card-status {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-soft);
+    white-space: nowrap;
+  }
+  .appt-card-status.status-pending { color: var(--amber); }
+  .appt-card-status.status-confirmed { color: var(--green); }
+  .appt-card-status.status-completed { color: var(--blue); }
+  .appt-card-status.status-rejected { color: var(--red); }
+  .appt-card-status.status-cancelled { color: var(--text-muted); }
+  .appt-card-name {
+    margin-top: 6px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
     overflow-wrap: anywhere;
   }
-  .appt-card-name { font-size: 15px; font-weight: 600; }
-  .appt-card-price { font-weight: 700; }
-  .appt-card-service-line { display: flex; align-items: baseline; gap: 6px; }
+  .appt-card-meta {
+    margin-top: 2px;
+    font-size: 13px;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+  .appt-card-services { margin-top: 8px; }
+  .appt-card-services-count { font-size: 12px; color: var(--text-muted); }
+  .appt-card-service-line { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; }
   .appt-card-service-name {
     flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-muted);
     font-size: 13px;
+    color: var(--text);
   }
   .appt-card-extra { flex-shrink: 0; color: var(--accent); font-weight: 600; font-size: 12px; }
+  .appt-card-price { margin-top: 8px; font-size: 16px; font-weight: 700; color: var(--text); }
+  .appt-card-estimate { font-size: 11px; font-weight: 500; color: var(--text-muted); }
 
-  /* Ações: só ícone, em fileira única, mesmo tamanho — nada de texto nem
-     de botão gigante aqui (diferente do card do Financeiro/Serviços). */
+  /* Ações: só ícone, fileira única, mesmo tamanho, alvo de toque ~40px —
+     nada de texto nem botão largo aqui (diferente do Financeiro/Serviços). */
   .appt-card-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px dashed var(--border);
   }
-  .appt-card-actions .action-btn { width: 34px; height: 34px; flex-shrink: 0; }
-  .appt-card-actions .action-btn svg { width: 17px; height: 17px; }
+  .appt-card-actions .action-btn { width: 40px; height: 40px; flex-shrink: 0; }
+  .appt-card-actions .action-btn svg { width: 18px; height: 18px; }
+
+  /* Filtros de status e botão "+ Novo agendamento": só na aba Agendamentos,
+     mesmo abaixo de 768px (o bloco genérico do Admin só entra em ação a
+     700px — aqui garantimos que não sobra pra fora da tela mesmo entre
+     701-768px). Chips com rolagem horizontal PRÓPRIA (nunca a página). */
+  #view-appointments .admin-header { flex-direction: column; align-items: stretch; }
+  #view-appointments .admin-header > .btn {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    white-space: normal;
+  }
+  #view-appointments .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
+  }
+  #view-appointments .tabs .tab { flex-shrink: 0; }
 }
 
 /* Modais viram "bottom sheet" em telas pequenas */
