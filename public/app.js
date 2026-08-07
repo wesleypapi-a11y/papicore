@@ -143,6 +143,9 @@
       if (!raw) return;
       const saved = JSON.parse(raw);
       Object.assign(state, saved);
+      if (state.vehicle && state.vehicle.category) {
+        state.vehicle.category = normalizeCategory(state.vehicle.category);
+      }
     } catch (e) {
       /* ignore */
     }
@@ -345,12 +348,10 @@
       if (ph.length < 10) { alert('Informe um telefone válido com DDD.'); return false; }
     }
     if (n === 2) {
-      if (state.vehicle.brand.trim().length < 2) { alert('Informe a marca do veículo.'); return false; }
       if (state.vehicle.model.trim().length < 2) { alert('Informe o modelo do veículo.'); return false; }
-      if (!/^\d{4}$/.test(state.vehicle.year.trim())) { alert('Informe o ano do veículo.'); return false; }
       if (!validPlate(state.vehicle.plate)) { alert('Informe uma placa válida. Use ABC-1234 ou o padrão Mercosul.'); return false; }
       if (state.vehicle.color.trim().length < 2) { alert('Informe a cor do veículo.'); return false; }
-      if (!state.vehicle.category) { alert('Selecione a categoria do veículo.'); return false; }
+      if (!state.vehicle.category) { alert('Selecione o tipo do veículo.'); return false; }
     }
     if (n === 3) {
       if (!state.services.length) { alert('Selecione ao menos um serviço.'); return false; }
@@ -448,11 +449,27 @@
   /* ---------- step 3: vehicle category ---------- */
 
   const CATEGORY_META = {
-    hatch: { label: 'Hatch' },
-    sedan: { label: 'Sedan' },
-    suv: { label: 'SUV' },
-    pickup: { label: 'Picape' }
+    passeio: { label: 'Passeio' },
+    utilitario: { label: 'Utilitário' }
   };
+
+  function categoryPriceKey(cat) {
+    if (cat === 'utilitario' || cat === 'pickup') return 'price_pickup';
+    if (cat === 'sedan') return 'price_sedan';
+    if (cat === 'suv') return 'price_suv';
+    return 'price_hatch';
+  }
+
+  function isUtilityCategory(cat) {
+    return cat === 'utilitario' || cat === 'pickup';
+  }
+
+  /* Normaliza categorias antigas (hatch/sedan/suv/pickup) de sessões
+     anteriores para as categorias atuais (passeio/utilitario). */
+  function normalizeCategory(cat) {
+    if (cat === 'utilitario' || cat === 'pickup') return 'utilitario';
+    return 'passeio';
+  }
 
   function renderCategoryOptions() {
     const grid = $('categoryGrid');
@@ -658,7 +675,7 @@
   function servicePrice(service) {
     if (service.price_type === 'fixed') return { value: service.fixed_price, estimate: false };
     if (service.price_type === 'starting') return { value: service.starting_price, estimate: true };
-    return { value: service['price_' + state.vehicle.category] || 0, estimate: false };
+    return { value: service[categoryPriceKey(state.vehicle.category)] || 0, estimate: false };
   }
 
   function liveServicePrice(s) {
@@ -678,7 +695,7 @@
     state.services.forEach((s) => {
       const p = liveServicePrice(s);
       value += p.value;
-      duration += Number(s.duration_minutes || 0) + (state.vehicle.category === 'pickup' ? Number(s.pickup_extra_minutes || 0) : 0);
+      duration += Number(s.duration_minutes || 0) + (isUtilityCategory(state.vehicle.category) ? Number(s.pickup_extra_minutes || 0) : 0);
       if (p.estimate) estimate = true;
     });
     return { value, duration, estimate };
@@ -688,7 +705,7 @@
     const el = $('catalog');
     const subtitle = $('catalogSubtitle');
     el.innerHTML = '<div class="loading">Carregando serviços...</div>';
-    subtitle.textContent = state.modality.name + ' · ' + state.vehicle.category.toUpperCase();
+    subtitle.textContent = state.modality.name + ' · ' + (CATEGORY_META[state.vehicle.category] ? CATEGORY_META[state.vehicle.category].label : state.vehicle.category.toUpperCase());
     try {
       const data = await api('/api/catalog?modality_id=' + state.modality.id);
       catalogCache[state.modality.id] = data.catalog.map((c) => c.services).flat();
@@ -716,7 +733,7 @@
             ${s.description ? `<span class="service-desc">${s.description}</span>` : ''}
             ${s.package_items && s.package_items.length ? `<span class="service-items">${s.package_items.slice(0, 3).join(' · ')}${s.package_items.length > 3 ? ' · +' + (s.package_items.length - 3) + ' itens' : ''}</span>` : ''}
             <span class="service-foot">
-              <span class="service-duration">${fmtDur(s.duration_minutes)}${s.pickup_extra_minutes ? ' · picape +' + fmtDur(s.pickup_extra_minutes) : ''}</span>
+              <span class="service-duration">${fmtDur(s.duration_minutes)}${s.pickup_extra_minutes ? ' · utilitário +' + fmtDur(s.pickup_extra_minutes) : ''}</span>
               <span class="service-price">${p.estimate ? 'a partir de ' : ''}${money(p.value)}</span>
             </span>
           `;
@@ -818,7 +835,7 @@
         : null;
       saveState();
       grid.innerHTML = '';
-      const pickupExtra = data.vehicle_category === 'pickup' ? ' (inclui acréscimo para picape)' : '';
+      const pickupExtra = isUtilityCategory(data.vehicle_category) ? ' (inclui acréscimo para utilitário)' : '';
       const deliveryWord = state.modality.slug === 'in-store' ? 'atendimento' : 'entrega';
       longNote.innerHTML = `
         <p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${pickupExtra}</p>
@@ -827,7 +844,7 @@
       return;
     }
     const availableSlots = data.slots.filter((s) => s.status === 'available');
-    const durNote = data.duration_minutes ? `<p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${data.vehicle_category === 'pickup' ? ' (inclui acréscimo para picape)' : ''}</p>` : '';
+    const durNote = data.duration_minutes ? `<p class="slot-duration-note">Duração estimada: <strong>${fmtDur(data.duration_minutes)}</strong>${isUtilityCategory(data.vehicle_category) ? ' (inclui acréscimo para utilitário)' : ''}</p>` : '';
     if (availableSlots.length === 0) {
       grid.innerHTML = `${durNote}<div class="error-box">Este dia acabou de ficar sem horários disponíveis. Selecione outra data.</div>`;
       return;
@@ -984,7 +1001,7 @@
       <h3 class="review-section-title">Resumo do agendamento</h3>
       <div class="review-line"><span>Forma de atendimento</span><strong>${state.modality.name}</strong></div>
       ${unitLine}
-      <div class="review-line"><span>Veículo</span><strong>${state.vehicle.brand} ${state.vehicle.model}${state.vehicle.year ? ' · ' + state.vehicle.year : ''} · ${CATEGORY_META[state.vehicle.category].label}</strong></div>
+      <div class="review-line"><span>Veículo</span><strong>${state.vehicle.model} · ${CATEGORY_META[state.vehicle.category].label}</strong></div>
       <div class="review-line"><span>Data</span><strong>${formatDateShort(state.date)}</strong></div>
       <h3 class="review-section-title">Serviços selecionados</h3>
       ${servicesLines}
@@ -1479,9 +1496,9 @@
       customer_phone: state.customer.phone,
       customer_email: state.customer.email.trim() || null,
       customer_cpf: state.customer.cpf || null,
-      vehicle_brand: state.vehicle.brand.trim(),
+      vehicle_brand: state.vehicle.brand && state.vehicle.brand.trim() ? state.vehicle.brand.trim() : null,
       vehicle_model: state.vehicle.model.trim(),
-      vehicle_year: state.vehicle.year.trim() || null,
+      vehicle_year: state.vehicle.year && state.vehicle.year.trim() ? state.vehicle.year.trim() : null,
       vehicle_plate: state.vehicle.plate || null,
       vehicle_color: state.vehicle.color.trim() || null,
       vehicle_category: state.vehicle.category,
@@ -1653,18 +1670,8 @@
     const phoneInput = $('customerPhone');
     phoneInput.addEventListener('input', () => { maskPhone(phoneInput); state.customer.phone = phoneInput.value; saveState(); });
 
-    const brandInput = $('vehicleBrand');
-    brandInput.addEventListener('change', () => { state.vehicle.brand = brandInput.value; saveState(); });
-
     const modelInput = $('vehicleModel');
     modelInput.addEventListener('input', () => { state.vehicle.model = modelInput.value; saveState(); });
-
-    const yearInput = $('vehicleYear');
-    yearInput.addEventListener('input', () => {
-      yearInput.value = yearInput.value.replace(/\D/g, '').slice(0, 4);
-      state.vehicle.year = yearInput.value;
-      saveState();
-    });
 
     const plateInput = $('vehiclePlate');
     plateInput.addEventListener('input', () => { maskPlate(plateInput); state.vehicle.plate = plateInput.value; saveState(); });
@@ -1679,17 +1686,13 @@
   function restoreFields() {
     const nameInput = $('customerName');
     const phoneInput = $('customerPhone');
-    const brandInput = $('vehicleBrand');
     const modelInput = $('vehicleModel');
-    const yearInput = $('vehicleYear');
     const plateInput = $('vehiclePlate');
     const colorInput = $('vehicleColor');
     const notesInput = $('customerNotes');
     nameInput.value = state.customer.name;
     phoneInput.value = state.customer.phone;
-    brandInput.value = state.vehicle.brand;
     modelInput.value = state.vehicle.model;
-    yearInput.value = state.vehicle.year;
     plateInput.value = state.vehicle.plate;
     colorInput.value = state.vehicle.color;
     notesInput.value = state.customer_notes;

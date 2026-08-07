@@ -18,6 +18,7 @@ const {
   STATUSES,
   PAYMENT_METHODS,
   VEHICLE_CATEGORIES,
+  vehicleCategoryPriceField,
   todayStr,
   isValidDateStr,
   isValidTime,
@@ -40,7 +41,7 @@ function getSettings() {
 function calcServicePrice(service, category) {
   if (service.price_type === 'fixed') return Number(service.fixed_price || 0);
   if (service.price_type === 'starting') return Number(service.starting_price || 0);
-  return Number(service[`price_${category}`] || 0);
+  return Number(service[vehicleCategoryPriceField(category)] || 0);
 }
 
 function priceIsEstimate(service) {
@@ -175,14 +176,8 @@ function validateAppointmentInput(body, opts = {}) {
     throw new AppError(400, 'CPF informado é inválido.');
   }
 
-  if (!vehicle_brand || String(vehicle_brand).trim().length < 2) {
-    throw new AppError(400, 'Informe a marca do veículo.');
-  }
   if (!vehicle_model || String(vehicle_model).trim().length < 2) {
     throw new AppError(400, 'Informe o modelo do veículo.');
-  }
-  if (!vehicle_year || !/^\d{4}$/.test(String(vehicle_year).trim())) {
-    throw new AppError(400, 'Informe o ano do veículo.');
   }
   if (!vehicle_plate || !isValidPlate(vehicle_plate)) {
     throw new AppError(400, 'Informe uma placa válida. Use o formato ABC-1234 ou Mercosul.');
@@ -192,7 +187,7 @@ function validateAppointmentInput(body, opts = {}) {
   }
   const category = String(vehicle_category || '').toLowerCase();
   if (!VEHICLE_CATEGORIES.includes(category)) {
-    throw new AppError(400, 'Categoria de veículo inválida (use hatch, sedan, suv ou pickup).');
+    throw new AppError(400, 'Categoria de veículo inválida (use passeio ou utilitario).');
   }
 
   if (!isValidDateStr(appointment_date)) {
@@ -325,9 +320,9 @@ function validateAppointmentInput(body, opts = {}) {
     customer_phone: normalizePhone(customer_phone),
     customer_email: customer_email ? String(customer_email).trim().toLowerCase() : null,
     customer_cpf: customer_cpf ? String(customer_cpf).replace(/\D/g, '') : null,
-    vehicle_brand: String(vehicle_brand).trim(),
+    vehicle_brand: vehicle_brand && String(vehicle_brand).trim() ? String(vehicle_brand).trim() : null,
     vehicle_model: String(vehicle_model).trim(),
-    vehicle_year: vehicle_year ? String(vehicle_year).trim() : null,
+    vehicle_year: vehicle_year && String(vehicle_year).trim() ? String(vehicle_year).trim() : null,
     vehicle_plate: vehicle_plate ? String(vehicle_plate).toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
     vehicle_color: vehicle_color ? String(vehicle_color).trim() : null,
     vehicle_category: category,

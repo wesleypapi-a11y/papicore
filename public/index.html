@@ -102,64 +102,11 @@
           <h2 class="step-title">Dados do veículo</h2>
           <p class="step-subtitle">Conte pra gente qual é o seu veículo.</p>
         </header>
-        <div class="field-row">
-          <div class="field">
-            <label for="vehicleBrand">Marca</label>
-            <select id="vehicleBrand">
-              <option value="" disabled selected>Selecione a marca</option>
-              <optgroup label="Marcas mais comuns">
-                <option value="Volkswagen">Volkswagen</option>
-                <option value="Chevrolet">Chevrolet</option>
-                <option value="Fiat">Fiat</option>
-                <option value="Hyundai">Hyundai</option>
-                <option value="Toyota">Toyota</option>
-                <option value="Jeep">Jeep</option>
-                <option value="Renault">Renault</option>
-                <option value="Honda">Honda</option>
-                <option value="Nissan">Nissan</option>
-                <option value="Ford">Ford</option>
-                <option value="Peugeot">Peugeot</option>
-                <option value="Citroën">Citroën</option>
-              </optgroup>
-              <optgroup label="Outras marcas">
-                <option value="Audi">Audi</option>
-                <option value="BMW">BMW</option>
-                <option value="BYD">BYD</option>
-                <option value="Caoa Chery">Caoa Chery</option>
-                <option value="Chrysler">Chrysler</option>
-                <option value="Dodge">Dodge</option>
-                <option value="Ferrari">Ferrari</option>
-                <option value="GWM">GWM</option>
-                <option value="Jaguar">Jaguar</option>
-                <option value="Kia">Kia</option>
-                <option value="Lamborghini">Lamborghini</option>
-                <option value="Land Rover">Land Rover</option>
-                <option value="Lexus">Lexus</option>
-                <option value="Maserati">Maserati</option>
-                <option value="Mercedes-Benz">Mercedes-Benz</option>
-                <option value="Mini">Mini</option>
-                <option value="Mitsubishi">Mitsubishi</option>
-                <option value="Porsche">Porsche</option>
-                <option value="RAM">RAM</option>
-                <option value="Rolls-Royce">Rolls-Royce</option>
-                <option value="Subaru">Subaru</option>
-                <option value="Suzuki">Suzuki</option>
-                <option value="Troller">Troller</option>
-                <option value="Volvo">Volvo</option>
-              </optgroup>
-              <option value="Outra">Outra</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="vehicleModel">Modelo</label>
-            <input type="text" id="vehicleModel" placeholder="Ex.: Polo" />
-          </div>
+        <div class="field">
+          <label for="vehicleModel">Modelo</label>
+          <input type="text" id="vehicleModel" placeholder="Ex.: Polo" />
         </div>
         <div class="field-row">
-          <div class="field">
-            <label for="vehicleYear">Ano</label>
-            <input type="text" id="vehicleYear" inputmode="numeric" maxlength="4" placeholder="2023" />
-          </div>
           <div class="field">
             <label for="vehiclePlate">Placa</label>
             <input type="text" id="vehiclePlate" maxlength="8" placeholder="ABC-1D23" />
@@ -170,7 +117,7 @@
           </div>
         </div>
         <div class="field">
-          <label>Categoria do veículo</label>
+          <label>Tipo do veículo</label>
           <div class="category-grid" id="categoryGrid"></div>
         </div>
       </section>

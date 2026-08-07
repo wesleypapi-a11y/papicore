@@ -1,4 +1,4 @@
-const { minutesOf, formatMinutes, toDateStr } = require('../utils/helpers');
+const { minutesOf, formatMinutes, toDateStr, isUtilityVehicle } = require('../utils/helpers');
 
 /* Produtivo diário = horário de atendimento menos o intervalo de almoço.
    Horário padrão 08:00-17:00 com almoço 12:00-13:00 => 8h úteis/dia. */
@@ -24,10 +24,10 @@ function dailyProductiveMinutes(opening, closing, lunchStart, lunchEnd) {
   return Math.max(0, total - lunch);
 }
 
-/* Duração efetiva do serviço considerando o acréscimo para picape. */
+/* Duração efetiva do serviço considerando o acréscimo para utilitário. */
 function serviceDuration(service, category) {
   const base = Number(service && service.duration_minutes) || 60;
-  const extra = category === 'pickup' ? (Number(service && service.pickup_extra_minutes) || 0) : 0;
+  const extra = isUtilityVehicle(category) ? (Number(service && service.pickup_extra_minutes) || 0) : 0;
   return base + extra;
 }
 

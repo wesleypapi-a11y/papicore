@@ -13,6 +13,7 @@ const legalDocumentService = require('../services/legalDocumentService');
 const {
   AppError,
   VEHICLE_CATEGORIES,
+  PUBLIC_VEHICLE_CATEGORIES,
   todayStr,
   isValidDateStr,
   parseWorkingDays,
@@ -153,7 +154,7 @@ function getCatalog(req, res) {
       }))
   }));
 
-  return res.json({ vehicle_categories: VEHICLE_CATEGORIES, catalog });
+  return res.json({ vehicle_categories: PUBLIC_VEHICLE_CATEGORIES, catalog });
 }
 
 function checkAvailability(req, res) {
@@ -168,7 +169,7 @@ function checkAvailability(req, res) {
   if (!isValidDateStr(date)) throw new AppError(400, 'Data inválida. Use o formato AAAA-MM-DD.');
   if (date < todayStr()) throw new AppError(400, 'Não é possível consultar uma data no passado.');
   if (!VEHICLE_CATEGORIES.includes(category)) {
-    throw new AppError(400, 'Categoria de veículo inválida (use hatch, sedan, suv ou pickup).');
+    throw new AppError(400, 'Categoria de veículo inválida (use passeio ou utilitario).');
   }
 
   const modality = getModality(modalityId);
@@ -212,7 +213,7 @@ function getCalendarAvailability(req, res) {
   if (!Number.isInteger(year) || year < 2020 || year > 2100) throw new AppError(400, 'Ano inválido.');
   if (!Number.isInteger(month) || month < 1 || month > 12) throw new AppError(400, 'Mês inválido.');
   if (!VEHICLE_CATEGORIES.includes(category)) {
-    throw new AppError(400, 'Categoria de veículo inválida (use hatch, sedan, suv ou pickup).');
+    throw new AppError(400, 'Categoria de veículo inválida (use passeio ou utilitario).');
   }
 
   const modality = getModality(modalityId);

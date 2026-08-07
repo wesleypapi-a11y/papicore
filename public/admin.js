@@ -23,7 +23,7 @@
   const WEEKDAY_KEYS = [0, 1, 2, 3, 4, 5, 6];
   const MONTH_LABELS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const AGENDA_DOT_STATUSES = ['pending', 'confirmed', 'completed'];
-  const CATEGORY_LABELS = { hatch: 'Hatch', sedan: 'Sedan', suv: 'SUV', pickup: 'Picape' };
+  const CATEGORY_LABELS = { passeio: 'Passeio', utilitario: 'Utilitário', hatch: 'Hatch', sedan: 'Sedan', suv: 'SUV', pickup: 'Picape' };
   const PAYMENT_LABELS = {
     local: 'Pagamento no local',
     card: 'Crédito/débito no local',
