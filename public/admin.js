@@ -2906,8 +2906,8 @@
       return;
     }
 
-    const labels = { connected: 'Conectado', connecting: 'Aguardando escaneamento', disconnected: 'Desconectado', error: 'Erro' };
-    const classes = { connected: 'confirmed', connecting: 'pending', disconnected: 'cancelled', error: 'rejected' };
+    const labels = { connected: 'Conectado', connecting: 'Aguardando escaneamento', disconnected: 'Desconectado', error: 'Erro', missing_remote: 'Instância ausente na Evolution' };
+    const classes = { connected: 'confirmed', connecting: 'pending', disconnected: 'cancelled', error: 'rejected', missing_remote: 'rejected' };
     const statusBadge = `<span class="badge badge-${classes[conn.status] || 'pending'}">${labels[conn.status] || conn.status}</span>`;
 
     const providerBadge = conn.provider === 'evolution'
@@ -2949,7 +2949,7 @@
         <div class="panel">
           <h3 class="review-section-title">Escaneie o QR Code para conectar</h3>
           <p class="sub" style="margin-top:0;">Abra o WhatsApp no seu celular, toque em <strong>Menu (⋮) &gt; Aparelhos conectados &gt; Conectar um aparelho</strong> e escaneie o código abaixo. Ele expira em poucos minutos.</p>
-          ${conn.qr ? `<div class="wa-qr-wrap"><img class="wa-qr" src="${escapeHtml(conn.qr)}" alt="QR Code do WhatsApp" /></div>` : '<p class="sub">Gerando QR Code… aguarde e recarregue a página.</p>'}
+          ${conn.qr ? `<div class="wa-qr-wrap"><img class="wa-qr" src="${escapeHtml(conn.qr)}" alt="QR Code do WhatsApp" /></div>` : conn.qr_expired ? '<p class="sub">O QR Code anterior <strong>expirou</strong>. Gere um novo QR para continuar.</p>' : '<p class="sub">Gerando QR Code… aguarde e recarregue a página.</p>'}
           ${conn.mode === 'simulation' ? '<p class="sub">Este é um <strong>QR de simulação</strong> (MODO SIMULAÇÃO) — nenhuma conta real é usada enquanto a plataforma não liberar a Evolution.</p>' : ''}
           <div class="actions">
             <button type="button" class="btn btn-ghost waReconnect">Gerar novo QR</button>

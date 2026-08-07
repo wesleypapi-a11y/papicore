@@ -55,6 +55,29 @@ const evolutionProvider = require('./providers/evolutionProvider');
 const PROVIDER_MOCK = 'mock';
 const PROVIDER_EVOLUTION = 'evolution';
 
+/* Instâncias reservadas da PapiCore: nunca são criadas, alteradas ou excluídas
+   pelo fluxo de tenant. A instância central de suporte vive só na Evolution e
+   não pode ser vinculada a nenhuma empresa. */
+const RESERVED_INSTANCE_NAMES = new Set(['papicore_support', 'papicore-central', 'papicore-support']);
+
+function isReservedInstanceName(name) {
+  return RESERVED_INSTANCE_NAMES.has(String(name || '').trim().toLowerCase());
+}
+
+/* QR Code perde validade após este tempo — o usuário precisa de um novo.
+   Sobrescrevível por WHATSAPP_QR_TTL_MS. */
+function qrTtlMs() {
+  const n = Number(process.env.WHATSAPP_QR_TTL_MS);
+  return Number.isFinite(n) && n > 0 ? n : 120000;
+}
+
+function qrExpired(timestamp) {
+  if (!timestamp) return false;
+  const t = new Date(String(timestamp).replace(' ', 'T')).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t > qrTtlMs();
+}
+
 /* ---------- Eventos ---------- */
 
 const EVENTS = {
@@ -135,6 +158,10 @@ const LOG_ACTIONS = {
   MESSAGE_FAILED: 'WHATSAPP_MESSAGE_FAILED',
   TEMPLATE_UPDATED: 'WHATSAPP_TEMPLATE_UPDATED',
   WEBHOOK_RECEIVED: 'WHATSAPP_WEBHOOK_RECEIVED',
+  WEBHOOK_CONFIGURED: 'WHATSAPP_WEBHOOK_CONFIGURED',
+  INSTANCE_DELETED: 'WHATSAPP_INSTANCE_DELETED',
+  INSTANCE_ASSOCIATED: 'WHATSAPP_INSTANCE_ASSOCIATED',
+  RECONCILED: 'WHATSAPP_RECONCILED',
   ERROR: 'WHATSAPP_ERROR'
 };
 
@@ -436,7 +463,6 @@ function enqueueEvent(eventKey, appointment, opts = {}) {
          scheduled_at = datetime('now', 'localtime'), sent_at = NULL, processed_at = NULL
        WHERE id = ?`
     ).run(recipient, recipientKind, JSON.stringify(values), text, existing.id);
-    scheduleProcessing(db);
     return { id: existing.id, skipped: false, reenqueued: true };
   }
 
@@ -448,7 +474,6 @@ function enqueueEvent(eventKey, appointment, opts = {}) {
      VALUES (?, ?, ?, ?, ?, ?, 'PENDING')`
   ).run(canonical, recipient, recipientKind, JSON.stringify(values), text, key);
   logWhatsapp(LOG_ACTIONS.MESSAGE_QUEUED, null, { event_key: canonical, outbox_id: info.lastInsertRowid });
-  scheduleProcessing(db);
   return { id: Number(info.lastInsertRowid), skipped: false };
 }
 
@@ -489,7 +514,9 @@ function insertHistory(db, row, status, errorText) {
  * Cada linha só é processada uma vez por rodada (reivindicação atômica).
  */
 async function processOutbox({ db = getDb(), limit = 50 } = {}) {
-  const rows = db.prepare('SELECT * FROM whatsapp_outbox WHERE status = ? ORDER BY id ASC LIMIT ?').all('PENDING', limit);
+  const rows = db.prepare(
+    "SELECT * FROM whatsapp_outbox WHERE status = ? AND scheduled_at <= datetime('now', 'localtime') ORDER BY id ASC LIMIT ?"
+  ).all('PENDING', limit);
   const stats = { processed: 0, sent: 0, simulated: 0, failed: 0 };
   for (const row of rows) {
     const claimed = db.prepare(
@@ -521,13 +548,19 @@ async function processOne(db, row) {
       outcome = 'FAILED';
       errorText = 'WhatsApp não configurado (Evolution API sem URL/chave).';
     } else {
-      const result = await evolutionProvider.sendText(instanceName, row.recipient, row.message_text, evolutionProvider.getSettings());
-      if (result.error) {
+      const registered = getEvolutionInstanceByInstanceName(instanceName);
+      if (!registered || registered.status !== 'connected') {
         outcome = 'FAILED';
-        errorText = result.message || `Falha de envio (HTTP ${result.status}).`;
+        errorText = 'A instância WhatsApp do tenant não está conectada.';
       } else {
-        outcome = 'SENT';
-        logWhatsapp(LOG_ACTIONS.MESSAGE_SENT, null, { outbox_id: row.id, event_key: row.event_key });
+        const result = await evolutionProvider.sendText(instanceName, row.recipient, row.message_text, evolutionProvider.getSettings());
+        if (result.error || result.skipped) {
+          outcome = 'FAILED';
+          errorText = result.message || result.reason || `Falha de envio (HTTP ${result.status}).`;
+        } else {
+          outcome = 'SENT';
+          logWhatsapp(LOG_ACTIONS.MESSAGE_SENT, registered.tenant_id, { outbox_id: row.id, event_key: row.event_key, provider_message_id: result.id || '' });
+        }
       }
     }
   }
@@ -543,9 +576,10 @@ function finalizeOutboxRow(db, row, outcome, errorText) {
   if (outcome === 'FAILED') {
     if (attemptsMade < max) {
       /* Reagenda a tentativa seguinte sem liberar a operação de negócio. */
+      const delaySeconds = Math.min(300, Math.pow(2, Math.max(0, attemptsMade - 1)) * 5);
       db.prepare(
-        "UPDATE whatsapp_outbox SET status = 'PENDING', last_error = ?, scheduled_at = datetime('now', 'localtime') WHERE id = ?"
-      ).run(errorText || 'Falha de envio.', row.id);
+        "UPDATE whatsapp_outbox SET status = 'PENDING', last_error = ?, scheduled_at = datetime('now', 'localtime', '+' || ? || ' seconds') WHERE id = ?"
+      ).run(errorText || 'Falha de envio.', delaySeconds, row.id);
       logWhatsapp(LOG_ACTIONS.MESSAGE_FAILED, null, { outbox_id: row.id, event_key: row.event_key, attempt: attemptsMade, retry: true, error: (errorText || '').slice(0, 200) });
       return 'FAILED';
     }
@@ -631,7 +665,13 @@ function connectionState(tenant) {
     status,
     instance: safeInstance(instance)
   };
-  if (status === 'connecting' && instance && instance.qr_base64) out.qr = instance.qr_base64;
+  if (status === 'connecting' && instance && instance.qr_base64) {
+    if (qrExpired(instance.last_qr_generated)) {
+      out.qr_expired = true;
+    } else {
+      out.qr = instance.qr_base64;
+    }
+  }
   if (instance) {
     out.connected_at = instance.connected_at || '';
     out.last_connection = instance.last_connection || '';
@@ -662,6 +702,10 @@ async function connect(tenant, { force = false } = {}) {
   const tenantId = tenant.id;
   const instanceName = instanceNameFromDatabaseName(tenant.database_name);
 
+  if (isReservedInstanceName(instanceName)) {
+    return { error: true, message: 'O nome desta instância é reservado para a PapiCore e não pode ser usado por uma empresa.' };
+  }
+
   if (providerName === PROVIDER_MOCK) {
     const current = getEvolutionInstance(tenantId);
     if (force && current) deleteEvolutionInstance(tenantId);
@@ -691,7 +735,9 @@ async function connect(tenant, { force = false } = {}) {
     deleteEvolutionInstance(tenantId);
   }
 
-  if (!current || force) {
+  /* Instância que sumiu da Evolution (reconciliação) ou nunca existiu: recria. */
+  const needsCreate = !current || force || current.status === 'missing_remote';
+  if (needsCreate) {
     const created = await evolutionProvider.createInstance(instanceName, settings);
     if (created.error) {
       logWhatsapp(LOG_ACTIONS.ERROR, tenantId, `Falha ao criar instância: ${created.message}`);
@@ -709,6 +755,21 @@ async function connect(tenant, { force = false } = {}) {
     last_error: null
   });
 
+  const webhookToken = ensureWebhookToken(tenantId);
+  const publicUrl = String(process.env.PAPICORE_PUBLIC_URL || process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  if (!/^https:\/\//i.test(publicUrl)) {
+    upsertEvolutionInstance(tenantId, { status: 'error', last_error: 'PAPICORE_PUBLIC_URL HTTPS não configurada.' });
+    return { error: true, message: 'Configure PAPICORE_PUBLIC_URL com a URL HTTPS pública antes de conectar.' };
+  }
+  const webhook = await evolutionProvider.setWebhook(instanceName, {
+    url: `${publicUrl}/api/webhooks/whatsapp`,
+    headers: { 'x-webhook-token': webhookToken }
+  }, settings);
+  if (webhook.error) {
+    upsertEvolutionInstance(tenantId, { status: 'error', last_error: webhook.message });
+    return { error: true, message: `Instância criada, mas o webhook não pôde ser configurado: ${webhook.message}` };
+  }
+
   const qr = await evolutionProvider.generateQRCode(instanceName, settings);
   if (qr.error) {
     upsertEvolutionInstance(tenantId, { status: 'error', last_error: qr.message });
@@ -722,7 +783,6 @@ async function connect(tenant, { force = false } = {}) {
     last_error: null,
     last_qr_generated: dateTimeNow()
   });
-  ensureWebhookToken(tenantId);
   logWhatsapp(LOG_ACTIONS.QR_GENERATED, tenantId, { instance_name: instanceName });
   return { ok: true, status: 'connecting', qr: qr.qr };
 }
@@ -735,6 +795,9 @@ async function disconnect(tenant) {
   const providerName = activeProviderName();
   const tenantId = tenant.id;
   const current = getEvolutionInstance(tenantId);
+  if (current && isReservedInstanceName(current.instance_name)) {
+    return { error: true, message: 'Esta instância é reservada para a PapiCore e não pode ser desconectada.' };
+  }
   if (providerName === PROVIDER_EVOLUTION && current && evolutionConfigured()) {
     try { await evolutionProvider.disconnect(current.instance_name, evolutionProvider.getSettings()); } catch { /* ignora */ }
   }
@@ -798,6 +861,229 @@ async function refreshStatus(tenant) {
 
 async function testConnection(settingsOverride) {
   return evolutionProvider.testConnection(settingsOverride);
+}
+
+/* ---------- Reconciliação (banco core ↔ Evolution) ---------- */
+
+/* Compara as instâncias locais (evolution_instances) com as existentes na
+   Evolution. dryRun=true apenas reporta; dryRun=false aplica os status no
+   banco. NUNCA exclui, desconecta ou altera instância reservada
+   (papicore_support). */
+async function reconcileInstances({ dryRun = false } = {}) {
+  const providerName = activeProviderName();
+  const settings = evolutionProvider.getSettings();
+  const configured = evolutionProvider.isConfigured(settings);
+  const result = {
+    provider: providerName,
+    configured,
+    synced: [],
+    missing_remote: [],
+    orphans: [],
+    reserved: []
+  };
+
+  const tenants = listTenants();
+  const local = tenants
+    .map((t) => {
+      const instance = getEvolutionInstance(t.id);
+      return instance
+        ? { tenant_id: t.id, tenant_name: t.name, instance_name: instance.instance_name, status: instance.status }
+        : null;
+    })
+    .filter(Boolean);
+
+  if (providerName !== PROVIDER_EVOLUTION || !configured) {
+    result.local = local;
+    result.note = 'Provider não ativo/configurado — apenas inventário local.';
+    return result;
+  }
+
+  let remote = null;
+  try {
+    remote = await evolutionProvider.listInstances(settings);
+  } catch (err) {
+    return { ...result, error: `Não foi possível consultar a Evolution: ${err.message}` };
+  }
+  if (remote.error) return { ...result, error: remote.message };
+
+  const remoteByName = new Map((remote.instances || []).map((i) => [i.name, i]));
+  const localByName = new Map(local.map((l) => [l.instance_name, l]));
+
+  for (const item of local) {
+    const remoteInstance = remoteByName.get(item.instance_name);
+    if (remoteInstance) {
+      result.synced.push({
+        tenant_id: item.tenant_id,
+        tenant_name: item.tenant_name,
+        instance_name: item.instance_name,
+        remote_status: remoteInstance.status,
+        local_status: item.status
+      });
+      if (!dryRun) {
+        const status = remoteInstance.status === 'open'
+          ? 'connected'
+          : remoteInstance.status === 'connecting' ? 'connecting' : 'disconnected';
+        const patch = { status, qr_base64: '' };
+        if (status === 'connected') {
+          const row = getEvolutionInstance(item.tenant_id);
+          patch.connected_at = (row && row.connected_at) || dateTimeNow();
+        }
+        upsertEvolutionInstance(item.tenant_id, patch);
+      }
+    } else {
+      result.missing_remote.push({
+        tenant_id: item.tenant_id,
+        tenant_name: item.tenant_name,
+        instance_name: item.instance_name,
+        local_status: item.status
+      });
+      if (!dryRun) upsertEvolutionInstance(item.tenant_id, { status: 'missing_remote' });
+    }
+  }
+
+  for (const remoteInstance of remoteByName.values()) {
+    if (isReservedInstanceName(remoteInstance.name)) {
+      result.reserved.push({ instance_name: remoteInstance.name, status: remoteInstance.status });
+      continue;
+    }
+    if (!localByName.has(remoteInstance.name)) {
+      result.orphans.push({ instance_name: remoteInstance.name, status: remoteInstance.status });
+    }
+  }
+
+  logWhatsapp(LOG_ACTIONS.RECONCILED, null, {
+    dry_run: Boolean(dryRun),
+    synced: result.synced.length,
+    missing_remote: result.missing_remote.length,
+    orphans: result.orphans.length,
+    reserved: result.reserved.length
+  });
+  return result;
+}
+
+/* Vincula uma instância órfã (existe na Evolution, sem vínculo local) a um
+   tenant. Valida instância reservada e conflitos antes de gravar. */
+async function associateOrphan(instanceName, tenantId) {
+  const name = String(instanceName || '').trim();
+  if (!name) return { error: true, message: 'Informe o nome da instância.' };
+  if (isReservedInstanceName(name)) {
+    return { error: true, message: 'Instância reservada da PapiCore não pode ser associada a uma empresa.' };
+  }
+  const tenant = getTenantById(tenantId);
+  if (!tenant) return { error: true, message: 'Empresa não encontrada.' };
+
+  const byName = getEvolutionInstanceByInstanceName(name);
+  if (byName && byName.tenant_id !== tenantId) {
+    return { error: true, message: 'Esta instância já está vinculada a outra empresa.' };
+  }
+  const existing = getEvolutionInstance(tenantId);
+  if (existing && existing.instance_name !== name) {
+    return { error: true, message: 'A empresa já possui outra instância vinculada.' };
+  }
+
+  let remoteStatus = 'unknown';
+  const settings = evolutionProvider.getSettings();
+  if (evolutionProvider.isConfigured(settings)) {
+    try {
+      const remote = await evolutionProvider.getState(name, settings);
+      if (remote.ok) remoteStatus = remote.status;
+    } catch { /* mantém unknown */ }
+  }
+  const status = remoteStatus === 'open'
+    ? 'connected'
+    : remoteStatus === 'connecting' ? 'connecting' : 'disconnected';
+  upsertEvolutionInstance(tenantId, {
+    tenant_id: tenantId,
+    database_name: tenant.database_name,
+    instance_name: name,
+    status,
+    qr_base64: '',
+    last_error: null,
+    connected_at: status === 'connected' ? dateTimeNow() : null
+  });
+  ensureWebhookToken(tenantId);
+  logWhatsapp(LOG_ACTIONS.INSTANCE_ASSOCIATED, tenantId, { instance_name: name, remote_status: remoteStatus });
+  return { ok: true, instance: safeInstance(getEvolutionInstance(tenantId)) };
+}
+
+/* Exclui da Evolution uma instância órfã (sem vínculo local). Bloqueia a
+   instância reservada da PapiCore. */
+async function deleteOrphan(instanceName) {
+  const name = String(instanceName || '').trim();
+  if (!name) return { error: true, message: 'Informe o nome da instância.' };
+  if (isReservedInstanceName(name)) {
+    return { error: true, message: 'Instância reservada da PapiCore não pode ser excluída.' };
+  }
+  const byName = getEvolutionInstanceByInstanceName(name);
+  if (byName) {
+    return { error: true, message: 'A instância está vinculada a uma empresa — use a ação da própria empresa.' };
+  }
+  const settings = evolutionProvider.getSettings();
+  if (!evolutionProvider.isConfigured(settings)) {
+    return { error: true, message: 'Evolution API não está configurada.' };
+  }
+  const result = await evolutionProvider.deleteInstance(name, settings);
+  if (result.error) return { error: true, message: result.message };
+  logWhatsapp(LOG_ACTIONS.INSTANCE_DELETED, null, { instance_name: name, orphan: true });
+  return { ok: true };
+}
+
+/* (Re)configura o webhook da instância de uma empresa contra a Evolution,
+   usando o token por instância no header x-webhook-token. */
+async function configureWebhook(tenant) {
+  const providerName = activeProviderName();
+  if (providerName !== PROVIDER_EVOLUTION) {
+    return { error: true, message: 'O provider ativo não é a Evolution.' };
+  }
+  const instance = getEvolutionInstance(tenant.id);
+  if (!instance) return { error: true, message: 'Nenhuma instância registrada para esta empresa.' };
+  const settings = evolutionProvider.getSettings();
+  if (!evolutionProvider.isConfigured(settings)) {
+    return { error: true, message: 'Evolution API ainda não está configurada.' };
+  }
+  const publicUrl = String(process.env.PAPICORE_PUBLIC_URL || process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  if (!/^https:\/\//i.test(publicUrl)) {
+    return { error: true, message: 'Configure PAPICORE_PUBLIC_URL com a URL HTTPS pública.' };
+  }
+  const webhookToken = ensureWebhookToken(tenant.id);
+  const url = `${publicUrl}/api/webhooks/whatsapp`;
+  const result = await evolutionProvider.setWebhook(instance.instance_name, {
+    url,
+    headers: { 'x-webhook-token': webhookToken }
+  }, settings);
+  if (result.error) return { error: true, message: result.message };
+  logWhatsapp(LOG_ACTIONS.WEBHOOK_CONFIGURED, tenant.id, { instance_name: instance.instance_name });
+  return { ok: true, url };
+}
+
+/* Validação de boot: se a Evolution é o provider ativo e está habilitada, as
+   variáveis obrigatórias precisam existir. O server.js aborta com mensagem
+   clara se faltar alguma (evita provider ativo com config parcial). */
+function validateEvolutionBootConfig() {
+  const forced = providerSetting();
+  if (forced !== PROVIDER_EVOLUTION) {
+    return { ok: true, provider: forced || 'auto', evolution: false };
+  }
+  const evolutionEnabledEnv = String(process.env.EVOLUTION_ENABLED || '').toLowerCase() === 'true';
+  if (!isWhatsappEnabled() && !evolutionEnabledEnv) {
+    return { ok: true, provider: PROVIDER_EVOLUTION, evolution: false };
+  }
+  const url = String(process.env.WHATSAPP_API_URL || process.env.EVOLUTION_SERVER_URL || '').trim();
+  const key = String(process.env.WHATSAPP_API_KEY || process.env.EVOLUTION_API_KEY || '').trim();
+  const missing = [];
+  if (!url) missing.push('WHATSAPP_API_URL (ou EVOLUTION_SERVER_URL)');
+  if (!key) missing.push('WHATSAPP_API_KEY (ou EVOLUTION_API_KEY)');
+  if (process.env.NODE_ENV === 'production' && !String(process.env.WHATSAPP_WEBHOOK_SECRET || '').trim()) {
+    missing.push('WHATSAPP_WEBHOOK_SECRET (obrigatório em produção)');
+  }
+  if (missing.length) {
+    return {
+      ok: false,
+      provider: PROVIDER_EVOLUTION,
+      message: `WhatsApp Evolution é o provider ativo, mas faltam variáveis: ${missing.join(', ')}. Defina-as no .env.`
+    };
+  }
+  return { ok: true, provider: PROVIDER_EVOLUTION, evolution: true };
 }
 
 /* ---------- Configurações globais (Evolution) ---------- */
@@ -882,7 +1168,7 @@ async function handleWebhook(payload, headers = {}) {
     return { status: 404, error: 'Instância não encontrada.' };
   }
 
-  const expected = instance.webhook_token || String(process.env.WHATSAPP_WEBHOOK_TOKEN || '').trim();
+  const expected = instance.webhook_token || String(process.env.WHATSAPP_WEBHOOK_SECRET || process.env.WHATSAPP_WEBHOOK_TOKEN || '').trim();
   const token = webhookTokenFrom(payload, headers);
   if (!expected || !token || token !== expected) {
     logWhatsapp(LOG_ACTIONS.WEBHOOK_RECEIVED, instance.tenant_id, { event: received.event, rejected: 'invalid_token' });
@@ -947,6 +1233,9 @@ async function processAllTenantsOutbox() {
     let tenantDb;
     try {
       tenantDb = openTenantDatabase(t.database_name);
+      tenantDb.prepare(
+        "UPDATE whatsapp_outbox SET status = 'PENDING', last_error = COALESCE(last_error, 'Processamento abandonado recuperado.') WHERE status = 'PROCESSING' AND scheduled_at < datetime('now', 'localtime', '-10 minutes')"
+      ).run();
       await processOutbox({ db: tenantDb, limit: 25 });
     } catch (err) {
       console.error(`[whatsapp] worker falhou para ${t.database_name}:`, err.message);
@@ -1058,6 +1347,14 @@ module.exports = {
   refreshStatus,
   testConnection,
   ensureWebhookToken,
+  configureWebhook,
+  /* reconciliação / segurança */
+  reconcileInstances,
+  associateOrphan,
+  deleteOrphan,
+  isReservedInstanceName,
+  validateEvolutionBootConfig,
+  qrExpired,
   /* settings */
   getWhatsappSettings,
   updateWhatsappSettings,

@@ -113,6 +113,8 @@ function enableEvolution() {
   core.upsertEvolutionSettings({ enabled: true, server_url: EVO_URL, api_key: EVO_KEY });
 }
 
+process.env.PAPICORE_PUBLIC_URL = 'https://papicore.example.com';
+
 function disableEvolution() {
   core.upsertEvolutionSettings({ enabled: false, server_url: '', api_key: '' });
 }
@@ -268,16 +270,18 @@ test('connect: cria instância, obtém QR e registra no core', async () => {
   process.env.WHATSAPP_ENABLED = 'true';
   const calls = [];
   const restore = stubFetch({
-    '/instance/create/tenant_0001_torque_detail': () => jsonResponse({ instance: { instanceName: 'torque-detail' } }),
-    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ base64: 'data:image/png;base64,QR1' })
+    '/instance/create': () => jsonResponse({ instance: { instanceName: INSTANCE, status: 'close' } }),
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR1' }),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({})
   }, calls);
 
   try {
     const result = await evolutionService.connect(tenant);
     assert(result.ok === true, 'connect ok');
     assert(result.qr === 'data:image/png;base64,QR1', 'QR retornado');
-    assert(calls.some((c) => c.url === '/instance/create/tenant_0001_torque_detail'), 'create chamado');
+    assert(calls.some((c) => c.url === '/instance/create'), 'create chamado (POST /instance/create v2)');
     assert(calls.some((c) => c.url === '/instance/connect/tenant_0001_torque_detail'), 'connect/QR chamado');
+    assert(calls.some((c) => c.url === '/webhook/set/tenant_0001_torque_detail'), 'webhook/set chamado');
 
     const row = core.getEvolutionInstance(tenant.id);
     assert(row, 'registro criado');
@@ -297,9 +301,9 @@ test('admin: conexão do cliente reflete QR e actions connect/disconnect', async
   process.env.WHATSAPP_ENABLED = 'true';
   const calls = [];
   const restore = stubFetch({
-    '/instance/create/tenant_0001_torque_detail': () => jsonResponse({}),
-    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ base64: 'data:image/png;base64,QR2' }),
-    '/instance/disconnect/tenant_0001_torque_detail': () => jsonResponse({})
+    '/instance/connect/tenant_0001_torque_detail': () => jsonResponse({ qrcode: 'data:image/png;base64,QR2' }),
+    '/webhook/set/tenant_0001_torque_detail': () => jsonResponse({}),
+    '/instance/logout/tenant_0001_torque_detail': () => jsonResponse({})
   }, calls);
 
   try {
@@ -311,7 +315,7 @@ test('admin: conexão do cliente reflete QR e actions connect/disconnect', async
     assert(dis.result.status === 'disconnected', 'desconectado');
     const row = core.getEvolutionInstance(tenant.id);
     assert(row && row.status === 'disconnected' && !row.qr_base64, 'registro mantido com status disconnected e QR limpo');
-    assert(calls.some((c) => c.url === '/instance/disconnect/tenant_0001_torque_detail'), 'disconnect remoto chamado');
+    assert(calls.some((c) => c.url === '/instance/logout/tenant_0001_torque_detail'), 'logout remoto chamado');
 
     /* reconecta via admin */
     const conn = await callController(connectConnection, null, null, null);
@@ -327,7 +331,7 @@ test('refreshStatus: Evolution responde "open" → connected com número', async
   process.env.WHATSAPP_ENABLED = 'true';
   const calls = [];
   const restore = stubFetch({
-    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { status: 'open', number: '5511999998888', name: 'Empresa' } })
+    '/instance/connectionState/tenant_0001_torque_detail': () => jsonResponse({ instance: { instanceName: INSTANCE, state: 'open', number: '5511999998888', name: 'Empresa' } })
   }, calls);
 
   try {
@@ -420,7 +424,7 @@ test('disconnect limpa registro e volta ao MOCK', async () => {
   process.env.WHATSAPP_ENABLED = 'true';
   const calls = [];
   const restore = stubFetch({
-    '/instance/disconnect/tenant_0001_torque_detail': () => jsonResponse({})
+    '/instance/logout/tenant_0001_torque_detail': () => jsonResponse({})
   }, calls);
 
   try {
@@ -428,7 +432,7 @@ test('disconnect limpa registro e volta ao MOCK', async () => {
     assert(out.status === 'disconnected', 'desconectado');
     const row = core.getEvolutionInstance(tenant.id);
     assert(row && row.status === 'disconnected' && !row.qr_base64, 'registro mantido como disconnected, QR limpo');
-    assert(calls.some((c) => c.url === '/instance/disconnect/tenant_0001_torque_detail'), 'disconnect remoto chamado');
+    assert(calls.some((c) => c.url === '/instance/logout/tenant_0001_torque_detail'), 'logout remoto chamado');
 
     process.env.WHATSAPP_ENABLED = 'false';
     disableEvolution();

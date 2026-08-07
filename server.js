@@ -55,6 +55,21 @@ if (process.env.NODE_ENV === 'production' && !process.env.DATA_DIR) {
 /* Inicializa o banco central, migra o app.db legado e garante o tenant padrão. */
 initCore();
 
+/* Worker durável da outbox. Quando desabilitado, não cria timer e o boot
+   continua normalmente. Nenhuma chamada externa ocorre no provider mock. */
+const whatsappService = require('./services/whatsappService');
+
+/* Falha rápido se a Evolution for o provider ativo e estiver habilitada sem
+   as variáveis obrigatórias (URL + API key; webhook secret em produção).
+   Evita boot com provider ativo e configuração parcial. */
+const evolutionBoot = whatsappService.validateEvolutionBootConfig();
+if (!evolutionBoot.ok) {
+  console.error(`[papi-core] ${evolutionBoot.message}`);
+  process.exit(1);
+}
+
+whatsappService.startWorker();
+
 /* Agenda a rotina automática de backups locais (produção + habilitação). */
 const { startBackupScheduler } = require('./services/backupScheduler');
 startBackupScheduler();

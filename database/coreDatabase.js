@@ -2618,9 +2618,10 @@ function countContracts(tenantId) {
 function getEvolutionSettings() {
   const envBased = () => {
     const settings = {
-      enabled: String(process.env.EVOLUTION_ENABLED || '').toLowerCase() === 'true',
-      server_url: String(process.env.EVOLUTION_SERVER_URL || '').trim(),
-      api_key: String(process.env.EVOLUTION_API_KEY || '').trim()
+      enabled: String(process.env.WHATSAPP_ENABLED || process.env.EVOLUTION_ENABLED || '').toLowerCase() === 'true',
+      server_url: String(process.env.WHATSAPP_API_URL || process.env.EVOLUTION_SERVER_URL || '').trim(),
+      api_key: String(process.env.WHATSAPP_API_KEY || process.env.EVOLUTION_API_KEY || '').trim(),
+      timeout_ms: Number(process.env.WHATSAPP_REQUEST_TIMEOUT_MS) || 10000
     };
     return settings;
   };
@@ -2632,8 +2633,11 @@ function getEvolutionSettings() {
     api_key: (row && row.api_key) || ''
   };
   if (String(process.env.EVOLUTION_ENABLED || '').toLowerCase() === 'true') settings.enabled = true;
-  if (String(process.env.EVOLUTION_SERVER_URL || '').trim()) settings.server_url = process.env.EVOLUTION_SERVER_URL.trim();
-  if (String(process.env.EVOLUTION_API_KEY || '').trim()) settings.api_key = process.env.EVOLUTION_API_KEY.trim();
+  const envUrl = String(process.env.WHATSAPP_API_URL || process.env.EVOLUTION_SERVER_URL || '').trim();
+  const envKey = String(process.env.WHATSAPP_API_KEY || process.env.EVOLUTION_API_KEY || '').trim();
+  if (envUrl) settings.server_url = envUrl;
+  if (envKey) settings.api_key = envKey;
+  settings.timeout_ms = Number(process.env.WHATSAPP_REQUEST_TIMEOUT_MS) || 10000;
   return settings;
 }
 
@@ -2703,7 +2707,7 @@ function upsertEvolutionInstance(tenantId, fields) {
     merged.last_disconnect || null, merged.last_qr_generated || null,
     merged.webhook_token || null
   );
-  return getEvolutionInstance(info.lastInsertRowid);
+  return getEvolutionInstance(tenantId);
 }
 
 function deleteEvolutionInstance(tenantId) {

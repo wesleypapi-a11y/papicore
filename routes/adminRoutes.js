@@ -25,6 +25,7 @@ const whatsappController = require('../controllers/whatsappController');
 const router = express.Router();
 
 const { enforceUnitLimit } = require('../middlewares/planLimits');
+const { whatsappRateLimit } = require('../middlewares/whatsappRateLimit');
 
 router.get('/me', authController.me);
 
@@ -127,9 +128,9 @@ router.post('/whatsapp/outbox/:id/resend', whatsappController.resendOutbox);
 router.get('/whatsapp/history', whatsappController.getHistory);
 
 /* WhatsApp — conexão (Evolution API). */
-router.get('/whatsapp/connection', whatsappController.getConnection);
-router.post('/whatsapp/connection/connect', whatsappController.connectConnection);
-router.post('/whatsapp/connection/reconnect', whatsappController.reconnectConnection);
+router.get('/whatsapp/connection', whatsappRateLimit('refresh', { max: 30 }), whatsappController.getConnection);
+router.post('/whatsapp/connection/connect', whatsappRateLimit('connect', { max: 5 }), whatsappController.connectConnection);
+router.post('/whatsapp/connection/reconnect', whatsappRateLimit('connect', { max: 5 }), whatsappController.reconnectConnection);
 router.post('/whatsapp/connection/disconnect', whatsappController.disconnectConnection);
 
 module.exports = router;

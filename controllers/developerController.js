@@ -1424,6 +1424,42 @@ async function tenantWhatsappDisconnectHandler(req, res) {
   return res.json(result);
 }
 
+/* (Re)configura o webhook da instância da empresa na Evolution. */
+async function configureTenantWebhookHandler(req, res) {
+  const tenant = requireTenant(req.params.tenantId);
+  const result = await whatsappService.configureWebhook(tenant);
+  if (result.error) throw new AppError(502, result.message || 'Falha ao configurar o webhook.');
+  return res.json(result);
+}
+
+/* Reconciliação banco core ↔ Evolution. ?dryRun=1 apenas reporta, sem aplicar
+   status no banco. Instância reservada da PapiCore nunca é alterada. */
+async function reconcileInstancesHandler(req, res) {
+  const dry = String(req.query.dryRun || '').toLowerCase();
+  const dryRun = dry === '1' || dry === 'true';
+  const result = await whatsappService.reconcileInstances({ dryRun });
+  return res.json(result);
+}
+
+/* Vincula uma instância órfã (existe na Evolution, sem vínculo local) a uma
+   empresa — corpo { tenant_id }. */
+async function associateOrphanHandler(req, res) {
+  const instanceName = String(req.params.instanceName || '').trim();
+  const tenantId = Number((req.body || {}).tenant_id);
+  if (!tenantId) throw new AppError(400, 'Informe o tenant_id no corpo da requisição.');
+  const result = await whatsappService.associateOrphan(instanceName, tenantId);
+  if (result.error) throw new AppError(400, result.message || 'Falha ao associar a instância.');
+  return res.json(result);
+}
+
+/* Exclui da Evolution uma instância órfã (sem vínculo local). */
+async function deleteOrphanHandler(req, res) {
+  const instanceName = String(req.params.instanceName || '').trim();
+  const result = await whatsappService.deleteOrphan(instanceName);
+  if (result.error) throw new AppError(400, result.message || 'Falha ao excluir a instância.');
+  return res.json(result);
+}
+
 /* Histórico de mensagens de uma empresa (lê a outbox/histórico do tenant).
    Segue o padrão de abertura em cache (fecha só se abriu agora). */
 function getTenantWhatsappHistoryHandler(req, res) {
@@ -1518,5 +1554,9 @@ module.exports = {
   tenantWhatsappConnectHandler,
   tenantWhatsappReconnectHandler,
   tenantWhatsappDisconnectHandler,
+  configureTenantWebhookHandler,
+  reconcileInstancesHandler,
+  associateOrphanHandler,
+  deleteOrphanHandler,
   getTenantWhatsappHistoryHandler
 };

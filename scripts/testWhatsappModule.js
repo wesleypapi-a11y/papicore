@@ -82,7 +82,11 @@ function withDb(fn) {
 }
 
 function flush(database) {
-  return whatsappService.processOutbox({ db: database || db });
+  const target = database || db;
+  /* Testes chamam flush de forma explícita: tornam retries agendados elegíveis
+     sem esperar o backoff de produção. */
+  target.prepare("UPDATE whatsapp_outbox SET scheduled_at = datetime('now', 'localtime', '-1 second') WHERE status = 'PENDING'").run();
+  return whatsappService.processOutbox({ db: target });
 }
 
 function callController(fn, params, body, user, query) {
@@ -674,6 +678,185 @@ test('testConnection: valida URL+chave via fetchInstances e retorna erro amigáv
   const evoR = await whatsappService.testConnection({ enabled: true, server_url: '', api_key: '' });
   assert(evoR.error === true && /URL e a API key/i.test(evoR.message), 'sem URL → erro amigável');
 });
+
+/* ---------- Instância reservada / reconciliação / segurança ---------- */
+
+test('instância reservada: connect/disconnect/associate/delete bloqueados sem rede', async () => {
+  assert(whatsappService.isReservedInstanceName('papicore_support') === true, 'papicore_support é reservada');
+  assert(whatsappService.isReservedInstanceName('papicore-central') === true, 'papicore-central é reservada');
+  assert(whatsappService.isReservedInstanceName('tenant_0001') === false, 'tenant comum não é reservado');
+
+  /* connect recusa antes de qualquer chamada de rede/banco. */
+  const fakeTenant = { id: 99999, database_name: 'papicore_support.db' };
+  const blockedConnect = await whatsappService.connect(fakeTenant);
+  assert(blockedConnect.error === true && /reservad[oa]/i.test(blockedConnect.message), 'connect recusa instância reservada');
+
+  /* disconnect recusa quando o registro aponta para instância reservada
+     (usa o tenant real — FK do banco exige tenant existente). */
+  const inst = core.getEvolutionInstance(tenant.id);
+  const savedInstanceName = inst.instance_name;
+  core.upsertEvolutionInstance(tenant.id, { instance_name: 'papicore_support' });
+  const blockedDisconnect = await whatsappService.disconnect(tenant);
+  assert(blockedDisconnect.error === true && /reservad[oa]/i.test(blockedDisconnect.message), 'disconnect recusa instância reservada');
+  core.upsertEvolutionInstance(tenant.id, { instance_name: savedInstanceName });
+
+  /* associate/delete de órfã recusam instância reservada. */
+  const assoc = await whatsappService.associateOrphan('papicore_support', tenant.id);
+  assert(assoc.error === true && /reservad[oa]/i.test(assoc.message), 'associate recusa reservada');
+  const del = await whatsappService.deleteOrphan('papicore_support');
+  assert(del.error === true && /reservad[oa]/i.test(del.message), 'delete recusa reservada');
+
+  /* delete de órfã vinculada recusa (tem dono no banco). */
+  const ownName = whatsappService.instanceNameFromDatabaseName(tenantName);
+  const linked = await whatsappService.deleteOrphan(ownName);
+  assert(linked.error === true && /vincular|empresa/i.test(linked.message), 'delete de instância com dono recusa');
+});
+
+test('validateEvolutionBootConfig: provider mock/auto não exige variáveis', () => {
+  const saved = {
+    provider: process.env.WHATSAPP_PROVIDER,
+    enabled: process.env.WHATSAPP_ENABLED,
+    url: process.env.WHATSAPP_API_URL,
+    key: process.env.WHATSAPP_API_KEY
+  };
+  try {
+    delete process.env.WHATSAPP_PROVIDER;
+    process.env.WHATSAPP_ENABLED = 'false';
+    const auto = whatsappService.validateEvolutionBootConfig();
+    assert(auto.ok === true, 'provider automático/mock nunca bloqueia boot');
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test('validateEvolutionBootConfig: provider=evolution exige URL+chave e webhook secret em produção', () => {
+  const saved = {
+    provider: process.env.WHATSAPP_PROVIDER,
+    enabled: process.env.WHATSAPP_ENABLED,
+    url: process.env.WHATSAPP_API_URL,
+    key: process.env.WHATSAPP_API_KEY,
+    nodeEnv: process.env.NODE_ENV,
+    webhookSecret: process.env.WHATSAPP_WEBHOOK_SECRET
+  };
+  try {
+    process.env.WHATSAPP_PROVIDER = 'evolution';
+    process.env.WHATSAPP_ENABLED = 'true';
+    delete process.env.WHATSAPP_API_URL;
+    delete process.env.WHATSAPP_API_KEY;
+    process.env.NODE_ENV = 'development';
+
+    const missing = whatsappService.validateEvolutionBootConfig();
+    assert(missing.ok === false, 'boot falha sem URL+chave');
+    assert(/WHATSAPP_API_URL/.test(missing.message) && /WHATSAPP_API_KEY/.test(missing.message), 'mensagem lista as variáveis faltantes');
+
+    process.env.WHATSAPP_API_URL = 'https://evolution.papicore.com.br';
+    process.env.WHATSAPP_API_KEY = 'chave';
+    assert(whatsappService.validateEvolutionBootConfig().ok === true, 'com URL+chave e dev, boot ok');
+
+    process.env.NODE_ENV = 'production';
+    delete process.env.WHATSAPP_WEBHOOK_SECRET;
+    const prod = whatsappService.validateEvolutionBootConfig();
+    assert(prod.ok === false && /WHATSAPP_WEBHOOK_SECRET/.test(prod.message), 'produção exige WHATSAPP_WEBHOOK_SECRET');
+
+    process.env.WHATSAPP_WEBHOOK_SECRET = 'segredo';
+    assert(whatsappService.validateEvolutionBootConfig().ok === true, 'produção completa, boot ok');
+  } finally {
+    restoreEnv(saved);
+  }
+});
+
+test('webhook: WHATSAPP_WEBHOOK_SECRET (env) valida quando a instância não tem token', async () => {
+  const row = core.getEvolutionInstance(tenant.id);
+  const savedToken = row.webhook_token;
+  const savedSecret = process.env.WHATSAPP_WEBHOOK_SECRET;
+  const instance = whatsappService.instanceNameFromDatabaseName(tenantName);
+  try {
+    process.env.WHATSAPP_WEBHOOK_SECRET = 'secret-env';
+    core.upsertEvolutionInstance(tenant.id, { webhook_token: '' });
+    const r = await whatsappService.handleWebhook(
+      { event: 'connection.update', state: 'open', instance },
+      { 'x-webhook-token': 'secret-env' }
+    );
+    assert(r.status === 200, `webhook aceito via secret de ambiente (${r.status})`);
+  } finally {
+    core.upsertEvolutionInstance(tenant.id, { webhook_token: savedToken });
+    if (savedSecret === undefined) delete process.env.WHATSAPP_WEBHOOK_SECRET;
+    else process.env.WHATSAPP_WEBHOOK_SECRET = savedSecret;
+  }
+});
+
+test('configureWebhook: recusa sem provider Evolution ativo (sem rede)', async () => {
+  process.env.WHATSAPP_ENABLED = 'false';
+  delete process.env.WHATSAPP_PROVIDER;
+  const r = await whatsappService.configureWebhook(tenant);
+  assert(r.error === true && /provider ativo/i.test(r.message), 'configureWebhook exige Evolution ativa');
+});
+
+test('qrExpired: QR antigo expira, QR recente vale', () => {
+  function localTs(ms) {
+    const d = new Date(ms);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+  const recent = localTs(Date.now() - 1000);
+  const old = localTs(Date.now() - 300000);
+  assert(whatsappService.qrExpired(recent) === false, 'QR recente válido');
+  assert(whatsappService.qrExpired(old) === true, 'QR antigo expirado');
+  assert(whatsappService.qrExpired('') === false, 'sem timestamp não expira');
+});
+
+test('reconcileInstances: sync/missing/órfãs/reservada com provider evolution stubado', async () => {
+  const originalFetch = global.fetch;
+  const myInstance = whatsappService.instanceNameFromDatabaseName(tenantName);
+  const original = {
+    provider: process.env.WHATSAPP_PROVIDER,
+    enabled: process.env.WHATSAPP_ENABLED
+  };
+  const stub = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [
+      { name: myInstance, connectionStatus: 'open' },
+      { name: 'papicore_support', connectionStatus: 'close' },
+      { name: 'orphan_alpha', connectionStatus: 'connecting' }
+    ]
+  });
+  try {
+    process.env.WHATSAPP_PROVIDER = 'evolution';
+    process.env.WHATSAPP_ENABLED = 'true';
+    core.upsertEvolutionSettings({ enabled: true, server_url: 'https://evo.local', api_key: 'chave' });
+    global.fetch = stub;
+
+    const beforeStatus = core.getEvolutionInstance(tenant.id).status;
+    const dry = await whatsappService.reconcileInstances({ dryRun: true });
+    assert(dry.provider === 'evolution' && dry.configured === true, 'provider evolution configurado');
+    assert(dry.synced.length === 1 && dry.synced[0].instance_name === myInstance && dry.synced[0].remote_status === 'open', 'instância da empresa sincronizada');
+    assert(dry.reserved.some((r) => r.instance_name === 'papicore_support'), 'papicore_support listada como reservada');
+    assert(dry.orphans.some((o) => o.instance_name === 'orphan_alpha'), 'orphan_alpha listada como órfã');
+    assert(dry.missing_remote.length === 0, 'nenhuma instância local faltando no remoto');
+    assert(core.getEvolutionInstance(tenant.id).status === beforeStatus, 'dryRun não altera o banco');
+
+    const applied = await whatsappService.reconcileInstances({ dryRun: false });
+    assert(applied.synced.length === 1, 'reconciliação aplicada');
+    assert(core.getEvolutionInstance(tenant.id).status === 'connected', 'status aplicado no banco');
+  } finally {
+    global.fetch = originalFetch;
+    restoreEnv(original);
+    core.upsertEvolutionSettings({ enabled: false, server_url: '', api_key: '' });
+  }
+});
+
+test('associateOrphan: instância com dono não é sobrescrita por outra empresa', async () => {
+  const r = await whatsappService.associateOrphan('orphan_alpha', tenant.id);
+  assert(r.error === true && /empresa.*possui outra instância/i.test(r.message), 'conflito de vínculo rejeitado sem rede');
+});
+
+function restoreEnv(saved) {
+  for (const [key, value] of Object.entries(saved)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
 
 /* ---------- Execução ---------- */
 

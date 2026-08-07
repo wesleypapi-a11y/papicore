@@ -17,6 +17,7 @@ const siteContentController = require('../controllers/siteContentController');
 const contractController = require('../controllers/developerContractController');
 const apiKeyController = require('../controllers/apiKeyController');
 const { requireDeveloper } = require('../middlewares/auth');
+const { whatsappRateLimit } = require('../middlewares/whatsappRateLimit');
 
 const router = express.Router();
 
@@ -73,12 +74,20 @@ router.delete('/settings/login-favicon', brandingController.removeLoginFavicon);
 router.get('/whatsapp', developerController.whatsappOverviewHandler);
 router.get('/whatsapp/settings', developerController.getEvolutionSettingsHandler);
 router.put('/whatsapp/settings', developerController.updateEvolutionSettingsHandler);
-router.post('/whatsapp/test-connection', developerController.testEvolutionConnectionHandler);
-router.get('/whatsapp/tenants/:tenantId', developerController.getTenantWhatsappHandler);
+router.post('/whatsapp/test-connection', whatsappRateLimit('testConnection', { max: 10 }), developerController.testEvolutionConnectionHandler);
+router.get('/whatsapp/tenants/:tenantId', whatsappRateLimit('refresh', { max: 30 }), developerController.getTenantWhatsappHandler);
 router.get('/whatsapp/tenants/:tenantId/history', developerController.getTenantWhatsappHistoryHandler);
-router.post('/whatsapp/tenants/:tenantId/connect', developerController.tenantWhatsappConnectHandler);
-router.post('/whatsapp/tenants/:tenantId/reconnect', developerController.tenantWhatsappReconnectHandler);
+router.post('/whatsapp/tenants/:tenantId/connect', whatsappRateLimit('connect', { max: 5 }), developerController.tenantWhatsappConnectHandler);
+router.post('/whatsapp/tenants/:tenantId/reconnect', whatsappRateLimit('connect', { max: 5 }), developerController.tenantWhatsappReconnectHandler);
 router.post('/whatsapp/tenants/:tenantId/disconnect', developerController.tenantWhatsappDisconnectHandler);
+router.post('/whatsapp/tenants/:tenantId/webhook', developerController.configureTenantWebhookHandler);
+
+/* Reconciliação entre o banco core e as instâncias reais da Evolution:
+   inventário, orfãs e associação manual. Instância reservada da PapiCore
+   jamais aparece nas ações. */
+router.get('/whatsapp/reconcile', whatsappRateLimit('reconcile', { max: 5 }), developerController.reconcileInstancesHandler);
+router.post('/whatsapp/orphans/:instanceName/associate', developerController.associateOrphanHandler);
+router.delete('/whatsapp/orphans/:instanceName', developerController.deleteOrphanHandler);
 
 /* Empresas */
 router.get('/tenants', developerController.listTenantsHandler);

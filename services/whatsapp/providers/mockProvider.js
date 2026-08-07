@@ -39,6 +39,10 @@ async function testConnection() {
   return { ok: true, mock: true, instances: [{ name: 'mock', status: 'open' }] };
 }
 
+async function listInstances() {
+  return { ok: true, mock: true, instances: Array.from(states.entries()).map(([name, value]) => ({ name, status: value.status })) };
+}
+
 async function createInstance(instanceName) {
   const s = stateOf(instanceName);
   s.status = 'disconnected';
@@ -61,6 +65,10 @@ async function disconnect(instanceName) {
   const s = stateOf(instanceName);
   s.status = 'disconnected';
   return { ok: true, status: 'disconnected', mock: true };
+}
+
+async function logout(instanceName) {
+  return disconnect(instanceName);
 }
 
 /* QR Code de simulação: imagem SVG determinística (data URL), exibível no
@@ -125,6 +133,12 @@ async function sendFile(instanceName, to, { url, filename } = {}) {
   return { ok: true, simulated: true, id: `mock-${Date.now()}` };
 }
 
+async function setWebhook(instanceName, webhook) {
+  const s = stateOf(instanceName);
+  s.webhook = webhook || null;
+  return { ok: true, mock: true };
+}
+
 async function getStatus(instanceName) {
   const s = stateOf(instanceName);
   return {
@@ -164,14 +178,17 @@ module.exports = {
   name: NAME,
   isConfigured,
   testConnection,
+  listInstances,
   createInstance,
   deleteInstance,
   connect,
   disconnect,
+  logout,
   generateQRCode,
   sendText,
   sendImage,
   sendFile,
+  setWebhook,
   getStatus,
   syncStatus,
   receiveWebhook,
