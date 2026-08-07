@@ -16,6 +16,7 @@ const brandingController = require('../controllers/brandingController');
 const siteContentController = require('../controllers/siteContentController');
 const contractController = require('../controllers/developerContractController');
 const apiKeyController = require('../controllers/apiKeyController');
+const developerDiagnosticsController = require('../controllers/developerDiagnosticsController');
 const { requireDeveloper } = require('../middlewares/auth');
 const { whatsappRateLimit } = require('../middlewares/whatsappRateLimit');
 
@@ -46,6 +47,10 @@ router.get('/login-favicon', brandingController.serveLoginFavicon);
 router.use(requireDeveloper);
 
 router.get('/dashboard', developerController.dashboard);
+
+/* Diagnostico temporario, somente leitura, restrito ao developer. */
+router.get('/diagnostics/appointments', developerDiagnosticsController.searchAppointmentsDiagnostic);
+router.get('/diagnostics/package-eligibility/:appointmentId', developerDiagnosticsController.packageEligibilityDiagnostic);
 router.get('/backups', developerController.listBackupsHandler);
 router.get('/backups/storage', developerController.storageInfoHandler);
 router.get('/backups/:backupId', developerController.getBackupHandler);

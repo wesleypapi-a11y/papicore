@@ -1218,7 +1218,7 @@
       <div class="completion-section"><strong>Forma de pagamento</strong>
         <div class="completion-payment-grid">
           ${[['pix','Pix'],['cash','Dinheiro'],['card','Cartão'],['other','Outro'],['package','Pacote / Créditos']].map(([value,label]) =>
-            `<label class="completion-payment"><input type="radio" name="completionPayment" value="${value}"><span>${label}</span></label>`).join('')}
+            `<label class="completion-payment" ${value === 'package' ? 'id="completionPackagePayment"' : ''}><input type="radio" name="completionPayment" value="${value}" ${value === 'package' ? 'disabled' : ''}><span>${label}${value === 'package' ? '<small id="completionPackageStatus">Verificando…</small>' : ''}</span></label>`).join('')}
         </div>
       </div>
       <div id="completionPackageSummary" class="completion-package-summary hidden"></div>
@@ -1227,6 +1227,8 @@
     const summary = overlay.querySelector('#completionPackageSummary');
     let selectedPackageId = null;
     let packageData = null;
+    const packageRadio = overlay.querySelector('[name="completionPayment"][value="package"]');
+    const packageStatus = overlay.querySelector('#completionPackageStatus');
 
     const packageSummaryHtml = (pkg) => `
       <div class="completion-package-title"><span>✓ Pacote encontrado</span><strong>${escapeHtml(pkg.package_name_snapshot)}</strong></div>
@@ -1234,13 +1236,11 @@
       <div class="completion-balance"><strong>Créditos atuais</strong>${pkg.usage.map((u) => `<div class="review-line"><span>${escapeHtml(u.service_name)}</span><strong>${u.before}</strong></div>`).join('')}</div>
       <div class="completion-balance after"><strong>Após concluir ficará</strong>${pkg.usage.map((u) => `<div class="review-line"><span>${escapeHtml(u.service_name)}</span><strong>${u.after}</strong></div>`).join('')}</div>`;
 
-    const loadPackages = async () => {
+    const showPackageOptions = () => {
       summary.classList.remove('hidden');
-      summary.innerHTML = '<span class="muted">Localizando créditos do cliente…</span>';
-      packageData = await api(`/api/admin/appointments/${id}/packages/available`);
       if (!packageData.packages.length) {
         selectedPackageId = null;
-        summary.innerHTML = '<div class="msg error">Este cliente não possui créditos suficientes para todos os serviços deste atendimento.</div>';
+        summary.innerHTML = `<div class="msg error">${escapeHtml(packageData.message || 'Pacote indisponível para este atendimento.').replace(/\n/g, '<br>')}</div>`;
         confirm.disabled = true;
         return;
       }
@@ -1260,11 +1260,29 @@
         confirm.disabled = false;
       }));
     };
+    const loadPackages = async () => {
+      if (packageData) return showPackageOptions();
+      summary.classList.remove('hidden');
+      summary.innerHTML = '<span class="muted">Localizando créditos do cliente…</span>';
+      packageData = await api(`/api/admin/appointments/${id}/packages/available`);
+      showPackageOptions();
+    };
     overlay.querySelectorAll('[name="completionPayment"]').forEach((radio) => radio.addEventListener('change', async () => {
       confirm.disabled = false;
       if (radio.value === 'package') await loadPackages();
       else { selectedPackageId = null; summary.classList.add('hidden'); summary.innerHTML = ''; }
     }));
+    api(`/api/admin/appointments/${id}/packages/available`).then((data) => {
+      packageData = data;
+      packageRadio.disabled = !data.packagePaymentAvailable;
+      packageStatus.textContent = data.packagePaymentAvailable ? 'Disponível' : 'Indisponível';
+      if (!data.packagePaymentAvailable) showPackageOptions();
+    }).catch((error) => {
+      packageRadio.disabled = true;
+      packageStatus.textContent = 'Indisponível';
+      summary.classList.remove('hidden');
+      summary.innerHTML = `<div class="msg error">${escapeHtml(error.message)}</div>`;
+    });
     confirm.addEventListener('click', async () => {
       const payment = overlay.querySelector('[name="completionPayment"]:checked');
       if (!payment) return;

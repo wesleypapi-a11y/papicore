@@ -701,6 +701,66 @@ test('elegibilidade: expira primeiro vem primeiro e veículo diferente é exclu�
   });
 });
 
+test('elegibilidade por serviço: pacote ativo incompatível retorna diagnóstico e não pode ser forçado pela API', () => {
+  withDb(() => {
+    const phone = '(17) 99999-1111';
+    const pkg = packageService.createServicePackage(db, { name: 'Somente A', price: '50', items: [{ service_id: serviceA.id, quantity: 2 }] }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Incompatível', phone } }, 1);
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceC, { customer_phone: phone, start_time: '09:00', appointment_date: dayPlus(6) }), { id: 1, role: 'owner' }).result;
+
+    const availability = packageService.evaluateAppointmentPackages(db, appt.id);
+    assert(!availability.packagePaymentAvailable && availability.packages.length === 0, 'pagamento por pacote deve ficar indisponível');
+    assert(availability.reason === 'SERVICE_NOT_INCLUDED', `motivo deve ser SERVICE_NOT_INCLUDED (veio ${availability.reason})`);
+    assert(availability.uncoveredServices.includes(serviceC.name), 'diagnóstico deve nomear o serviço não coberto');
+
+    const txBefore = db.prepare('SELECT COUNT(*) AS n FROM package_transactions WHERE appointment_id = ?').get(appt.id).n;
+    const outboxBefore = db.prepare("SELECT COUNT(*) AS n FROM whatsapp_outbox WHERE idempotency_key = ?").get(`PACKAGE_CREDIT_USED:${appt.id}`).n;
+    let error = null;
+    try {
+      callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'package', customer_package_id: sold.id }, { id: 1, role: 'owner' });
+    } catch (e) { error = e; }
+    assert(error && error.status === 422 && /não está incluído/i.test(error.message), 'API deve rejeitar pacote incompatível com erro controlado');
+    assert(db.prepare('SELECT status FROM appointments WHERE id = ?').get(appt.id).status !== 'completed', 'atendimento não deve ser concluído');
+    assert(db.prepare('SELECT COUNT(*) AS n FROM package_transactions WHERE appointment_id = ?').get(appt.id).n === txBefore, 'tentativa inválida não cria transação');
+    assert(db.prepare("SELECT COUNT(*) AS n FROM whatsapp_outbox WHERE idempotency_key = ?").get(`PACKAGE_CREDIT_USED:${appt.id}`).n === outboxBefore, 'tentativa inválida não enfileira WhatsApp');
+  });
+});
+
+test('múltiplos serviços: cobertura parcial e soma de dois pacotes não habilitam pagamento', () => {
+  withDb(() => {
+    const phone = '(18) 99999-1111';
+    const pkgA = packageService.createServicePackage(db, { name: 'A separado', price: '40', items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const pkgC = packageService.createServicePackage(db, { name: 'C separado', price: '40', items: [{ service_id: serviceC.id, quantity: 1 }] }, 1);
+    packageService.sellPackage(db, { package_id: pkgA.id, customer: { name: 'Dois Pacotes', phone } }, 1);
+    packageService.sellPackage(db, { package_id: pkgC.id, customer: { name: 'Dois Pacotes', phone } }, 1);
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceA, { service_ids: [serviceA.id, serviceC.id], customer_phone: phone, start_time: '09:00', appointment_date: dayPlus(7) }), { id: 1, role: 'owner' }).result;
+    const availability = packageService.evaluateAppointmentPackages(db, appt.id);
+    assert(!availability.packagePaymentAvailable && availability.reason === 'NO_SINGLE_PACKAGE', 'um único pacote deve cobrir todo o atendimento');
+    assert(/único pacote/i.test(availability.message), 'mensagem deve explicar que pacotes separados não são somados');
+  });
+});
+
+test('concorrência: saldo alterado após abrir modal é recalculado e sofre rollback total', () => {
+  withDb(() => {
+    const phone = '(19) 99999-1111';
+    const pkg = packageService.createServicePackage(db, { name: 'Saldo Volátil', price: '60', items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Saldo Volátil', phone } }, 1);
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceA, { customer_phone: phone, start_time: '09:00', appointment_date: dayPlus(10) }), { id: 1, role: 'owner' }).result;
+    assert(packageService.evaluateAppointmentPackages(db, appt.id).packagePaymentAvailable, 'modal inicialmente encontra pacote elegível');
+    packageService.manualAdjustment(db, { customerPackageId: sold.id, serviceId: serviceA.id, quantity: 1, type: 'MANUAL_DEBIT', reason: 'Uso concorrente', userId: 1 });
+    let error = null;
+    try {
+      packageService.completeAppointmentWithPackage(db, { appointmentId: appt.id, customerPackageId: sold.id, userId: 1 });
+    } catch (e) { error = e; }
+    assert(error && error.status === 422, 'conclusão deve recalcular e rejeitar saldo alterado');
+    assert(db.prepare('SELECT status FROM appointments WHERE id = ?').get(appt.id).status !== 'completed', 'rollback mantém atendimento aberto');
+    assert(!db.prepare("SELECT id FROM package_transactions WHERE appointment_id = ? AND transaction_type IN ('RESERVE','CONSUME')").get(appt.id), 'rollback não deixa consumo parcial');
+  });
+});
+
 /* ---------- Execução ---------- */
 
 (async () => {

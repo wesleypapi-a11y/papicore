@@ -1045,38 +1045,135 @@ function vehicleMatches(db, appointment, customerPackage) {
   return Number(vehicle.id) === Number(customerPackage.vehicle_id);
 }
 
-function listEligiblePackagesForAppointment(db, appointmentId) {
+function appointmentServices(appointment) {
+  let services = [];
+  try {
+    const parsed = JSON.parse(appointment.services_json || '[]');
+    if (Array.isArray(parsed)) {
+      services = parsed.map((item) => ({
+        service_id: Number(item.id),
+        service_name: item.name || item.service_name || null
+      })).filter((item) => item.service_id);
+    }
+  } catch { services = []; }
+  if (!services.length && appointment.service_id) {
+    services = [{ service_id: Number(appointment.service_id), service_name: appointment.service_name || null }];
+  }
+  return [...new Map(services.map((item) => [item.service_id, item])).values()];
+}
+
+/* Fonte única da regra de pagamento por pacote. Não altera saldos. */
+function evaluatePackageEligibility(db, { appointment, customerPackage }) {
+  const reasons = [];
+  const uncoveredServices = [];
+  const insufficientBalances = [];
+  const projectedBalances = [];
+  const services = appointmentServices(appointment);
+
+  if (!customerPackage || Number(customerPackage.customer_id) !== Number(appointment.customer_id)) {
+    reasons.push('CUSTOMER_MISMATCH');
+  }
+  if (customerPackage && customerPackage.status !== 'ACTIVE') reasons.push('PACKAGE_INACTIVE');
+  if (customerPackage && isExpired(customerPackage)) reasons.push('PACKAGE_EXPIRED');
+  if (customerPackage && !vehicleMatches(db, appointment, customerPackage)) reasons.push('VEHICLE_MISMATCH');
+
+  for (const service of services) {
+    const balance = customerPackage && customerPackage.balances.find(
+      (item) => Number(item.service_id) === service.service_id
+    );
+    const serviceName = service.service_name || (balance && balance.service_name) || `Serviço ${service.service_id}`;
+    if (!balance) {
+      uncoveredServices.push({ service_id: service.service_id, service_name: serviceName });
+      continue;
+    }
+    const reservedHere = Boolean(hasReserve(db, balance.id, appointment.id));
+    const before = balance.available + (reservedHere ? 1 : 0);
+    if (before < 1) {
+      insufficientBalances.push({ service_id: service.service_id, service_name: serviceName, available: before, required: 1 });
+      continue;
+    }
+    projectedBalances.push({
+      service_id: service.service_id,
+      service_name: serviceName,
+      quantity: 1,
+      before,
+      after: before - 1
+    });
+  }
+  if (uncoveredServices.length) reasons.push('SERVICE_NOT_INCLUDED');
+  if (insufficientBalances.length) reasons.push('INSUFFICIENT_BALANCE');
+  return {
+    customer_package_id: customerPackage ? customerPackage.id : null,
+    eligible: reasons.length === 0,
+    reasons: [...new Set(reasons)],
+    uncoveredServices,
+    insufficientBalances,
+    projectedBalances: reasons.length === 0 ? projectedBalances : []
+  };
+}
+
+function unavailableMessage(reason, uncoveredServices, insufficientBalances) {
+  if (reason === 'SERVICE_NOT_INCLUDED') {
+    if (uncoveredServices.length === 1) return `${uncoveredServices[0]} não está incluído no pacote deste cliente.`;
+    return `Os seguintes serviços não estão incluídos no pacote:\n• ${uncoveredServices.join('\n• ')}`;
+  }
+  if (reason === 'INSUFFICIENT_BALANCE' && insufficientBalances.length === 1) {
+    return `O cliente não possui créditos disponíveis de ${insufficientBalances[0]}.`;
+  }
+  if (reason === 'NO_SINGLE_PACKAGE') return 'Não existe um único pacote deste cliente que cubra todos os serviços do atendimento.';
+  if (reason === 'PACKAGE_EXPIRED') return 'Os pacotes compatíveis do cliente estão vencidos.';
+  if (reason === 'VEHICLE_MISMATCH') return 'Os pacotes disponíveis estão vinculados a outro veículo.';
+  return 'Este cliente não possui pacote disponível para este atendimento.';
+}
+
+function evaluateAppointmentPackages(db, appointmentId) {
   const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointmentId);
   if (!appointment) throw new AppError(404, 'Agendamento não encontrado.');
   const customer = resolveAppointmentCustomer(db, appointment);
-  const serviceIds = appointmentServiceIds(appointment);
-  return listCustomerPackages(db, { customer_id: customer.id })
+  const evaluations = listCustomerPackages(db, { customer_id: customer.id })
     .map((summary) => getCustomerPackage(db, summary.id))
-    .filter((cp) => cp && cp.can_reserve && cp.customer_id === customer.id)
-    .filter((cp) => vehicleMatches(db, appointment, cp))
-    .filter((cp) => serviceIds.every((id) => {
-      const balance = cp.balances.find((item) => Number(item.service_id) === id);
-      return balance && (balance.available >= 1 || Boolean(hasReserve(db, balance.id, appointment.id)));
-    }))
+    .map((cp) => ({ package: cp, evaluation: evaluatePackageEligibility(db, { appointment, customerPackage: cp }) }));
+  const packages = evaluations.filter((item) => item.evaluation.eligible)
     .sort((a, b) => {
-      if (a.expires_at && b.expires_at) return a.expires_at.localeCompare(b.expires_at) || a.id - b.id;
-      if (a.expires_at) return -1;
-      if (b.expires_at) return 1;
-      return a.id - b.id;
+      if (a.package.expires_at && b.package.expires_at) return a.package.expires_at.localeCompare(b.package.expires_at) || a.package.id - b.package.id;
+      if (a.package.expires_at) return -1;
+      if (b.package.expires_at) return 1;
+      return a.package.id - b.package.id;
     })
-    .map((cp) => ({
-      ...cp,
-      usage: cp.balances.filter((b) => serviceIds.includes(Number(b.service_id))).map((b) => {
-        const reservedHere = Boolean(hasReserve(db, b.id, appointment.id));
-        return {
-          service_id: b.service_id,
-          service_name: b.service_name,
-          quantity: 1,
-          before: b.available + (reservedHere ? 1 : 0),
-          after: b.available - (reservedHere ? 0 : 1)
-        };
-      })
-    }));
+    .map(({ package: cp, evaluation }) => ({ ...cp, usage: evaluation.projectedBalances }));
+
+  let reason = null;
+  let uncoveredServices = [];
+  let insufficientBalances = [];
+  if (!packages.length && evaluations.length) {
+    const serviceIds = appointmentServices(appointment).map((item) => item.service_id);
+    const onePackageIncludesAll = evaluations.some(({ evaluation }) => !evaluation.reasons.includes('SERVICE_NOT_INCLUDED'));
+    const collectivelyCovered = serviceIds.every((id) => evaluations.some(({ package: cp }) =>
+      cp.balances.some((balance) => Number(balance.service_id) === id)));
+    if (!onePackageIncludesAll && collectivelyCovered && serviceIds.length > 1) {
+      reason = 'NO_SINGLE_PACKAGE';
+    } else {
+      const preferred = evaluations.find(({ evaluation }) => !evaluation.reasons.includes('SERVICE_NOT_INCLUDED'))
+        || evaluations.find(({ evaluation }) => evaluation.reasons.includes('SERVICE_NOT_INCLUDED'))
+        || evaluations[0];
+      reason = preferred.evaluation.reasons[0] || 'NO_ELIGIBLE_PACKAGE';
+      uncoveredServices = preferred.evaluation.uncoveredServices.map((item) => item.service_name);
+      insufficientBalances = preferred.evaluation.insufficientBalances.map((item) => item.service_name);
+    }
+  }
+  return {
+    packages,
+    packagePaymentAvailable: packages.length > 0,
+    reason,
+    message: packages.length ? null : unavailableMessage(reason, uncoveredServices, insufficientBalances),
+    uncoveredServices,
+    insufficientBalances,
+    evaluations
+  };
+}
+
+function listEligiblePackagesForAppointment(db, appointmentId) {
+  return evaluateAppointmentPackages(db, appointmentId).packages;
 }
 
 function assertPackageBelongsToAppointment(db, appointment, customerPackageId) {
@@ -1097,14 +1194,15 @@ function completeAppointmentWithPackage(db, { appointmentId, customerPackageId, 
     const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointmentId);
     if (!appointment) throw new AppError(404, 'Agendamento não encontrado.');
     if (appointment.status === 'completed') return { appointment, alreadyCompleted: true, usage: [] };
-    const eligible = listEligiblePackagesForAppointment(db, appointment.id);
+    const availability = evaluateAppointmentPackages(db, appointment.id);
+    const eligible = availability.packages;
     let selectedId = customerPackageId ? Number(customerPackageId) : null;
     if (!selectedId && eligible.length === 1) selectedId = eligible[0].id;
     if (!selectedId && eligible.length > 1) throw new AppError(409, 'Escolha qual pacote será utilizado.');
-    if (!selectedId) throw new AppError(422, 'Este cliente não possui créditos suficientes para todos os serviços deste atendimento.');
+    if (!selectedId) throw new AppError(422, availability.message);
     assertPackageBelongsToAppointment(db, appointment, selectedId);
     const selected = eligible.find((cp) => Number(cp.id) === selectedId);
-    if (!selected) throw new AppError(422, 'O pacote selecionado não possui créditos válidos para todos os serviços deste atendimento.');
+    if (!selected) throw new AppError(422, availability.message || 'O pacote selecionado não possui créditos válidos para todos os serviços deste atendimento.');
 
     const serviceIds = appointmentServiceIds(appointment);
     reserveForAppointment(db, {
@@ -1157,6 +1255,8 @@ module.exports = {
   releaseForAppointment,
   consumeForAppointment,
   resetAppointmentPackage,
+  evaluatePackageEligibility,
+  evaluateAppointmentPackages,
   listEligiblePackagesForAppointment,
   assertPackageBelongsToAppointment,
   completeAppointmentWithPackage,

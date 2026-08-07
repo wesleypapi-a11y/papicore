@@ -187,8 +187,14 @@ function releaseForAppointment(req, res) {
 
 function availableForAppointment(req, res) {
   const db = getDb();
-  const packages = packageService.listEligiblePackagesForAppointment(db, Number(req.params.id));
+  const availability = packageService.evaluateAppointmentPackages(db, Number(req.params.id));
+  const packages = availability.packages;
   return res.json({
+    packagePaymentAvailable: availability.packagePaymentAvailable,
+    reason: availability.reason,
+    message: availability.message,
+    uncoveredServices: availability.uncoveredServices,
+    insufficientBalances: availability.insufficientBalances,
     packages,
     auto_selected_package_id: packages.length === 1 ? packages[0].id : null,
     requires_choice: packages.length > 1

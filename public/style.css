@@ -1417,6 +1417,9 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .completion-payment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .completion-payment { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; }
 .completion-payment:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.completion-payment:has(input:disabled) { cursor: not-allowed; opacity: .65; }
+.completion-payment span { display: flex; flex-direction: column; gap: 2px; }
+.completion-payment small { color: var(--muted); font-size: 11px; }
 .completion-package-title { display: flex; flex-direction: column; gap: 4px; color: var(--green); }
 .completion-package-title strong { color: var(--text); font-size: 17px; }
 .completion-balance { display: grid; gap: 6px; padding-top: 8px; }
