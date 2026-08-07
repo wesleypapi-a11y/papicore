@@ -14,6 +14,7 @@
 
 const { getDb } = require('../database/tenantDatabase');
 const packageService = require('../services/packageService');
+const { getAppointmentServicesForBusinessRules } = require('../services/appointmentService');
 const customerService = require('../services/customerService');
 const webhookService = require('../services/webhookService');
 const { AppError, parseCurrencyToCents } = require('../utils/helpers');
@@ -154,12 +155,7 @@ function reserveForAppointment(req, res) {
   if (!customerPackageId) throw new AppError(400, 'Informe o pacote a ser utilizado.');
   packageService.assertPackageBelongsToAppointment(db, appointment, customerPackageId);
 
-  const serviceIds = [];
-  if (appointment.services_json) {
-    const parsed = JSON.parse(appointment.services_json);
-    if (Array.isArray(parsed)) serviceIds.push(...parsed.map((s) => s.id));
-  }
-  if (!serviceIds.length && appointment.service_id) serviceIds.push(appointment.service_id);
+  const serviceIds = getAppointmentServicesForBusinessRules(db, appointment).map((service) => service.service_id);
 
   packageService.validateCoverage(db, customerPackageId, serviceIds);
 
@@ -187,7 +183,12 @@ function releaseForAppointment(req, res) {
 
 function availableForAppointment(req, res) {
   const db = getDb();
-  const availability = packageService.evaluateAppointmentPackages(db, Number(req.params.id));
+  const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(req.params.id));
+  if (!appointment) throw new AppError(404, 'Agendamento não encontrado.');
+  const services = getAppointmentServicesForBusinessRules(db, appointment);
+  const totalFinal = services.reduce((total, service) => total + (service.price * service.quantity), 0)
+    + (Number(appointment.modality_fee) || 0);
+  const availability = packageService.evaluateAppointmentPackages(db, appointment.id);
   const packages = availability.packages;
   return res.json({
     packagePaymentAvailable: availability.packagePaymentAvailable,
@@ -195,6 +196,9 @@ function availableForAppointment(req, res) {
     message: availability.message,
     uncoveredServices: availability.uncoveredServices,
     insufficientBalances: availability.insufficientBalances,
+    appointment,
+    services,
+    totalFinal,
     packages,
     auto_selected_package_id: packages.length === 1 ? packages[0].id : null,
     requires_choice: packages.length > 1

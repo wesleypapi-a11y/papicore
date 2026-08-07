@@ -38,6 +38,7 @@ const {
   formatCurrencyFromCents
 } = require('../utils/helpers');
 const customerService = require('./customerService');
+const { getAppointmentServicesForBusinessRules } = require('./appointmentService');
 
 const PACKAGE_STATUSES = ['ACTIVE', 'EXHAUSTED', 'EXPIRED', 'CANCELLED', 'SUSPENDED'];
 const TX_TYPES = [
@@ -561,8 +562,13 @@ function assertUsable(db, customerPackageId) {
 function hasReserve(db, balanceId, appointmentId) {
   return db.prepare(
     `SELECT * FROM package_transactions
-     WHERE balance_id = ? AND appointment_id = ? AND transaction_type = 'RESERVE'`
-  ).get(balanceId, appointmentId);
+     WHERE balance_id = ? AND appointment_id = ? AND transaction_type = 'RESERVE'
+       AND (SELECT COUNT(*) FROM package_transactions r
+            WHERE r.balance_id = ? AND r.appointment_id = ? AND r.transaction_type = 'RESERVE')
+         > (SELECT COUNT(*) FROM package_transactions t
+            WHERE t.balance_id = ? AND t.appointment_id = ? AND t.transaction_type IN ('RELEASE','CONSUME'))
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`
+  ).get(balanceId, appointmentId, balanceId, appointmentId, balanceId, appointmentId);
 }
 
 function hasConsume(db, balanceId, appointmentId) {
@@ -648,13 +654,13 @@ function consumePackageCredit(db, { customerPackageId, serviceId, quantity = 1, 
   const balance = getBalance(db, customerPackageId, serviceId);
   if (!balance) throw new AppError(400, 'O pacote não inclui este serviço.');
 
-  const reserve = appointmentId != null ? hasReserve(db, balance.id, appointmentId) : null;
-  if (!reserve) {
-    throw new AppError(400, 'Nenhuma reserva de crédito encontrada para este agendamento.');
-  }
   if (appointmentId != null && hasConsume(db, balance.id, appointmentId)) {
     const consumed = hasConsume(db, balance.id, appointmentId);
     return { consume: consumed, created: false };
+  }
+  const reserve = appointmentId != null ? hasReserve(db, balance.id, appointmentId) : null;
+  if (!reserve) {
+    throw new AppError(400, 'Nenhuma reserva de crédito encontrada para este agendamento.');
   }
 
   const before = availableOf(balance);
@@ -713,9 +719,6 @@ function releasePackageCredit(db, { balanceId, appointmentId, reason, userId }) 
   const reserve = hasReserve(db, balanceId, appointmentId);
   if (!reserve) return { released: null, created: false };
   if (hasConsume(db, balanceId, appointmentId)) return { released: null, created: false };
-  if (hasRelease(db, balanceId, appointmentId)) {
-    return { released: hasRelease(db, balanceId, appointmentId), created: false };
-  }
 
   const quantity = Number(reserve.quantity) || 1;
   const before = availableOf(balance);
@@ -963,8 +966,11 @@ function consumeForAppointmentUnsafe(db, { appointmentId, reason, userId }) {
   if (!['RESERVED', 'PACKAGE'].includes(appointment.package_credit_status)) return 0;
 
   const rows = db.prepare(
-    `SELECT DISTINCT balance_id, service_id FROM package_transactions
-     WHERE appointment_id = ? AND transaction_type = 'RESERVE'`
+    `SELECT balance_id, service_id FROM package_transactions
+     WHERE appointment_id = ?
+     GROUP BY balance_id, service_id
+     HAVING SUM(CASE WHEN transaction_type='RESERVE' THEN 1 ELSE 0 END)
+          > SUM(CASE WHEN transaction_type IN ('RELEASE','CONSUME') THEN 1 ELSE 0 END)`
   ).all(appointmentId);
   let consumed = 0;
   for (const row of rows) {
@@ -1013,13 +1019,7 @@ function resetAppointmentPackage(db, { appointmentId, reason, userId }) {
 }
 
 function appointmentServiceIds(appointment) {
-  let ids = [];
-  try {
-    const parsed = JSON.parse(appointment.services_json || '[]');
-    if (Array.isArray(parsed)) ids = parsed.map((item) => Number(item.id)).filter(Boolean);
-  } catch { ids = []; }
-  if (!ids.length && appointment.service_id) ids = [Number(appointment.service_id)];
-  return [...new Set(ids)];
+  return getAppointmentServicesForBusinessRules(getDb(), appointment).map((item) => item.service_id);
 }
 
 function resolveAppointmentCustomer(db, appointment) {
@@ -1046,20 +1046,11 @@ function vehicleMatches(db, appointment, customerPackage) {
 }
 
 function appointmentServices(appointment) {
-  let services = [];
-  try {
-    const parsed = JSON.parse(appointment.services_json || '[]');
-    if (Array.isArray(parsed)) {
-      services = parsed.map((item) => ({
-        service_id: Number(item.id),
-        service_name: item.name || item.service_name || null
-      })).filter((item) => item.service_id);
-    }
-  } catch { services = []; }
-  if (!services.length && appointment.service_id) {
-    services = [{ service_id: Number(appointment.service_id), service_name: appointment.service_name || null }];
-  }
-  return [...new Map(services.map((item) => [item.service_id, item])).values()];
+  return getAppointmentServicesForBusinessRules(getDb(), appointment).map((item) => ({
+    service_id: item.service_id,
+    service_name: item.name,
+    quantity: item.quantity
+  }));
 }
 
 /* Fonte única da regra de pagamento por pacote. Não altera saldos. */
@@ -1199,10 +1190,14 @@ function completeAppointmentWithPackage(db, { appointmentId, customerPackageId, 
     let selectedId = customerPackageId ? Number(customerPackageId) : null;
     if (!selectedId && eligible.length === 1) selectedId = eligible[0].id;
     if (!selectedId && eligible.length > 1) throw new AppError(409, 'Escolha qual pacote será utilizado.');
-    if (!selectedId) throw new AppError(422, availability.message);
+    if (!selectedId) throw new AppError(422,
+      availability.message || 'Os serviços atuais deste atendimento não são cobertos por um pacote.',
+      { code: 'PACKAGE_NOT_ELIGIBLE' });
     assertPackageBelongsToAppointment(db, appointment, selectedId);
     const selected = eligible.find((cp) => Number(cp.id) === selectedId);
-    if (!selected) throw new AppError(422, availability.message || 'O pacote selecionado não possui créditos válidos para todos os serviços deste atendimento.');
+    if (!selected) throw new AppError(422,
+      'Os serviços atuais deste atendimento não são cobertos por este pacote.',
+      { code: 'PACKAGE_NOT_ELIGIBLE' });
 
     const serviceIds = appointmentServiceIds(appointment);
     reserveForAppointment(db, {

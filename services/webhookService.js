@@ -20,6 +20,8 @@
 'use strict';
 
 const crypto = require('crypto');
+const { getDb } = require('../database/tenantDatabase');
+const { getAppointmentServicesForBusinessRules } = require('./appointmentService');
 const {
   getApiWebhookById,
   apiWebhookMatches,
@@ -49,14 +51,13 @@ function signPayload(secret, payloadString) {
 }
 
 function buildAppointmentPayload(appointment) {
-  const services = (() => {
-    try {
-      const parsed = JSON.parse(appointment.services_json || '[]');
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  })();
+  const services = getAppointmentServicesForBusinessRules(getDb(), appointment).map((service) => ({
+    id: service.service_id,
+    name: service.name,
+    quantity: service.quantity,
+    price: service.price,
+    duration_minutes: service.duration_minutes
+  }));
   return {
     type: 'appointment',
     id: appointment.id,

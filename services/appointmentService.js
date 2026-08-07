@@ -419,6 +419,50 @@ function insertAppointment(data) {
     .get(info.lastInsertRowid);
 }
 
+/*
+ * Fonte canônica dos serviços usados por regras de negócio. O snapshot em
+ * services_json representa o conjunto final e seus preços no atendimento.
+ * service_id é mantido como sentinela de coerência/compatibilidade: se ele não
+ * aparece no JSON (registros legados afetados pelo bug de edição), o valor
+ * mais recente de service_id prevalece e o JSON antigo é ignorado.
+ */
+function getAppointmentServicesForBusinessRules(db, appointmentOrId) {
+  const appointment = typeof appointmentOrId === 'object' && appointmentOrId
+    ? appointmentOrId
+    : db.prepare('SELECT * FROM appointments WHERE id = ?').get(Number(appointmentOrId));
+  if (!appointment) throw new AppError(404, 'Agendamento não encontrado.');
+
+  let parsed = [];
+  try {
+    const value = JSON.parse(appointment.services_json || '[]');
+    if (Array.isArray(value)) parsed = value;
+  } catch { parsed = []; }
+
+  const primaryId = Number(appointment.service_id) || null;
+  const jsonIds = parsed.map((item) => Number(item && (item.id || item.service_id))).filter(Boolean);
+  if (primaryId && jsonIds.length && !jsonIds.includes(primaryId)) parsed = [];
+
+  let services = parsed.map((item) => ({
+    service_id: Number(item && (item.id || item.service_id)),
+    name: item && (item.name || item.service_name) || null,
+    quantity: Math.max(1, Number(item && item.quantity) || 1),
+    price: Number(item && item.price) || 0,
+    duration_minutes: Number(item && item.duration_minutes) || 0
+  })).filter((item) => item.service_id);
+
+  if (!services.length && primaryId) {
+    const catalog = db.prepare('SELECT id, name FROM services WHERE id = ?').get(primaryId);
+    services = [{
+      service_id: primaryId,
+      name: (catalog && catalog.name) || appointment.service_name || null,
+      quantity: 1,
+      price: Number(appointment.service_price) || Number(appointment.total_price) || 0,
+      duration_minutes: Number(appointment.booked_duration_minutes) || 0
+    }];
+  }
+  return [...new Map(services.map((item) => [item.service_id, item])).values()];
+}
+
 function assertSlotAvailable({ appointment_date, end_date, start_time, end_time, unit, capacity }) {
   const conflicts = getConflicts(appointment_date, end_date || appointment_date, unit ? unit.id : null)
     .filter((c) => datetimeOverlap(
@@ -472,5 +516,6 @@ module.exports = {
   assertSlotAvailable,
   countOverlaps,
   calcServicePrice,
+  getAppointmentServicesForBusinessRules,
   getSettings
 };

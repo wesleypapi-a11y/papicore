@@ -6,6 +6,7 @@ const {
   validateAppointmentInput,
   insertAppointment,
   countOverlaps,
+  getAppointmentServicesForBusinessRules,
   getSettings
 } = require('../services/appointmentService');
 const packageService = require('../services/packageService');
@@ -191,12 +192,13 @@ function updateAppointment(req, res) {
     }
   }
 
-  db.prepare(
+  const persistEdit = db.transaction(() => {
+    db.prepare(
     `UPDATE appointments SET
        modality_id = ?, unit_id = ?, service_id = ?,
        customer_id = ?, vehicle_id = ?, customer_name = ?, customer_phone = ?, customer_email = ?, customer_cpf = ?,
        vehicle_model = ?, vehicle_year = ?, vehicle_plate = ?, vehicle_category = ?,
-       appointment_date = ?, start_time = ?, end_date = ?, end_time = ?, booked_duration_minutes = ?, service_name = ?,
+       appointment_date = ?, start_time = ?, end_date = ?, end_time = ?, booked_duration_minutes = ?, service_name = ?, services_json = ?,
        service_price = ?, modality_fee = ?, total_price = ?, price_is_estimate = ?, status = ?,
        address_zipcode = ?, address_street = ?, address_number = ?, address_complement = ?, address_neighborhood = ?,
        address_city = ?, address_state = ?, address_reference = ?,
@@ -224,6 +226,7 @@ function updateAppointment(req, res) {
     data.end_time,
     data.booked_duration_minutes,
     data.service_name,
+    data.services_json,
     data.service_price,
     data.modality_fee,
     data.total_price,
@@ -251,12 +254,7 @@ function updateAppointment(req, res) {
      - se o serviço mudou e havia crédito reservado, libera e limpa o vínculo;
      - se um pacote foi selecionado na edição, valida cobertura e reserva;
      - conclusão consome; cancelamento/recusa libera. */
-  const oldServiceIds = [];
-  if (existing.services_json) {
-    const parsed = JSON.parse(existing.services_json);
-    if (Array.isArray(parsed)) oldServiceIds.push(...parsed.map((s) => Number(s.id)));
-  }
-  if (!oldServiceIds.length && existing.service_id) oldServiceIds.push(Number(existing.service_id));
+  const oldServiceIds = getAppointmentServicesForBusinessRules(db, existing).map((service) => service.service_id);
   const newServiceIds = data.services.map((s) => Number(s.id));
   const serviceChanged = oldServiceIds.length !== newServiceIds.length ||
     oldServiceIds.some((id, i) => id !== newServiceIds[i]);
@@ -292,6 +290,8 @@ function updateAppointment(req, res) {
   if (data.status === 'cancelled' && existing.status !== 'cancelled') {
     packageService.releaseForAppointment(db, { appointmentId: existing.id, reason: 'Liberação por cancelamento do agendamento', userId: req.user ? req.user.id : null });
   }
+  });
+  persistEdit.immediate();
 
   const appointment = db
     .prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?')
@@ -427,7 +427,8 @@ function registerEntryOnCompletion(db, appointment) {
     : (Number(appointment.service_price) > 0 ? Number(appointment.service_price) : 0);
   if (amount <= 0) return;
 
-  let serviceId = appointment.service_id;
+  const finalServices = getAppointmentServicesForBusinessRules(db, appointment);
+  let serviceId = finalServices.length === 1 ? finalServices[0].service_id : appointment.service_id;
   if (serviceId) {
     const svc = db.prepare('SELECT id FROM services WHERE id = ?').get(serviceId);
     if (!svc) serviceId = null;

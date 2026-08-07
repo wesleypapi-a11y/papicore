@@ -48,6 +48,7 @@ const {
 } = require('../../database/coreDatabase');
 const { LONG_SERVICE_THRESHOLD_MINUTES } = require('../durationService');
 const packageService = require('../packageService');
+const { getAppointmentServicesForBusinessRules } = require('../appointmentService');
 const { formatMoney, formatPhone, normalizePhone } = require('../../utils/helpers');
 const mockProvider = require('./providers/mockProvider');
 const evolutionProvider = require('./providers/evolutionProvider');
@@ -283,15 +284,7 @@ function vehicleDescription(a) {
    service_name — usado no placeholder {{SERVICOS}}. */
 function servicesList(a) {
   if (!a) return '';
-  let names = [];
-  try {
-    const parsed = JSON.parse(a.services_json || '[]');
-    if (Array.isArray(parsed)) {
-      names = parsed
-        .map((s) => (typeof s === 'string' ? s : (s && (s.name || s.service_name)) || ''))
-        .filter(Boolean);
-    }
-  } catch { /* services_json corrompido não quebra a renderização */ }
+  const names = getAppointmentServicesForBusinessRules(getDb(), a).map((service) => service.name).filter(Boolean);
   return names.join(', ') || a.service_name || '';
 }
 

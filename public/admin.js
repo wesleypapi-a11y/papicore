@@ -1205,15 +1205,17 @@
   }
 
   async function openCompletionModal(id) {
-    const appointment = await api('/api/admin/appointments/' + id);
+    const packageDataInitial = await api(`/api/admin/appointments/${id}/packages/available`);
+    const appointment = packageDataInitial.appointment;
+    const finalServiceNames = packageDataInitial.services.map((service) => service.name).filter(Boolean).join(' + ');
     const overlay = openModal('Concluir atendimento', `
       <div class="completion-customer">
         <span class="muted">Cliente</span><strong>${escapeHtml(appointment.customer_name)}</strong>
         <div>📱 ${escapeHtml(displayPhone(appointment.customer_phone))}</div>
       </div>
       <div class="completion-section">
-        <strong>Serviços</strong><div>${escapeHtml(appointment.service_name || '—')}</div>
-        <div class="review-line"><span>Total</span><strong>${money(appointment.total_price)}</strong></div>
+        <strong>Serviços</strong><div>${escapeHtml(finalServiceNames || appointment.service_name || '—')}</div>
+        <div class="review-line"><span>Total</span><strong>${money(packageDataInitial.totalFinal)}</strong></div>
       </div>
       <div class="completion-section"><strong>Forma de pagamento</strong>
         <div class="completion-payment-grid">
@@ -1226,7 +1228,7 @@
     const confirm = overlay.querySelector('#confirmCompletion');
     const summary = overlay.querySelector('#completionPackageSummary');
     let selectedPackageId = null;
-    let packageData = null;
+    let packageData = packageDataInitial;
     const packageRadio = overlay.querySelector('[name="completionPayment"][value="package"]');
     const packageStatus = overlay.querySelector('#completionPackageStatus');
 
@@ -1272,17 +1274,9 @@
       if (radio.value === 'package') await loadPackages();
       else { selectedPackageId = null; summary.classList.add('hidden'); summary.innerHTML = ''; }
     }));
-    api(`/api/admin/appointments/${id}/packages/available`).then((data) => {
-      packageData = data;
-      packageRadio.disabled = !data.packagePaymentAvailable;
-      packageStatus.textContent = data.packagePaymentAvailable ? 'Disponível' : 'Indisponível';
-      if (!data.packagePaymentAvailable) showPackageOptions();
-    }).catch((error) => {
-      packageRadio.disabled = true;
-      packageStatus.textContent = 'Indisponível';
-      summary.classList.remove('hidden');
-      summary.innerHTML = `<div class="msg error">${escapeHtml(error.message)}</div>`;
-    });
+    packageRadio.disabled = !packageData.packagePaymentAvailable;
+    packageStatus.textContent = packageData.packagePaymentAvailable ? 'Disponível' : 'Indisponível';
+    if (!packageData.packagePaymentAvailable) showPackageOptions();
     confirm.addEventListener('click', async () => {
       const payment = overlay.querySelector('[name="completionPayment"]:checked');
       if (!payment) return;

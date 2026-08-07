@@ -39,6 +39,7 @@ const { openTenantDatabase, closeTenantDatabase, runWithTenant } = require('../d
 const packageService = require('../services/packageService');
 const customerService = require('../services/customerService');
 const adminController = require('../controllers/adminController');
+const webhookService = require('../services/webhookService');
 const { todayStr, toDateStr, addDays, formatCurrencyFromCents, normalizeBrazilianPhone } = require('../utils/helpers');
 
 const tests = [];
@@ -720,7 +721,7 @@ test('elegibilidade por serviço: pacote ativo incompatível retorna diagnóstic
     try {
       callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'package', customer_package_id: sold.id }, { id: 1, role: 'owner' });
     } catch (e) { error = e; }
-    assert(error && error.status === 422 && /não está incluído/i.test(error.message), 'API deve rejeitar pacote incompatível com erro controlado');
+    assert(error && error.status === 422 && error.extra && error.extra.code === 'PACKAGE_NOT_ELIGIBLE', 'API deve rejeitar pacote incompatível com erro controlado');
     assert(db.prepare('SELECT status FROM appointments WHERE id = ?').get(appt.id).status !== 'completed', 'atendimento não deve ser concluído');
     assert(db.prepare('SELECT COUNT(*) AS n FROM package_transactions WHERE appointment_id = ?').get(appt.id).n === txBefore, 'tentativa inválida não cria transação');
     assert(db.prepare("SELECT COUNT(*) AS n FROM whatsapp_outbox WHERE idempotency_key = ?").get(`PACKAGE_CREDIT_USED:${appt.id}`).n === outboxBefore, 'tentativa inválida não enfileira WhatsApp');
@@ -758,6 +759,119 @@ test('concorrência: saldo alterado após abrir modal é recalculado e sofre rol
     assert(error && error.status === 422, 'conclusão deve recalcular e rejeitar saldo alterado');
     assert(db.prepare('SELECT status FROM appointments WHERE id = ?').get(appt.id).status !== 'completed', 'rollback mantém atendimento aberto');
     assert(!db.prepare("SELECT id FROM package_transactions WHERE appointment_id = ? AND transaction_type IN ('RESERVE','CONSUME')").get(appt.id), 'rollback não deixa consumo parcial');
+  });
+});
+
+test('regressão crítica: editar Lavagem para Polimento invalida pacote antigo na conclusão', () => {
+  withDb(() => {
+    const phone = '(21) 99999-1111';
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Somente Lavagem',
+      price: '100',
+      items: [{ service_id: serviceA.id, quantity: 1 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, {
+      package_id: pkg.id,
+      customer: { name: 'Serviço Editado', phone }
+    }, 1);
+    const originalBody = appointmentBody(sold.id, serviceA, {
+      customer_phone: phone,
+      customer_package_id: sold.id,
+      appointment_date: dayPlus(12),
+      start_time: '09:00'
+    });
+    const appt = callController(adminController.createAppointment, null, originalBody, { id: 1, role: 'owner' }).result;
+
+    const editedBody = appointmentBody(null, serviceC, {
+      customer_phone: phone,
+      appointment_date: dayPlus(12),
+      start_time: '09:00',
+      status: appt.status
+    });
+    callController(adminController.updateAppointment, { id: appt.id }, editedBody, { id: 1, role: 'owner' });
+
+    const edited = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appt.id);
+    const finalSnapshot = JSON.parse(edited.services_json);
+    assert(edited.service_id === serviceC.id && finalSnapshot.length === 1 && finalSnapshot[0].id === serviceC.id,
+      'service_id e services_json devem apontar para o serviço final');
+    assert(edited.service_name === serviceC.name && Number(edited.total_price) > 0,
+      'nome e total devem ser recalculados na edição');
+    assert(edited.package_credit_status === 'NONE' && edited.customer_package_id === null,
+      'reserva antiga deve ser removida do atendimento');
+    assert(packageService.getCustomerPackage(db, sold.id).totals.reserved === 0,
+      'crédito reservado de Lavagem deve ser liberado');
+
+    let error = null;
+    try {
+      callController(adminController.completeAppointment, { id: appt.id }, {
+        payment_method: 'package',
+        customer_package_id: sold.id
+      }, { id: 1, role: 'owner' });
+    } catch (e) { error = e; }
+
+    assert(error && error.status === 422, 'pacote antigo deve ser rejeitado após a troca do serviço');
+    assert(db.prepare('SELECT status FROM appointments WHERE id = ?').get(appt.id).status !== 'completed',
+      'atendimento editado não pode ser concluído com pacote incompatível');
+    assert(packageService.getCustomerPackage(db, sold.id).totals.consumed === 0,
+      'nenhum crédito pode ser consumido');
+  });
+});
+
+test('edição para outro serviço coberto reserva e consome somente o serviço final', () => {
+  withDb(() => {
+    const phone = '(22) 99999-1111';
+    const pkg = packageService.createServicePackage(db, {
+      name: 'Lavagem e Higienização', price: '180',
+      items: [{ service_id: serviceA.id, quantity: 1 }, { service_id: serviceC.id, quantity: 1 }]
+    }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Troca Coberta', phone } }, 1);
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(sold.id, serviceA, { customer_phone: phone, customer_package_id: sold.id, appointment_date: dayPlus(13) }),
+      { id: 1, role: 'owner' }).result;
+    callController(adminController.updateAppointment, { id: appt.id },
+      appointmentBody(sold.id, serviceC, { customer_phone: phone, customer_package_id: sold.id, appointment_date: dayPlus(13), status: appt.status }),
+      { id: 1, role: 'owner' });
+
+    const done = callController(adminController.completeAppointment, { id: appt.id },
+      { payment_method: 'package', customer_package_id: sold.id }, { id: 1, role: 'owner' }).result;
+    assert(done.appointment.status === 'completed', 'troca para serviço coberto deve concluir');
+    const consumed = db.prepare("SELECT b.service_id FROM package_transactions pt JOIN customer_package_balances b ON b.id=pt.balance_id WHERE pt.appointment_id=? AND pt.transaction_type='CONSUME'").all(appt.id);
+    assert(consumed.length === 1 && consumed[0].service_id === serviceC.id, 'somente o serviço final deve ser consumido');
+  });
+});
+
+test('modal antigo e services_json legado não autorizam pacote após mudança concorrente', () => {
+  withDb(() => {
+    const phone = '(23) 99999-1111';
+    const pkg = packageService.createServicePackage(db, { name: 'Snapshot Antigo', price: '80', items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Concorrente', phone } }, 1);
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceA, { customer_phone: phone, appointment_date: dayPlus(14) }), { id: 1, role: 'owner' }).result;
+    assert(packageService.evaluateAppointmentPackages(db, appt.id).packagePaymentAvailable, 'preview inicial deve estar elegível');
+
+    db.prepare('UPDATE appointments SET service_id=?, service_name=? WHERE id=?').run(serviceC.id, serviceC.name, appt.id);
+    const guarded = packageService.evaluateAppointmentPackages(db, appt.id);
+    assert(!guarded.packagePaymentAvailable && guarded.uncoveredServices.includes(serviceC.name),
+      'service_id mais recente deve neutralizar services_json legado divergente');
+    let error = null;
+    try { packageService.completeAppointmentWithPackage(db, { appointmentId: appt.id, customerPackageId: sold.id, userId: 1 }); } catch (e) { error = e; }
+    assert(error && error.extra && error.extra.code === 'PACKAGE_NOT_ELIGIBLE', 'confirmação deve recalcular e rejeitar o modal antigo');
+    assert(packageService.getCustomerPackage(db, sold.id).totals.consumed === 0, 'rejeição concorrente não consome crédito');
+  });
+});
+
+test('serviços finais editados alimentam preview e webhook de conclusão', () => {
+  withDb(() => {
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceA, { customer_phone: '(24) 99999-1111', appointment_date: dayPlus(15) }), { id: 1, role: 'owner' }).result;
+    const edited = callController(adminController.updateAppointment, { id: appt.id },
+      appointmentBody(null, serviceC, { customer_phone: '(24) 99999-1111', appointment_date: dayPlus(15), status: appt.status }),
+      { id: 1, role: 'owner' }).result;
+    const preview = callController(require('../controllers/packageController').availableForAppointment, { id: appt.id }, null, { id: 1, role: 'owner' }).result;
+    const payload = webhookService.buildAppointmentPayload(edited);
+    assert(preview.services.length === 1 && preview.services[0].service_id === serviceC.id, 'preview deve exibir o serviço final');
+    assert(payload.services.length === 1 && payload.services[0].id === serviceC.id, 'webhook deve publicar o serviço final');
+    assert(Number(preview.totalFinal) === Number(edited.total_price), 'preview e atendimento devem usar o mesmo total final');
   });
 });
 
