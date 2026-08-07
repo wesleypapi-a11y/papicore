@@ -16,6 +16,7 @@
 
 require('dotenv').config();
 
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -203,15 +204,41 @@ app.use('/api', resolveTenantByHost);
 app.use('/api', publicRoutes);
 
 /* Páginas */
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
+
+/*
+ * admin.html referencia /admin.js e /style.css sem parâmetro de versão, e
+ * PWA instalado na tela inicial (iOS/Android) cacheia esses arquivos de
+ * forma bem mais agressiva que uma aba comum — a URL nunca muda, então o
+ * app pode continuar servindo uma cópia antiga desses dois arquivos por
+ * dias mesmo depois de um deploy novo. Servir admin.html com ?v=<mtime>
+ * nos dois <link>/<script> resolve isso: sempre que qualquer um dos dois
+ * arquivos muda, a URL referenciada muda junto, e uma URL nova nunca é
+ * servida do cache (nem o do WebKit do PWA).
+ */
+function versionedAdminHtml() {
+  const html = fs.readFileSync(path.join(__dirname, 'public', 'admin.html'), 'utf8');
+  const version = Math.round(Math.max(
+    fs.statSync(path.join(__dirname, 'public', 'admin.js')).mtimeMs,
+    fs.statSync(path.join(__dirname, 'public', 'style.css')).mtimeMs
+  ));
+  return html
+    .replace('src="/admin.js"', `src="/admin.js?v=${version}"`)
+    .replace('href="/style.css"', `href="/style.css?v=${version}"`);
+}
+
+function sendAdminHtml(req, res) {
+  /* A própria página HTML também não deve ficar em cache — só os arquivos
+     versionados (/admin.js?v=…) podem, com segurança, ser cacheados por
+     muito tempo, já que a URL muda a cada alteração. */
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(versionedAdminHtml());
+}
+
+app.get('/admin', sendAdminHtml);
 
 /* Redefinição de senha: mesma página do admin, em outro "modo" (o token vem
    na query string e é lido pelo front-end). Ver public/admin.js. */
-app.get('/admin/redefinir-senha', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
+app.get('/admin/redefinir-senha', sendAdminHtml);
 
 app.get('/desenvolvedor', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'desenvolvedor.html'));
