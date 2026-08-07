@@ -108,7 +108,8 @@ const EVENTS = {
   CANCELLED: 'APPOINTMENT_CANCELLED',
   RESCHEDULED: 'APPOINTMENT_RESCHEDULED',
   COMPLETED: 'APPOINTMENT_COMPLETED',
-  COMPLETED_PACKAGE: 'APPOINTMENT_COMPLETED_PACKAGE'
+  COMPLETED_PACKAGE: 'APPOINTMENT_COMPLETED_PACKAGE',
+  PACKAGE_CREDIT_USED: 'PACKAGE_CREDIT_USED'
 };
 
 /* APPOINTMENT_REQUESTED_CLIENT é o nome exigido pela plataforma; o banco
@@ -130,7 +131,8 @@ const EVENT_LABELS = {
   [EVENTS.CANCELLED]: 'Cancelamento',
   [EVENTS.RESCHEDULED]: 'Reagendamento',
   [EVENTS.COMPLETED]: 'Conclusão',
-  [EVENTS.COMPLETED_PACKAGE]: 'Conclusão — pacote'
+  [EVENTS.COMPLETED_PACKAGE]: 'Conclusão — pacote',
+  [EVENTS.PACKAGE_CREDIT_USED]: 'Créditos de pacote utilizados'
 };
 
 /* Lista fechada de placeholders permitidos nos modelos. Qualquer outro token
@@ -156,6 +158,7 @@ const ALLOWED_PLACEHOLDERS = new Set([
   'MODALIDADE',
   'VALOR',
   'SALDO_PACOTE',
+  'CREDITOS_USADOS',
   'DATA_CONCLUSAO',
   'HORA_CONCLUSAO',
   'LINK_ADMIN'
@@ -331,11 +334,18 @@ function packageBalanceBlock(a) {
   const db = getDb();
   const cp = packageService.getCustomerPackage(db, a.customer_package_id);
   if (!cp || !Array.isArray(cp.balances) || !cp.balances.length) return '';
-  const lines = cp.balances
-    .filter((b) => Number(b.available) > 0)
-    .map((b) => `${b.service_name}: ${b.available} disponíve${b.available === 1 ? 'l' : 'is'}`);
-  if (!lines.length) return 'Pacote esgotado.';
+  const lines = cp.balances.map((b) => `• ${b.service_name}: ${b.available} crédito${b.available === 1 ? '' : 's'}`);
   return lines.join('\n');
+}
+
+function creditsUsedBlock(a) {
+  if (!a || !a.id) return '';
+  const db = getDb();
+  return db.prepare(`SELECT b.service_name_snapshot AS name, SUM(pt.quantity) AS quantity
+    FROM package_transactions pt JOIN customer_package_balances b ON b.id=pt.balance_id
+    WHERE pt.appointment_id=? AND pt.transaction_type='CONSUME'
+    GROUP BY b.service_name_snapshot ORDER BY b.id`).all(a.id)
+    .map((row) => `• ${row.name}: ${row.quantity} crédito${Number(row.quantity) === 1 ? '' : 's'}`).join('\n');
 }
 
 /* ---------- Placeholders ---------- */
@@ -394,12 +404,14 @@ function resolvePlaceholders(eventKey, appointment, opts = {}) {
     MODALIDADE: a.modality_name || '—',
     VALOR: formatMoney(Number(a.total_price)),
     SALDO_PACOTE: '',
+    CREDITOS_USADOS: '',
     DATA_CONCLUSAO: opts.conclusionDate || dateNow(),
     HORA_CONCLUSAO: opts.conclusionTime || timeNow(),
     LINK_ADMIN: opts.linkAdmin || '/admin'
   };
-  if (canonicalEventKey(eventKey) === EVENTS.COMPLETED_PACKAGE) {
+  if ([EVENTS.COMPLETED_PACKAGE, EVENTS.PACKAGE_CREDIT_USED].includes(canonicalEventKey(eventKey))) {
     values.SALDO_PACOTE = packageBalanceBlock(a);
+    values.CREDITOS_USADOS = creditsUsedBlock(a);
   }
   return values;
 }

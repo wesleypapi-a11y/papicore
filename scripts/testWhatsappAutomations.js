@@ -4,7 +4,7 @@
  *
  * Testes do módulo WhatsApp (mensagens automáticas, MOCK por padrão):
  *   - migração: tabelas whatsapp_message_templates/whatsapp_outbox, seed de
- *     7 modelos padrão neutros e marco whatsapp_v1;
+ *     8 modelos padrão neutros e marcos de migração;
  *   - criação pública: mensagens ao cliente E à loja (APPOINTMENT_REQUESTED_*);
  *   - confirmação (accept) → APPOINTMENT_CONFIRMED;
  *   - cancelamento → APPOINTMENT_CANCELLED;
@@ -187,7 +187,7 @@ async function flush(db) {
 
 /* ---------- Testes ---------- */
 
-test('migração: tabelas de WhatsApp + 7 modelos padrão + marco whatsapp_v1', () => {
+test('migração: tabelas de WhatsApp + 8 modelos padrão + marco whatsapp_v1', () => {
   core.initCore();
   const coreTenant = core.getTenantById(1);
   assert(coreTenant, 'tenant padrão torque-detail existe');
@@ -205,7 +205,7 @@ test('migração: tabelas de WhatsApp + 7 modelos padrão + marco whatsapp_v1', 
     assert(marker, 'migração whatsapp_v1 registrada em schema_migrations');
 
     const templates = db.prepare('SELECT * FROM whatsapp_message_templates ORDER BY id ASC').all();
-    assert(templates.length === 7, `7 modelos padrão (veio ${templates.length})`);
+    assert(templates.length === 8, `8 modelos padrão (veio ${templates.length})`);
     const keys = templates.map((t) => t.event_key);
     for (const k of [
       'APPOINTMENT_REQUESTED_CUSTOMER',
@@ -215,6 +215,7 @@ test('migração: tabelas de WhatsApp + 7 modelos padrão + marco whatsapp_v1', 
       'APPOINTMENT_RESCHEDULED',
       'APPOINTMENT_COMPLETED',
       'APPOINTMENT_COMPLETED_PACKAGE'
+      ,'PACKAGE_CREDIT_USED'
     ]) {
       assert(keys.includes(k), `modelo ${k} presente`);
     }
@@ -302,8 +303,8 @@ test('conclusão sem pacote → APPOINTMENT_COMPLETED (veículo pronto, sem sald
   const appt = created.result;
   await flush(db);
 
-  const done = callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' });
-  assert(done.result.status === 'completed', 'concluído');
+  const done = callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'cash' });
+  assert(done.result.appointment.status === 'completed', 'concluído');
   await flush(db);
 
   const rows = outboxFor(db, 'APPOINTMENT_COMPLETED', appt.id);
@@ -317,7 +318,7 @@ test('conclusão sem pacote → APPOINTMENT_COMPLETED (veículo pronto, sem sald
   assert(entry, 'entrada financeira criada na conclusão');
 });
 
-test('conclusão com pacote → APPOINTMENT_COMPLETED_PACKAGE com saldo pós-consumo', async () => {
+test('conclusão com pacote → PACKAGE_CREDIT_USED com saldo pós-consumo', async () => {
   const service = pickService();
   const pkg = withDb(() => packageService.createServicePackage(db, {
     name: 'Pacote WA',
@@ -332,20 +333,20 @@ test('conclusão com pacote → APPOINTMENT_COMPLETED_PACKAGE com saldo pós-con
   assert(appt.package_credit_status === 'RESERVED', 'crédito reservado na criação');
   await flush(db);
 
-  const done = callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' });
-  assert(done.result.status === 'completed', 'concluído');
-  assert(done.result.package_credit_status === 'CONSUMED', 'crédito consumido');
+  const done = callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'package', customer_package_id: sold.id });
+  assert(done.result.appointment.status === 'completed', 'concluído');
+  assert(done.result.appointment.package_credit_status === 'CONSUMED', 'crédito consumido');
   await flush(db);
 
   /* Não é conclusão comum: o evento de pacote é separado. */
   const normal = outboxFor(db, 'APPOINTMENT_COMPLETED', appt.id);
   assert(normal.length === 0, 'sem evento de conclusão comum');
-  const rows = outboxFor(db, 'APPOINTMENT_COMPLETED_PACKAGE', appt.id);
+  const rows = outboxFor(db, 'PACKAGE_CREDIT_USED', appt.id);
   assert(rows.length === 1, `uma conclusão de pacote (veio ${rows.length})`);
   assert(rows[0].status === 'SIMULATED', 'simulada');
   const text = rows[0].message_text || '';
-  assert(text.includes('Saldo restante do seu pacote'), 'bloco de saldo presente');
-  assert(text.includes('2 disponíveis'), `saldo pós-consumo (3-1=2) presente (veio: ${text})`);
+  assert(text.includes('Saldo restante'), 'bloco de saldo presente');
+  assert(text.includes('2 créditos'), `saldo pós-consumo (3-1=2) presente (veio: ${text})`);
 });
 
 test('idempotência: duplo clique na conclusão não duplica o envio', async () => {
@@ -353,9 +354,9 @@ test('idempotência: duplo clique na conclusão não duplica o envio', async () 
   const appt = created.result;
   await flush(db);
 
-  callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' });
+  callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'cash' });
   /* segunda chamada: transição já não existe → nada é enfileirado de novo */
-  callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' });
+  callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'cash' });
   await flush(db);
 
   const rows = outboxFor(db, 'APPOINTMENT_COMPLETED', appt.id);
@@ -381,8 +382,8 @@ test('falha de envio NÃO desfaz a conclusão (outbox fica FAILED, agendamento c
     const appt = created.result;
     await flush(db);
 
-    const done = callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' });
-    assert(done.result.status === 'completed', 'agendamento continua concluído mesmo com falha de WhatsApp');
+    const done = callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'cash' });
+    assert(done.result.appointment.status === 'completed', 'agendamento continua concluído mesmo com falha de WhatsApp');
     await flush(db);
 
     const rows = outboxFor(db, 'APPOINTMENT_COMPLETED', appt.id);
@@ -484,7 +485,7 @@ test('modo MOCK: nenhuma chamada a API externa', async () => {
     const created = callController(agendamentoController.createAppointmentPublic, null, appointmentBody({ customer_phone: '(11) 97777-8888' }));
     const appt = created.result;
     await flush(db);
-    callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' });
+    callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'cash' });
     await flush(db);
 
     assert(fetchCalls === 0, `MOCK não deve chamar fetch (chamadas: ${fetchCalls})`);
@@ -524,7 +525,7 @@ test('isolamento entre tenants: outbox de A não vaza para B', async () => {
   assert(countB === 0, `B não tem nenhuma mensagem (veio ${countB})`);
 
   const templatesB = withDbFor(dbB, () => dbB.prepare('SELECT COUNT(*) AS total FROM whatsapp_message_templates').get().total);
-  assert(templatesB === 7, `B também nasce com 7 modelos (veio ${templatesB})`);
+  assert(templatesB === 8, `B também nasce com 8 modelos (veio ${templatesB})`);
 
   closeTenantDatabase('tenant_0002_isolado.db');
 });

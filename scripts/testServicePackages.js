@@ -39,7 +39,7 @@ const { openTenantDatabase, closeTenantDatabase, runWithTenant } = require('../d
 const packageService = require('../services/packageService');
 const customerService = require('../services/customerService');
 const adminController = require('../controllers/adminController');
-const { todayStr, toDateStr, addDays, formatCurrencyFromCents } = require('../utils/helpers');
+const { todayStr, toDateStr, addDays, formatCurrencyFromCents, normalizeBrazilianPhone } = require('../utils/helpers');
 
 const tests = [];
 function test(name, fn) {
@@ -562,7 +562,7 @@ test('agendamento com pacote: criação RESERVED; conclusão CONSUMED sem lança
     const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Agenda', phone: '(11) 96666-5555' } }, 1);
 
     const created = callController(adminController.createAppointment, null,
-      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id }), { id: 1, name: 'Admin', role: 'owner' });
+      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id, customer_phone: '(11) 96666-5555' }), { id: 1, name: 'Admin', role: 'owner' });
     const appt = created.result;
     assert(appt && appt.id, 'agendamento criado');
     assert(appt.payment_source === 'PACKAGE', `payment_source PACKAGE (veio ${appt.payment_source})`);
@@ -575,9 +575,9 @@ test('agendamento com pacote: criação RESERVED; conclusão CONSUMED sem lança
     assert(afterReserve.totals.reserved === 1, `reservado 1 (veio ${afterReserve.totals.reserved})`);
 
     /* conclusão */
-    const done = callController(adminController.updateStatus, { id: appt.id }, { status: 'completed' }, { id: 1, name: 'Admin', role: 'owner' });
-    assert(done.result.status === 'completed', 'concluído');
-    assert(done.result.package_credit_status === 'CONSUMED', `crédito CONSUMED (veio ${done.result.package_credit_status})`);
+    const done = callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'package', customer_package_id: sold.id }, { id: 1, name: 'Admin', role: 'owner' });
+    assert(done.result.appointment.status === 'completed', 'concluído');
+    assert(done.result.appointment.package_credit_status === 'CONSUMED', `crédito CONSUMED (veio ${done.result.appointment.package_credit_status})`);
     const entry = db.prepare('SELECT * FROM financial_entries WHERE appointment_id = ?').get(appt.id);
     assert(!entry, 'agendamento PACKAGE NÃO gera entrada financeira na conclusão');
     const afterConsume = packageService.getCustomerPackage(db, sold.id);
@@ -585,7 +585,7 @@ test('agendamento com pacote: criação RESERVED; conclusão CONSUMED sem lança
 
     /* novo agendamento + cancelamento libera */
     const created2 = callController(adminController.createAppointment, null,
-      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id, customer_phone: '(11) 96666-5555', start_time: '10:00', appointment_date: dayPlus(2) }), { id: 1, name: 'Admin', role: 'owner' });
+      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id, customer_phone: '(11) 96666-5555', start_time: '10:00', appointment_date: dayPlus(3) }), { id: 1, name: 'Admin', role: 'owner' });
     const appt2 = created2.result;
     const cancelled = callController(adminController.updateStatus, { id: appt2.id }, { status: 'cancelled' }, { id: 1, name: 'Admin', role: 'owner' });
     assert(cancelled.result.package_credit_status === 'RELEASED', `crédito RELEASED (veio ${cancelled.result.package_credit_status})`);
@@ -604,7 +604,7 @@ test('agendamento com pacote: excluir agendamento libera o crédito', () => {
     const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Exclui', phone: '(11) 95555-4444' } }, 1);
 
     const created = callController(adminController.createAppointment, null,
-      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id, start_time: '11:00' }), { id: 1, name: 'Admin', role: 'owner' });
+      appointmentBody(sold.id, serviceA, { customer_package_id: sold.id, customer_phone: '(11) 95555-4444', start_time: '11:00' }), { id: 1, name: 'Admin', role: 'owner' });
     const appt = created.result;
     assert(appt.package_credit_status === 'RESERVED', 'reserva feita');
 
@@ -626,6 +626,80 @@ test('cliente reutilizado por telefone; busca por nome retorna o cliente', () =>
 
     const list = customerService.searchCustomers(db, 'João');
     assert(list.some((c) => c.name === 'João Silva'), 'busca por nome encontra João');
+  });
+});
+
+test('telefone brasileiro canônico: formatos nacionais e +55 resolvem o mesmo customer', () => {
+  withDb(() => {
+    const variants = ['(12) 99999-8888', '12 99999-8888', '12999998888', '+55 12 99999-8888', '5512999998888'];
+    assert(variants.every((phone) => normalizeBrazilianPhone(phone) === '5512999998888'), 'todos os formatos devem gerar E.164 canônico');
+    const first = customerService.findOrCreateCustomer(db, { name: 'Telefone Canônico', phone: variants[0] }).customer;
+    const second = customerService.findOrCreateCustomer(db, { name: 'Mesmo Cliente', phone: variants[3] }).customer;
+    assert(first.id === second.id, 'mesmo telefone deve reutilizar customer_id');
+    assert(first.phone === '5512999998888', 'telefone armazenado no padrão canônico');
+  });
+});
+
+test('segurança: pacote de outro cliente é rejeitado', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, { name: 'Pacote Proprietário', price: '50', items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Proprietário', phone: '(13) 99999-1111' } }, 1);
+    const created = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceA, { customer_phone: '(13) 99999-2222', start_time: '13:00' }), { id: 1, role: 'owner' }).result;
+    let error = null;
+    try { packageService.assertPackageBelongsToAppointment(db, created, sold.id); } catch (e) { error = e; }
+    assert(error && error.status === 422 && /não pertence/i.test(error.message), 'pacote alheio deve retornar erro controlado');
+  });
+});
+
+test('atomicidade: falha no segundo serviço desfaz a primeira reserva', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, { name: 'Pacote Atômico', price: '70', items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Atômico', phone: '(14) 99999-1111' } }, 1);
+    let error = null;
+    try {
+      packageService.reserveForAppointment(db, { customerPackageId: sold.id, serviceIds: [serviceA.id, serviceC.id], appointmentId: 987654, userId: 1 });
+    } catch (e) { error = e; }
+    assert(error && /não inclui/i.test(error.message), 'segundo serviço deve falhar');
+    const refreshed = packageService.getCustomerPackage(db, sold.id);
+    assert(refreshed.totals.reserved === 0 && refreshed.totals.available === 1, 'rollback deve remover a reserva parcial');
+    assert(!db.prepare("SELECT id FROM package_transactions WHERE appointment_id=? AND transaction_type='RESERVE'").get(987654), 'histórico parcial também deve sofrer rollback');
+  });
+});
+
+test('conclusão automática: único pacote, consumo idempotente e evento no outbox', () => {
+  withDb(() => {
+    const pkg = packageService.createServicePackage(db, { name: 'Pacote Automático', price: '90', validity_days: 20, items: [{ service_id: serviceA.id, quantity: 2 }] }, 1);
+    const sold = packageService.sellPackage(db, { package_id: pkg.id, customer: { name: 'Auto', phone: '(15) 99999-1111' } }, 1);
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceA, { customer_phone: '+55 15 99999-1111', start_time: '14:00', appointment_date: dayPlus(4) }), { id: 1, role: 'owner' }).result;
+    const first = callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'package' }, { id: 1, role: 'owner' }).result;
+    assert(first.appointment.status === 'completed' && first.appointment.customer_package_id === sold.id, 'único pacote deve ser selecionado automaticamente');
+    assert(packageService.getCustomerPackage(db, sold.id).totals.consumed === 1, 'um crédito consumido');
+    const outbox = db.prepare("SELECT * FROM whatsapp_outbox WHERE event_key='PACKAGE_CREDIT_USED' AND idempotency_key=?").get(`PACKAGE_CREDIT_USED:${appt.id}`);
+    assert(outbox && outbox.status === 'PENDING', 'evento deve estar no outbox, sem envio direto');
+    const second = callController(adminController.completeAppointment, { id: appt.id }, { payment_method: 'package' }, { id: 1, role: 'owner' }).result;
+    assert(second.alreadyCompleted === true, 'segunda conclusão deve ser idempotente');
+    assert(packageService.getCustomerPackage(db, sold.id).totals.consumed === 1, 'segunda conclusão não consome novamente');
+  });
+});
+
+test('elegibilidade: expira primeiro vem primeiro e veículo diferente é excluído', () => {
+  withDb(() => {
+    const customer = { name: 'Múltiplos', phone: '(16) 99999-1111' };
+    const latePkg = packageService.createServicePackage(db, { name: 'Vence Depois', price: '50', validity_days: 60, items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const earlyPkg = packageService.createServicePackage(db, { name: 'Vence Antes', price: '50', validity_days: 10, items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const late = packageService.sellPackage(db, { package_id: latePkg.id, customer }, 1);
+    const early = packageService.sellPackage(db, { package_id: earlyPkg.id, customer }, 1);
+    const appt = callController(adminController.createAppointment, null,
+      appointmentBody(null, serviceA, { customer_phone: customer.phone, start_time: '15:00', appointment_date: dayPlus(5) }), { id: 1, role: 'owner' }).result;
+    const eligible = packageService.listEligiblePackagesForAppointment(db, appt.id);
+    assert(eligible.length >= 2 && eligible[0].id === early.id && eligible.some((p) => p.id === late.id), 'pacote com validade mais próxima deve ser sugerido primeiro');
+
+    const vehiclePkg = packageService.createServicePackage(db, { name: 'Outro Veículo', price: '50', is_vehicle_bound: true, items: [{ service_id: serviceA.id, quantity: 1 }] }, 1);
+    const bound = packageService.sellPackage(db, { package_id: vehiclePkg.id, customer_id: early.customer_id, vehicle: { model: 'Civic', plate: 'ZZZ9Z99' } }, 1);
+    const afterBound = packageService.listEligiblePackagesForAppointment(db, appt.id);
+    assert(!afterBound.some((p) => p.id === bound.id), 'pacote vinculado a outro veículo não pode ser elegível');
   });
 });
 

@@ -1185,7 +1185,7 @@
         try {
           if (action === 'accept') await confirmAction('Aceitar este agendamento?', `/api/admin/appointments/${id}/accept`, 'PATCH', null, () => renderAgendaOrAppointments());
           if (action === 'reject') openRejectModal(id);
-          if (action === 'complete') await confirmAction('Marcar como concluído?', `/api/admin/appointments/${id}/status`, 'PATCH', { status: 'completed' }, () => renderAgendaOrAppointments());
+          if (action === 'complete') await openCompletionModal(id);
           if (action === 'cancel') await confirmAction('Cancelar este agendamento?', `/api/admin/appointments/${id}/status`, 'PATCH', { status: 'cancelled' }, () => renderAgendaOrAppointments());
           if (action === 'delete') await confirmAction('Excluir definitivamente este agendamento?', `/api/admin/appointments/${id}`, 'DELETE', null, () => renderAgendaOrAppointments());
           if (action === 'detail') openDetailModal(id);
@@ -1194,6 +1194,87 @@
           toast(e.message, 'error');
         }
       });
+    });
+  }
+
+  function displayPhone(phone) {
+    const d = String(phone || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
+    if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return phone || '—';
+  }
+
+  async function openCompletionModal(id) {
+    const appointment = await api('/api/admin/appointments/' + id);
+    const overlay = openModal('Concluir atendimento', `
+      <div class="completion-customer">
+        <span class="muted">Cliente</span><strong>${escapeHtml(appointment.customer_name)}</strong>
+        <div>📱 ${escapeHtml(displayPhone(appointment.customer_phone))}</div>
+      </div>
+      <div class="completion-section">
+        <strong>Serviços</strong><div>${escapeHtml(appointment.service_name || '—')}</div>
+        <div class="review-line"><span>Total</span><strong>${money(appointment.total_price)}</strong></div>
+      </div>
+      <div class="completion-section"><strong>Forma de pagamento</strong>
+        <div class="completion-payment-grid">
+          ${[['pix','Pix'],['cash','Dinheiro'],['card','Cartão'],['other','Outro'],['package','Pacote / Créditos']].map(([value,label]) =>
+            `<label class="completion-payment"><input type="radio" name="completionPayment" value="${value}"><span>${label}</span></label>`).join('')}
+        </div>
+      </div>
+      <div id="completionPackageSummary" class="completion-package-summary hidden"></div>
+    `, `<button class="btn btn-ghost" data-close>Cancelar</button><button class="btn btn-primary" id="confirmCompletion" disabled>Confirmar atendimento</button>`);
+    const confirm = overlay.querySelector('#confirmCompletion');
+    const summary = overlay.querySelector('#completionPackageSummary');
+    let selectedPackageId = null;
+    let packageData = null;
+
+    const packageSummaryHtml = (pkg) => `
+      <div class="completion-package-title"><span>✓ Pacote encontrado</span><strong>${escapeHtml(pkg.package_name_snapshot)}</strong></div>
+      <div class="muted">Validade: ${pkg.expires_at ? toDateBR(pkg.expires_at) : 'Sem validade'}</div>
+      <div class="completion-balance"><strong>Créditos atuais</strong>${pkg.usage.map((u) => `<div class="review-line"><span>${escapeHtml(u.service_name)}</span><strong>${u.before}</strong></div>`).join('')}</div>
+      <div class="completion-balance after"><strong>Após concluir ficará</strong>${pkg.usage.map((u) => `<div class="review-line"><span>${escapeHtml(u.service_name)}</span><strong>${u.after}</strong></div>`).join('')}</div>`;
+
+    const loadPackages = async () => {
+      summary.classList.remove('hidden');
+      summary.innerHTML = '<span class="muted">Localizando créditos do cliente…</span>';
+      packageData = await api(`/api/admin/appointments/${id}/packages/available`);
+      if (!packageData.packages.length) {
+        selectedPackageId = null;
+        summary.innerHTML = '<div class="msg error">Este cliente não possui créditos suficientes para todos os serviços deste atendimento.</div>';
+        confirm.disabled = true;
+        return;
+      }
+      if (packageData.packages.length === 1) {
+        selectedPackageId = packageData.packages[0].id;
+        summary.innerHTML = packageSummaryHtml(packageData.packages[0]);
+        confirm.disabled = false;
+        return;
+      }
+      selectedPackageId = null;
+      summary.innerHTML = `<strong>Escolha qual pacote deseja utilizar</strong><div class="completion-package-choices">${packageData.packages.map((pkg) =>
+        `<label class="choice"><input type="radio" name="completionPackage" value="${pkg.id}"><span>${escapeHtml(pkg.package_name_snapshot)}${pkg.expires_at ? ` · até ${toDateBR(pkg.expires_at)}` : ''}</span></label>`).join('')}</div><div id="chosenPackageSummary"></div>`;
+      summary.querySelectorAll('[name="completionPackage"]').forEach((radio) => radio.addEventListener('change', () => {
+        selectedPackageId = Number(radio.value);
+        const pkg = packageData.packages.find((item) => item.id === selectedPackageId);
+        summary.querySelector('#chosenPackageSummary').innerHTML = packageSummaryHtml(pkg);
+        confirm.disabled = false;
+      }));
+    };
+    overlay.querySelectorAll('[name="completionPayment"]').forEach((radio) => radio.addEventListener('change', async () => {
+      confirm.disabled = false;
+      if (radio.value === 'package') await loadPackages();
+      else { selectedPackageId = null; summary.classList.add('hidden'); summary.innerHTML = ''; }
+    }));
+    confirm.addEventListener('click', async () => {
+      const payment = overlay.querySelector('[name="completionPayment"]:checked');
+      if (!payment) return;
+      confirm.disabled = true;
+      try {
+        await api(`/api/admin/appointments/${id}/complete`, { method: 'POST', body: JSON.stringify({ payment_method: payment.value, customer_package_id: selectedPackageId }) });
+        closeModal();
+        toast('Atendimento concluído.', 'success');
+        renderAgendaOrAppointments();
+      } catch (e) { confirm.disabled = false; toast(e.message, 'error'); }
     });
   }
 
@@ -1511,24 +1592,7 @@
     const catOpts = Object.keys(CATEGORY_LABELS).map((k) => `<option value="${k}">${CATEGORY_LABELS[k]}</option>`).join('');
     const statusOpts = STATUS_BADGES.map((s) => `<option value="${s}">${STATUS_LABELS[s]}</option>`).join('');
 
-    /* Pacotes vendidos utilizáveis (usados para escolher crédito no agendamento). */
-    state.customerPackages = await api('/api/admin/customer-packages').catch(() => []);
-
     const v = (field, def) => (appt && appt[field] != null ? appt[field] : def);
-
-    const packageOptsFor = (serviceId) => {
-      const usable = state.customerPackages.filter((cp) => cp.can_reserve);
-      return usable.map((cp) => {
-        let label = `${cp.package_name} — ${cp.totals ? cp.totals.available : 0} crédito(s)`;
-        if (serviceId && cp.balances) {
-          const bal = cp.balances.find((b) => b.service_id === serviceId);
-          if (bal) label = `${cp.package_name} — ${bal.available} × ${bal.service_name}`;
-          else return '';
-        }
-        if (cp.expires_at) label += ` · válido até ${toDateBR(cp.expires_at)}`;
-        return `<option value="${cp.id}">${escapeHtml(label)}</option>`;
-      }).filter(Boolean).join('');
-    };
 
     openModal(id ? 'Editar agendamento' : 'Novo agendamento', `
       <form id="apptForm" novalidate>
@@ -1539,12 +1603,6 @@
             <select id="apptUnit"><option value="">—</option>${unitOpts}</select></div>
           <div class="field span-2"><label>Serviço</label>
             <select id="apptService"><option value="">—</option>${serviceOpts}</select></div>
-          <div class="field span-2"><label>Pacote de serviços</label>
-            <select id="apptPackage">
-              <option value="">Sem pacote (pagamento normal)</option>
-              ${packageOptsFor('')}
-            </select>
-            <div class="muted" style="font-size:12px;">Ao selecionar um pacote, o serviço acima é reservado do saldo do cliente.</div></div>
           <div class="field">${fieldHtml('apptName', 'Nome', v('customer_name'), 'text', 'Cliente')}</div>
           <div class="field">${fieldHtml('apptPhone', 'Telefone', v('customer_phone'), 'text', '(00) 00000-0000')}</div>
           <div class="field">${fieldHtml('apptBrand', 'Marca', v('vehicle_brand'), 'text', 'Marca')}</div>
@@ -1587,26 +1645,9 @@
       $('apptCategory').value = appt.vehicle_category;
       $('apptStatus').value = appt.status;
       $('apptPayment').value = appt.payment_method || '';
-      if (appt.customer_package_id) {
-        const sel = $('apptPackage');
-        const existing = sel.querySelector(`option[value="${appt.customer_package_id}"]`);
-        if (!existing) {
-          const cp = state.customerPackages.find((x) => x.id === appt.customer_package_id);
-          sel.insertAdjacentHTML('beforeend', `<option value="${appt.customer_package_id}">${escapeHtml(cp ? cp.package_name : 'Pacote ' + appt.customer_package_id)}</option>`);
-        }
-        sel.value = String(appt.customer_package_id);
-      }
     } else if (prefill && prefill.unitId) {
       $('apptUnit').value = prefill.unitId;
     }
-    const refreshPackageOpts = () => {
-      const sel = $('apptPackage');
-      const current = appt && appt.customer_package_id ? String(appt.customer_package_id) : (sel.value || '');
-      const serviceId = Number($('apptService').value) || 0;
-      sel.innerHTML = `<option value="">Sem pacote (pagamento normal)</option>${packageOptsFor(serviceId)}`;
-      if (current && sel.querySelector(`option[value="${current}"]`)) sel.value = current;
-    };
-    $('apptService').addEventListener('change', refreshPackageOpts);
     const toggleManualEnd = () => {
       const on = $('apptManualEnd').checked;
       $('apptEndWrap').hidden = !on;
@@ -1632,8 +1673,7 @@
         start_time: $('apptTime').value,
         status: $('apptStatus').value,
         payment_method: $('apptPayment').value || null,
-        customer_notes: $('apptNotes').value || null,
-        customer_package_id: $('apptPackage').value ? Number($('apptPackage').value) : null
+        customer_notes: $('apptNotes').value || null
       };
       if (manualEnd) {
         body.manual_end = 1;
@@ -1745,7 +1785,7 @@
         if (action === 'edit') { closeModal(); openAppointmentModal(id); return; }
         if (action === 'reject') { closeModal(); openRejectModal(id); return; }
         if (action === 'accept') { confirmAction('Aceitar este agendamento?', `/api/admin/appointments/${id}/accept`, 'PATCH', null, () => { closeModal(); renderAgendaOrAppointments(); }); return; }
-        if (action === 'complete') { confirmAction('Marcar como concluído?', `/api/admin/appointments/${id}/status`, 'PATCH', { status: 'completed' }, () => { closeModal(); renderAgendaOrAppointments(); }); return; }
+        if (action === 'complete') { closeModal(); openCompletionModal(id); return; }
         if (action === 'cancel') { confirmAction('Cancelar este agendamento?', `/api/admin/appointments/${id}/status`, 'PATCH', { status: 'cancelled' }, () => { closeModal(); renderAgendaOrAppointments(); }); return; }
         if (action === 'delete') { confirmAction('Excluir definitivamente este agendamento?', `/api/admin/appointments/${id}`, 'DELETE', null, () => { closeModal(); renderAgendaOrAppointments(); }); }
       });
@@ -2941,7 +2981,8 @@
     APPOINTMENT_CANCELLED: 'Cancelamento',
     APPOINTMENT_RESCHEDULED: 'Reagendamento',
     APPOINTMENT_COMPLETED: 'Conclusão',
-    APPOINTMENT_COMPLETED_PACKAGE: 'Conclusão — pacote'
+    APPOINTMENT_COMPLETED_PACKAGE: 'Conclusão — pacote',
+    PACKAGE_CREDIT_USED: 'Créditos de pacote utilizados'
   };
 
   const WHATSAPP_STATUS_LABELS = {

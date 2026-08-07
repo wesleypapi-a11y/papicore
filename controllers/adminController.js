@@ -9,6 +9,7 @@ const {
   getSettings
 } = require('../services/appointmentService');
 const packageService = require('../services/packageService');
+const customerService = require('../services/customerService');
 const { enqueueEvent, EVENTS } = require('../services/whatsappService');
 const webhookService = require('../services/webhookService');
 const {
@@ -123,6 +124,7 @@ function createAppointment(req, res) {
   /* Pacote de serviços (Fase 1): reserva o crédito ao criar o agendamento. */
   const serviceIds = data.services.map((s) => s.id);
   if (req.body.customer_package_id) {
+    packageService.assertPackageBelongsToAppointment(db, appointment, req.body.customer_package_id);
     packageService.validateCoverage(db, req.body.customer_package_id, serviceIds);
     packageService.reserveForAppointment(db, {
       customerPackageId: req.body.customer_package_id,
@@ -163,6 +165,9 @@ function updateAppointment(req, res) {
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
 
   const data = validateAppointmentInput(req.body, { allowStatus: true });
+  const customer = customerService.ensureCustomerFromAppointment(db, data).customer;
+  const vehicleResult = data.vehicle_plate ? customerService.ensureVehicleFromAppointment(db, customer.id, data) : null;
+  const vehicle = vehicleResult && vehicleResult.vehicle ? vehicleResult.vehicle : null;
   const settings = getSettings();
   const capacity = data.unit ? (data.unit.capacity || 1) : (settings.capacity || 1);
 
@@ -189,7 +194,7 @@ function updateAppointment(req, res) {
   db.prepare(
     `UPDATE appointments SET
        modality_id = ?, unit_id = ?, service_id = ?,
-       customer_name = ?, customer_phone = ?, customer_email = ?, customer_cpf = ?,
+       customer_id = ?, vehicle_id = ?, customer_name = ?, customer_phone = ?, customer_email = ?, customer_cpf = ?,
        vehicle_brand = ?, vehicle_model = ?, vehicle_year = ?, vehicle_plate = ?, vehicle_color = ?, vehicle_category = ?,
        appointment_date = ?, start_time = ?, end_date = ?, end_time = ?, booked_duration_minutes = ?, service_name = ?,
        service_price = ?, modality_fee = ?, total_price = ?, price_is_estimate = ?, status = ?,
@@ -203,6 +208,8 @@ function updateAppointment(req, res) {
     data.modality_id,
     data.unit_id,
     data.service_id,
+    customer.id,
+    vehicle ? vehicle.id : null,
     data.customer_name,
     data.customer_phone,
     data.customer_email,
@@ -264,6 +271,8 @@ function updateAppointment(req, res) {
     });
   }
   if (req.body.customer_package_id) {
+    const ownershipAppointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(existing.id);
+    packageService.assertPackageBelongsToAppointment(db, ownershipAppointment, req.body.customer_package_id);
     packageService.validateCoverage(db, req.body.customer_package_id, newServiceIds);
     packageService.reserveForAppointment(db, {
       customerPackageId: req.body.customer_package_id,
@@ -313,6 +322,7 @@ function updateStatus(req, res) {
   const db = getDb();
   const { status } = req.body || {};
   if (!STATUSES.includes(status)) throw new AppError(400, 'Status inválido.');
+  if (status === 'completed') throw new AppError(400, 'Conclua o atendimento informando a forma de pagamento.');
 
   const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
   if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
@@ -358,6 +368,45 @@ function updateStatus(req, res) {
   }
 
   return res.json(appointment);
+}
+
+function completeAppointment(req, res) {
+  const db = getDb();
+  const method = String(req.body && req.body.payment_method || '').toLowerCase();
+  if (!['cash', 'pix', 'card', 'other', 'package'].includes(method)) {
+    throw new AppError(400, 'Selecione a forma de pagamento do atendimento.');
+  }
+  let result;
+  if (method === 'package') {
+    result = packageService.completeAppointmentWithPackage(db, {
+      appointmentId: Number(req.params.id),
+      customerPackageId: req.body.customer_package_id || null,
+      userId: req.user ? req.user.id : null
+    });
+  } else {
+    const operation = db.transaction(() => {
+      const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(req.params.id);
+      if (!existing) throw new AppError(404, 'Agendamento não encontrado.');
+      if (existing.status === 'completed') return { appointment: existing, alreadyCompleted: true };
+      if (existing.package_credit_status === 'RESERVED') {
+        packageService.releaseForAppointment(db, { appointmentId: existing.id, reason: 'Conclusão sem uso de pacote', userId: req.user ? req.user.id : null });
+      }
+      db.prepare(`UPDATE appointments SET status='completed', completion_payment_method=?, payment_source='NORMAL',
+        payment_method=?, completed_by_user_id=?, completed_at=datetime('now', 'localtime'),
+        updated_at=datetime('now', 'localtime') WHERE id=? AND status!='completed'`)
+        .run(method, method === 'cash' ? 'local' : method, req.user ? req.user.id : null, existing.id);
+      const current = db.prepare('SELECT * FROM appointments WHERE id = ?').get(existing.id);
+      registerEntryOnCompletion(db, current);
+      return { appointment: current, alreadyCompleted: false };
+    });
+    result = operation.immediate();
+  }
+  const appointment = db.prepare(APPOINTMENT_SELECT + ' WHERE a.id = ?').get(req.params.id);
+  if (!result.alreadyCompleted) {
+    enqueueWhatsapp(method === 'package' ? EVENTS.PACKAGE_CREDIT_USED : EVENTS.COMPLETED, appointment, req);
+    webhookService.fire(req, webhookService.WEBHOOK_EVENTS.APPOINTMENT_COMPLETED, webhookService.buildAppointmentPayload(appointment));
+  }
+  return res.json({ ...result, appointment });
 }
 
 /*
@@ -571,6 +620,7 @@ module.exports = {
   createAppointment,
   updateAppointment,
   updateStatus,
+  completeAppointment,
   acceptAppointment,
   rejectAppointment,
   deleteAppointment,

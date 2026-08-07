@@ -1410,6 +1410,18 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 }
 .modal-close:hover { color: var(--text); }
 .modal-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
+.completion-customer, .completion-section, .completion-package-summary {
+  display: grid; gap: 8px; padding: 14px 0; border-bottom: 1px solid var(--border);
+}
+.completion-customer strong { font-size: 18px; }
+.completion-payment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.completion-payment { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; }
+.completion-payment:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.completion-package-title { display: flex; flex-direction: column; gap: 4px; color: var(--green); }
+.completion-package-title strong { color: var(--text); font-size: 17px; }
+.completion-balance { display: grid; gap: 6px; padding-top: 8px; }
+.completion-balance.after { padding: 10px; border-radius: 12px; background: var(--accent-soft); }
+.completion-package-choices { display: grid; gap: 8px; }
 
 .form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 14px; }
 .form-grid .span-2 { grid-column: span 2; }

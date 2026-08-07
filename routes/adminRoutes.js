@@ -57,6 +57,7 @@ router.get('/appointments/:id', adminController.getAppointment);
 router.post('/appointments', adminController.createAppointment);
 router.put('/appointments/:id', adminController.updateAppointment);
 router.patch('/appointments/:id/status', adminController.updateStatus);
+router.post('/appointments/:id/complete', adminController.completeAppointment);
 router.patch('/appointments/:id/accept', adminController.acceptAppointment);
 router.patch('/appointments/:id/reject', adminController.rejectAppointment);
 router.delete('/appointments/:id', adminController.deleteAppointment);
@@ -80,6 +81,7 @@ router.get('/customers/:id', packageController.getCustomer);
 /* Reserva/liberação de crédito do pacote em um agendamento. */
 router.post('/appointments/:id/package/reserve', packageController.reserveForAppointment);
 router.post('/appointments/:id/package/release', packageController.releaseForAppointment);
+router.get('/appointments/:id/packages/available', packageController.availableForAppointment);
 
 router.get('/blocked-schedules', blockedScheduleController.list);
 router.post('/blocked-schedules', blockedScheduleController.create);

@@ -16,7 +16,7 @@
  * negócio, garantindo isolamento total entre empresas.
  */
 
-const { addMinutes, parseWorkingDays } = require('../utils/helpers');
+const { addMinutes, parseWorkingDays, normalizeBrazilianPhone } = require('../utils/helpers');
 
 /* ---------- Introspection ---------- */
 
@@ -722,6 +722,23 @@ const WHATSAPP_DEFAULT_TEMPLATES = [
       '',
       'Obrigado pela preferência!'
     ].join('\n')
+  },
+  {
+    event_key: 'PACKAGE_CREDIT_USED',
+    name: 'Créditos de pacote utilizados',
+    content: [
+      'Olá, {{CLIENTE_NOME}}! 👋',
+      '',
+      'Seu veículo já está pronto. 🚗✨',
+      '',
+      'Utilizamos os seguintes créditos do seu pacote:',
+      '{{CREDITOS_USADOS}}',
+      '',
+      'Saldo restante:',
+      '{{SALDO_PACOTE}}',
+      '',
+      'Obrigado por escolher {{EMPRESA_NOME}}.'
+    ].join('\n')
   }
 ];
 
@@ -983,6 +1000,65 @@ function migrateServicePackagesV1(db) {
   db.prepare("UPDATE appointments SET package_quantity = 0 WHERE package_quantity IS NULL").run();
 }
 
+/* Identidade de clientes v2. Duplicados nunca são mesclados: ficam no
+   relatório e sem phone_normalized, enquanto números inequívocos recebem a
+   chave canônica e podem ser protegidos por índice UNIQUE parcial. */
+function migrateCustomerIdentityV2(db) {
+  ensureColumn(db, 'customers', 'phone_normalized', 'TEXT');
+  ensureColumn(db, 'appointments', 'customer_id', 'INTEGER REFERENCES customers(id)');
+  ensureColumn(db, 'appointments', 'vehicle_id', 'INTEGER REFERENCES vehicles(id)');
+  ensureColumn(db, 'appointments', 'completion_payment_method', 'TEXT');
+  ensureColumn(db, 'appointments', 'completed_by_user_id', 'INTEGER');
+  ensureColumn(db, 'appointments', 'completed_at', 'TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS customer_phone_conflicts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone_normalized TEXT NOT NULL,
+      customer_ids_json TEXT NOT NULL,
+      details_json TEXT,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      detected_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      UNIQUE(phone_normalized)
+    );
+  `);
+
+  const grouped = new Map();
+  for (const row of db.prepare('SELECT id, name, phone, cpf FROM customers ORDER BY id').all()) {
+    const normalized = normalizeBrazilianPhone(row.phone);
+    if (!normalized) continue;
+    if (!grouped.has(normalized)) grouped.set(normalized, []);
+    grouped.get(normalized).push(row);
+  }
+  const setCanonical = db.prepare('UPDATE customers SET phone = ?, phone_normalized = ? WHERE id = ?');
+  const clearCanonical = db.prepare('UPDATE customers SET phone_normalized = NULL WHERE id = ?');
+  const conflict = db.prepare(`INSERT INTO customer_phone_conflicts
+    (phone_normalized, customer_ids_json, details_json) VALUES (?, ?, ?)
+    ON CONFLICT(phone_normalized) DO UPDATE SET customer_ids_json=excluded.customer_ids_json,
+      details_json=excluded.details_json, detected_at=datetime('now', 'localtime')`);
+  for (const [phone, rows] of grouped) {
+    if (rows.length === 1) setCanonical.run(phone, phone, rows[0].id);
+    else {
+      rows.forEach((row) => clearCanonical.run(row.id));
+      conflict.run(phone, JSON.stringify(rows.map((row) => row.id)), JSON.stringify(rows));
+    }
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_customers_phone_normalized
+      ON customers(phone_normalized) WHERE phone_normalized IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_appointments_customer ON appointments(customer_id);
+    CREATE INDEX IF NOT EXISTS idx_appointments_vehicle ON appointments(vehicle_id);
+  `);
+
+  const uniqueCustomer = db.prepare('SELECT id FROM customers WHERE phone_normalized = ?');
+  const linkAppointment = db.prepare('UPDATE appointments SET customer_id = ?, customer_phone = ? WHERE id = ?');
+  for (const appt of db.prepare('SELECT id, customer_phone FROM appointments WHERE customer_id IS NULL').all()) {
+    const phone = normalizeBrazilianPhone(appt.customer_phone);
+    if (!phone) continue;
+    const customer = uniqueCustomer.get(phone);
+    if (customer) linkAppointment.run(customer.id, phone, appt.id);
+  }
+}
+
 /* WhatsApp (mensagens automáticas): tabelas já nascem em createTables; aqui
    garantimos índices e o seed dos modelos padrão NEUTROS (sem sobrescrever
    edições do tenant — INSERT OR IGNORE). Idempotente via schema_migrations. */
@@ -1006,6 +1082,12 @@ function migrateWhatsappV1(db) {
 function migrateWhatsappV2(db) {
   db.exec(whatsappMessageHistoryDDL);
   ensureColumn(db, 'whatsapp_outbox', 'processed_at', 'TEXT');
+}
+
+function migratePackageCreditWhatsappV1(db) {
+  const template = WHATSAPP_DEFAULT_TEMPLATES.find((item) => item.event_key === 'PACKAGE_CREDIT_USED');
+  db.prepare(`INSERT OR IGNORE INTO whatsapp_message_templates (event_key, name, content, enabled)
+    VALUES (?, ?, ?, 1)`).run(template.event_key, template.name, template.content);
 }
 
 /* Documentos legais v1 — tabelas + seed dos documentos padrão NEUTROS.
@@ -1161,6 +1243,11 @@ function upgradeSchema(db) {
     markMigration(db, 'service_packages_v1');
   }
 
+  if (!migrationApplied(db, 'customer_identity_v2')) {
+    migrateCustomerIdentityV2(db);
+    markMigration(db, 'customer_identity_v2');
+  }
+
   /* WhatsApp (mensagens automáticas): seed dos modelos padrão + marco. */
   if (!migrationApplied(db, 'whatsapp_v1')) {
     migrateWhatsappV1(db);
@@ -1171,6 +1258,10 @@ function upgradeSchema(db) {
   if (!migrationApplied(db, 'whatsapp_v2')) {
     migrateWhatsappV2(db);
     markMigration(db, 'whatsapp_v2');
+  }
+  if (!migrationApplied(db, 'package_credit_whatsapp_v1')) {
+    migratePackageCreditWhatsappV1(db);
+    markMigration(db, 'package_credit_whatsapp_v1');
   }
 
   /* Documentos legais (LGPD): tabelas + seed dos documentos padrão. */

@@ -900,7 +900,7 @@ function validateCoverage(db, customerPackageId, serviceIds) {
 }
 
 /* Reserva créditos para todos os serviços de um agendamento recém-criado. */
-function reserveForAppointment(db, { customerPackageId, serviceIds, appointmentId, reason, userId }) {
+function reserveForAppointmentUnsafe(db, { customerPackageId, serviceIds, appointmentId, reason, userId }) {
   const cp = db.prepare('SELECT * FROM customer_packages WHERE id = ?').get(customerPackageId);
   if (!cp) throw new AppError(404, 'Pacote do cliente não encontrado.');
   const ids = [...new Set(serviceIds.map(Number))];
@@ -933,7 +933,7 @@ function reserveForAppointment(db, { customerPackageId, serviceIds, appointmentI
 }
 
 /* Libera (no cancelamento/exclusão) os créditos reservados de um agendamento. */
-function releaseForAppointment(db, { appointmentId, reason, userId }) {
+function releaseForAppointmentUnsafe(db, { appointmentId, reason, userId }) {
   const dbCurrent = db;
   const appointment = dbCurrent.prepare('SELECT * FROM appointments WHERE id = ?').get(appointmentId);
   if (!appointment) return 0;
@@ -957,7 +957,7 @@ function releaseForAppointment(db, { appointmentId, reason, userId }) {
 }
 
 /* Consome (na conclusão) os créditos reservados de um agendamento. */
-function consumeForAppointment(db, { appointmentId, reason, userId }) {
+function consumeForAppointmentUnsafe(db, { appointmentId, reason, userId }) {
   const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointmentId);
   if (!appointment) return 0;
   if (!['RESERVED', 'PACKAGE'].includes(appointment.package_credit_status)) return 0;
@@ -981,6 +981,23 @@ function consumeForAppointment(db, { appointmentId, reason, userId }) {
   return consumed;
 }
 
+function runAtomic(db, fn) {
+  if (db.inTransaction) return fn();
+  return db.transaction(fn).immediate();
+}
+
+function reserveForAppointment(db, args) {
+  return runAtomic(db, () => reserveForAppointmentUnsafe(db, args));
+}
+
+function releaseForAppointment(db, args) {
+  return runAtomic(db, () => releaseForAppointmentUnsafe(db, args));
+}
+
+function consumeForAppointment(db, args) {
+  return runAtomic(db, () => consumeForAppointmentUnsafe(db, args));
+}
+
 /* Pacifica/limpa vínculos de pacote ao reverter um agendamento (edição de serviço). */
 function resetAppointmentPackage(db, { appointmentId, reason, userId }) {
   releaseForAppointment(db, { appointmentId, reason, userId });
@@ -993,6 +1010,127 @@ function resetAppointmentPackage(db, { appointmentId, reason, userId }) {
        package_quantity = 0
      WHERE id = ?`
   ).run(appointmentId);
+}
+
+function appointmentServiceIds(appointment) {
+  let ids = [];
+  try {
+    const parsed = JSON.parse(appointment.services_json || '[]');
+    if (Array.isArray(parsed)) ids = parsed.map((item) => Number(item.id)).filter(Boolean);
+  } catch { ids = []; }
+  if (!ids.length && appointment.service_id) ids = [Number(appointment.service_id)];
+  return [...new Set(ids)];
+}
+
+function resolveAppointmentCustomer(db, appointment) {
+  if (appointment.customer_id) {
+    const customer = customerService.findCustomerById(db, appointment.customer_id);
+    if (customer) return customer;
+  }
+  const result = customerService.ensureCustomerFromAppointment(db, appointment);
+  db.prepare('UPDATE appointments SET customer_id = ?, customer_phone = ? WHERE id = ?')
+    .run(result.customer.id, result.customer.phone, appointment.id);
+  appointment.customer_id = result.customer.id;
+  return result.customer;
+}
+
+function vehicleMatches(db, appointment, customerPackage) {
+  if (!customerPackage.vehicle_id) return true;
+  if (appointment.vehicle_id) return Number(appointment.vehicle_id) === Number(customerPackage.vehicle_id);
+  if (!appointment.vehicle_plate) return false;
+  const vehicle = customerService.findVehicleByPlate(db, appointment.customer_id, appointment.vehicle_plate);
+  if (!vehicle) return false;
+  db.prepare('UPDATE appointments SET vehicle_id = ? WHERE id = ?').run(vehicle.id, appointment.id);
+  appointment.vehicle_id = vehicle.id;
+  return Number(vehicle.id) === Number(customerPackage.vehicle_id);
+}
+
+function listEligiblePackagesForAppointment(db, appointmentId) {
+  const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointmentId);
+  if (!appointment) throw new AppError(404, 'Agendamento não encontrado.');
+  const customer = resolveAppointmentCustomer(db, appointment);
+  const serviceIds = appointmentServiceIds(appointment);
+  return listCustomerPackages(db, { customer_id: customer.id })
+    .map((summary) => getCustomerPackage(db, summary.id))
+    .filter((cp) => cp && cp.can_reserve && cp.customer_id === customer.id)
+    .filter((cp) => vehicleMatches(db, appointment, cp))
+    .filter((cp) => serviceIds.every((id) => {
+      const balance = cp.balances.find((item) => Number(item.service_id) === id);
+      return balance && (balance.available >= 1 || Boolean(hasReserve(db, balance.id, appointment.id)));
+    }))
+    .sort((a, b) => {
+      if (a.expires_at && b.expires_at) return a.expires_at.localeCompare(b.expires_at) || a.id - b.id;
+      if (a.expires_at) return -1;
+      if (b.expires_at) return 1;
+      return a.id - b.id;
+    })
+    .map((cp) => ({
+      ...cp,
+      usage: cp.balances.filter((b) => serviceIds.includes(Number(b.service_id))).map((b) => {
+        const reservedHere = Boolean(hasReserve(db, b.id, appointment.id));
+        return {
+          service_id: b.service_id,
+          service_name: b.service_name,
+          quantity: 1,
+          before: b.available + (reservedHere ? 1 : 0),
+          after: b.available - (reservedHere ? 0 : 1)
+        };
+      })
+    }));
+}
+
+function assertPackageBelongsToAppointment(db, appointment, customerPackageId) {
+  const customer = resolveAppointmentCustomer(db, appointment);
+  const cp = getCustomerPackage(db, customerPackageId);
+  if (!cp) throw new AppError(404, 'Pacote do cliente não encontrado.');
+  if (Number(cp.customer_id) !== Number(customer.id)) {
+    throw new AppError(422, 'Este pacote não pertence ao cliente deste agendamento.');
+  }
+  if (!vehicleMatches(db, appointment, cp)) {
+    throw new AppError(422, 'Este pacote está vinculado a outro veículo.');
+  }
+  return cp;
+}
+
+function completeAppointmentWithPackage(db, { appointmentId, customerPackageId, userId }) {
+  const operation = db.transaction(() => {
+    const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointmentId);
+    if (!appointment) throw new AppError(404, 'Agendamento não encontrado.');
+    if (appointment.status === 'completed') return { appointment, alreadyCompleted: true, usage: [] };
+    const eligible = listEligiblePackagesForAppointment(db, appointment.id);
+    let selectedId = customerPackageId ? Number(customerPackageId) : null;
+    if (!selectedId && eligible.length === 1) selectedId = eligible[0].id;
+    if (!selectedId && eligible.length > 1) throw new AppError(409, 'Escolha qual pacote será utilizado.');
+    if (!selectedId) throw new AppError(422, 'Este cliente não possui créditos suficientes para todos os serviços deste atendimento.');
+    assertPackageBelongsToAppointment(db, appointment, selectedId);
+    const selected = eligible.find((cp) => Number(cp.id) === selectedId);
+    if (!selected) throw new AppError(422, 'O pacote selecionado não possui créditos válidos para todos os serviços deste atendimento.');
+
+    const serviceIds = appointmentServiceIds(appointment);
+    reserveForAppointment(db, {
+      customerPackageId: selectedId,
+      serviceIds,
+      appointmentId: appointment.id,
+      reason: `Reserva na conclusão do agendamento ${appointment.appointment_code}`,
+      userId
+    });
+    consumeForAppointment(db, {
+      appointmentId: appointment.id,
+      reason: 'Consumo na conclusão do atendimento',
+      userId
+    });
+    db.prepare(`UPDATE appointments SET status='completed', completion_payment_method='package',
+      payment_source='PACKAGE', payment_method=NULL, completed_by_user_id=?,
+      completed_at=datetime('now', 'localtime'), updated_at=datetime('now', 'localtime') WHERE id=? AND status!='completed'`)
+      .run(userId || null, appointment.id);
+    return {
+      appointment: db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointment.id),
+      package: getCustomerPackage(db, selectedId),
+      usage: selected.usage,
+      alreadyCompleted: false
+    };
+  });
+  return operation.immediate();
 }
 
 module.exports = {
@@ -1019,5 +1157,8 @@ module.exports = {
   releaseForAppointment,
   consumeForAppointment,
   resetAppointmentPackage,
+  listEligiblePackagesForAppointment,
+  assertPackageBelongsToAppointment,
+  completeAppointmentWithPackage,
   centsToReal
 };

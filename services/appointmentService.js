@@ -1,6 +1,7 @@
 const { getDb } = require('../database/tenantDatabase');
 const { getUnit, getModality, getService, getConflicts, getFullDayBlockedDates } = require('./availabilityService');
 const legalDocumentService = require('./legalDocumentService');
+const customerService = require('./customerService');
 const {
   lunchConfig,
   dailyProductiveMinutes,
@@ -349,12 +350,16 @@ function validateAppointmentInput(body, opts = {}) {
 function insertAppointment(data) {
   const db = getDb();
   const code = generateCode(data.appointment_date);
+  const customerResult = customerService.ensureCustomerFromAppointment(db, data);
+  const customer = customerResult.customer;
+  const vehicleResult = data.vehicle_plate ? customerService.ensureVehicleFromAppointment(db, customer.id, data) : null;
+  const vehicle = vehicleResult && vehicleResult.vehicle ? vehicleResult.vehicle : null;
 
   const info = db
     .prepare(
       `INSERT INTO appointments
         (appointment_code, modality_id, unit_id, service_id,
-         customer_name, customer_phone, customer_email, customer_cpf,
+          customer_id, vehicle_id, customer_name, customer_phone, customer_email, customer_cpf,
          vehicle_brand, vehicle_model, vehicle_year, vehicle_plate, vehicle_color, vehicle_category,
          appointment_date, start_time, end_date, end_time, booked_duration_minutes, service_name, services_json,
          service_price, modality_fee, total_price, price_is_estimate, status,
@@ -363,13 +368,15 @@ function insertAppointment(data) {
          responsible_name, responsible_phone,
          has_water_access, has_power_access, key_delivery_confirmed,
          payment_method, customer_notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       code,
       data.modality_id,
       data.unit_id,
       data.service_id,
+      customer.id,
+      vehicle ? vehicle.id : null,
       data.customer_name,
       data.customer_phone,
       data.customer_email,

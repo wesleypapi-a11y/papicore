@@ -152,6 +152,7 @@ function reserveForAppointment(req, res) {
 
   const customerPackageId = req.body.customer_package_id || appointment.customer_package_id;
   if (!customerPackageId) throw new AppError(400, 'Informe o pacote a ser utilizado.');
+  packageService.assertPackageBelongsToAppointment(db, appointment, customerPackageId);
 
   const serviceIds = [];
   if (appointment.services_json) {
@@ -184,6 +185,16 @@ function releaseForAppointment(req, res) {
   return res.json({ appointment: updated, released });
 }
 
+function availableForAppointment(req, res) {
+  const db = getDb();
+  const packages = packageService.listEligiblePackagesForAppointment(db, Number(req.params.id));
+  return res.json({
+    packages,
+    auto_selected_package_id: packages.length === 1 ? packages[0].id : null,
+    requires_choice: packages.length > 1
+  });
+}
+
 module.exports = {
   listPackages,
   createPackage,
@@ -198,5 +209,6 @@ module.exports = {
   listCustomers,
   getCustomer,
   reserveForAppointment,
-  releaseForAppointment
+  releaseForAppointment,
+  availableForAppointment
 };

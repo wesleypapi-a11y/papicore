@@ -187,6 +187,18 @@ function normalizePhone(phone) {
   return String(phone || '').replace(/\D/g, '');
 }
 
+/* Identidade operacional de clientes brasileiros. O telefone é armazenado
+   em E.164 sem o sinal de + (55 + DDD + número). Não substitui a função
+   genérica acima em integrações que também possam receber números externos. */
+function normalizeBrazilianPhone(phone) {
+  let digits = normalizePhone(phone);
+  if (!digits) return '';
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 10 || digits.length === 11) digits = `55${digits}`;
+  if (!/^55[1-9][0-9](?:[2-9][0-9]{7}|9[0-9]{8})$/.test(digits)) return '';
+  return digits;
+}
+
 function isValidPhone(phone) {
   const digits = normalizePhone(phone);
   return digits.length >= 10 && digits.length <= 13;
@@ -333,6 +345,7 @@ module.exports = {
   parseWorkingDays,
   isWorkingDay,
   normalizePhone,
+  normalizeBrazilianPhone,
   isValidPhone,
   isValidEmail,
   isStrongPassword,

@@ -16,16 +16,14 @@
  * (getTenantDb / runWithTenant).
  */
 
-const { AppError, normalizePhone, isValidPhone } = require('../utils/helpers');
+const { AppError, normalizePhone, normalizeBrazilianPhone, isValidPhone } = require('../utils/helpers');
 
 function findCustomerByPhone(db, phone) {
-  const normalized = normalizePhone(phone);
+  const normalized = normalizeBrazilianPhone(phone);
   if (!normalized) return null;
-  return (
-    db.prepare('SELECT * FROM customers WHERE phone = ? ORDER BY id ASC LIMIT 1').get(normalized) ||
-    db.prepare('SELECT * FROM customers WHERE phone IS NOT NULL AND REPLACE(phone, ?, ?) = ? ORDER BY id ASC LIMIT 1')
-      .get(normalized, '', normalized)
-  );
+  const conflict = db.prepare("SELECT * FROM customer_phone_conflicts WHERE phone_normalized = ? AND status = 'PENDING'").get(normalized);
+  if (conflict) throw new AppError(409, 'Há cadastros duplicados para este telefone. Revise os clientes antes de utilizar pacotes.');
+  return db.prepare('SELECT * FROM customers WHERE phone_normalized = ? LIMIT 1').get(normalized) || null;
 }
 
 function findCustomerById(db, id) {
@@ -39,7 +37,7 @@ function searchCustomers(db, term) {
     return db.prepare('SELECT * FROM customers ORDER BY name ASC LIMIT 50').all();
   }
   const nameLike = `%${query}%`;
-  const phoneLike = `%${normalizePhone(query)}%`;
+  const phoneLike = `%${normalizeBrazilianPhone(query) || normalizePhone(query)}%`;
   return db.prepare(
     `SELECT * FROM customers
      WHERE name LIKE ? OR phone LIKE ? OR email LIKE ? OR cpf LIKE ?
@@ -68,12 +66,12 @@ function validateCustomerInput({ name, phone, email, cpf }) {
   if (!name || String(name).trim().length < 2) {
     throw new AppError(400, 'Informe o nome do cliente.');
   }
-  if (phone && !isValidPhone(phone)) {
+  if (phone && (!isValidPhone(phone) || !normalizeBrazilianPhone(phone))) {
     throw new AppError(400, 'Telefone inválido.');
   }
   return {
     name: String(name).trim(),
-    phone: phone ? normalizePhone(phone) : null,
+    phone: phone ? normalizeBrazilianPhone(phone) : null,
     email: email ? String(email).trim().toLowerCase() : null,
     cpf: cpf ? String(cpf).replace(/\D/g, '') : null
   };
@@ -109,8 +107,8 @@ function findOrCreateCustomer(db, data, tx) {
 
   const conn = tx && tx.prepare ? tx : db;
   const info = conn.prepare(
-    `INSERT INTO customers (name, phone, email, cpf) VALUES (?, ?, ?, ?)`
-  ).run(clean.name, clean.phone, clean.email, clean.cpf);
+    `INSERT INTO customers (name, phone, phone_normalized, email, cpf) VALUES (?, ?, ?, ?, ?)`
+  ).run(clean.name, clean.phone, clean.phone, clean.email, clean.cpf);
   return { customer: db.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid), created: true };
 }
 
@@ -154,7 +152,7 @@ function findOrCreateVehicle(db, customerId, data, tx) {
 
 /* Cria um cliente a partir dos dados de um agendamento (nome + telefone). */
 function ensureCustomerFromAppointment(db, data, tx) {
-  const phone = data.customer_phone ? normalizePhone(data.customer_phone) : null;
+  const phone = data.customer_phone ? normalizeBrazilianPhone(data.customer_phone) : null;
   const existing = phone ? findCustomerByPhone(db, phone) : null;
   if (existing) return { customer: existing, created: false };
   return findOrCreateCustomer(db, {
