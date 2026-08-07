@@ -577,7 +577,49 @@ test('overview: instâncias por tenant com auditoria e sem expor api key', () =>
   assert(mine, 'empresa presente no overview');
   assert(typeof mine.instance_name === 'string' && mine.instance_name.length > 0, 'instance_name no overview');
   assert('connected_at' in mine && 'last_disconnect' in mine, 'campos de auditoria no overview');
+  assert('phone' in mine, 'campo phone (cadastro da empresa) no overview');
   assert(!('api_key' in overview), 'api key nunca é exposta pelo overview');
+});
+
+test('formatPhone: brasileiro (celular/fixo), +55, sanitizado e vazio', () => {
+  const { formatPhone } = require('../utils/helpers');
+  assert(formatPhone('12999999999') === '(12) 99999-9999', 'celular 11 dígitos');
+  assert(formatPhone('+55 12 99999-9999') === '(12) 99999-9999', '+55 com espaços/hífen');
+  assert(formatPhone('+5512988887777') === '(12) 98888-7777', '+55 colado');
+  assert(formatPhone('(12) 3333-4444') === '(12) 3333-4444', 'fixo já formatado');
+  assert(formatPhone('551233334444') === '(12) 3333-4444', '+55 fixo');
+  assert(formatPhone('12 98888-7777') === '(12) 98888-7777', 'espaços e hífen');
+  assert(formatPhone('') === '', 'vazio → vazio');
+  assert(formatPhone(null) === '', 'null → vazio');
+  assert(formatPhone('+1 (415) 555-2671') === '14155552671', 'internacional fica sanitizado (sem quebrar)');
+});
+
+test('overview: Número vem do cadastro da empresa, formatado e isolado por tenant', () => {
+  core.updateTenant(tenant.id, { phone: '12999999999' });
+  const second = core.insertTenant({
+    name: 'IVA Detalhes',
+    slug: 'iva-detalhes',
+    database_name: 'tenant_0002_iva_detalhes',
+    phone: '+55 12 98888-7777'
+  });
+  const third = core.insertTenant({
+    name: 'Sem Telefone',
+    slug: 'sem-telefone',
+    database_name: 'tenant_0003_sem_telefone',
+    phone: ''
+  });
+
+  const overview = whatsappService.overview();
+  const firstRow = overview.instances.find((i) => i.tenant_id === tenant.id);
+  const secondRow = overview.instances.find((i) => i.tenant_id === second.id);
+  const thirdRow = overview.instances.find((i) => i.tenant_id === third.id);
+  assert(firstRow, 'empresa 1 no overview');
+  assert(secondRow, 'empresa 2 no overview');
+  assert(thirdRow, 'empresa sem telefone no overview');
+  assert(firstRow.phone === '(12) 99999-9999', `empresa 1 com seu número (veio ${firstRow.phone})`);
+  assert(secondRow.phone === '(12) 98888-7777', `empresa 2 com seu número (veio ${secondRow.phone})`);
+  assert(firstRow.phone !== secondRow.phone, 'números diferentes entre empresas');
+  assert(thirdRow.phone === '', 'sem número → campo vazio (exibe —)');
 });
 
 test('sendTextMessage: MOCK simula; compat aliases de notificação funcionam', async () => {

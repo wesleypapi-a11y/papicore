@@ -172,7 +172,7 @@
       <td><b>${esc(i.name)}</b><br><small class="muted">${esc(i.slug||i.database_name||'')}</small></td>
       <td><code>${esc(i.instance_name)}</code></td>
       <td>${evoStatusBadge(i.status)}${i.last_error?`<br><small class="muted" title="${esc(i.last_error)}">${esc(i.last_error.length>40?i.last_error.slice(0,40)+'…':i.last_error)}</small>`:''}</td>
-      <td>${i.owner_number?esc(i.owner_number):'—'}</td>
+      <td>${i.phone?esc(i.phone):'—'}</td>
       <td><div class="row-actions">
         ${i.status==='connected'?`<button type="button" class="action-btn action-btn-neutral" data-evo-action="reconnect" data-tenant-id="${i.tenant_id}" title="Reconectar (novo QR)" aria-label="Reconectar">${ICONS.restore}</button>`:''}
         ${i.status==='connecting'&&i.qr_base64?`<button type="button" class="action-btn action-btn-edit" data-evo-action="qr" data-tenant-id="${i.tenant_id}" title="Ver QR Code" aria-label="Ver QR Code">${ICONS.detail}</button>`:''}

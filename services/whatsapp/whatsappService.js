@@ -1113,6 +1113,7 @@ function listInstancesOverview() {
       name: t.name,
       slug: t.slug,
       database_name: t.database_name,
+      phone: formatPhone(t.phone || ''),
       status: instance ? instance.status : 'disconnected',
       instance_name: instance ? instance.instance_name : instanceNameFromDatabaseName(t.database_name),
       owner_number: instance ? instance.owner_number || '' : '',

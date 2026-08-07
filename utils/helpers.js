@@ -215,9 +215,16 @@ function isValidPlate(plate) {
 
 function formatPhone(phone) {
   const d = normalizePhone(phone);
-  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return phone;
+  if (!d) return '';
+  let national = d;
+  if ((d.length === 12 || d.length === 13) && d.startsWith('55')) national = d.slice(2);
+  if (national.length === 11 && /^[1-9][0-9]9[0-9]{8}$/.test(national)) {
+    return `(${national.slice(0, 2)}) ${national.slice(2, 7)}-${national.slice(7)}`;
+  }
+  if (national.length === 10 && /^[1-9][0-9][2-8][0-9]{7}$/.test(national)) {
+    return `(${national.slice(0, 2)}) ${national.slice(2, 6)}-${national.slice(6)}`;
+  }
+  return d;
 }
 
 function formatMoney(value) {
