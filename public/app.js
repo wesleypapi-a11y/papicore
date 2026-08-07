@@ -498,6 +498,22 @@
       grid.innerHTML = '<div class="empty-state">Nenhuma unidade de atendimento cadastrada no momento.</div>';
       return;
     }
+    if (state.modality && state.modality.slug === 'in-store') {
+      const valid = state.unit && state.units.some((u) => u.id === state.unit.id);
+      if (!valid) {
+        state.unit = state.units[0];
+        state.date = null;
+        state.slot = null;
+        state.slotEndDate = null;
+        state.slotEndTime = null;
+        state.slotDuration = null;
+        state.longService = false;
+        state.estimatedEnd = null;
+        slotCache = {};
+        calendarCache = {};
+        saveState();
+      }
+    }
     state.units.forEach((u) => {
       const card = document.createElement('button');
       card.type = 'button';
