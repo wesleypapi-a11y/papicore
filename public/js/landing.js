@@ -5,7 +5,7 @@
   const $$ = (s, ctx) => Array.from((ctx || document).querySelectorAll(s));
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const DEFAULT_WHATSAPP_MESSAGE = 'Olá! Conheci o PapiCore pelo site e gostaria de saber mais sobre o sistema.';
+  const DEFAULT_WHATSAPP_MESSAGE = 'Olá! Conheci o AutoCore pelo site e gostaria de saber mais sobre o sistema.';
   const FALLBACK_WHATSAPP = '5521964465949';
 
   /* ---------- Rolagem suave / animação de entrada das seções ---------- */
@@ -136,7 +136,7 @@
       return;
     }
 
-    caption.textContent = 'Assista à demonstração do PapiCore';
+    caption.textContent = 'Assista à demonstração do AutoCore';
 
     playBtn.addEventListener('click', () => {
       const { type, src } = detectEmbedUrl(videoUrl);
@@ -144,7 +144,7 @@
       if (type === 'iframe') {
         el = document.createElement('iframe');
         el.src = src;
-        el.title = 'Vídeo demonstrativo do PapiCore';
+        el.title = 'Vídeo demonstrativo do AutoCore';
         el.allow = 'autoplay; fullscreen; picture-in-picture';
         el.allowFullscreen = true;
       } else {
@@ -184,7 +184,7 @@
 
   function planCardHtml(plan, highlightId) {
     const isHighlighted = plan.id === highlightId;
-    const waMessage = `Olá! Conheci o PapiCore pelo site e gostaria de saber mais sobre o plano ${plan.name}.`;
+    const waMessage = `Olá! Conheci o AutoCore pelo site e gostaria de saber mais sobre o plano ${plan.name}.`;
     const waLink = buildWhatsAppLink(state.whatsapp, waMessage);
     const cta = waLink
       ? `<a class="l-btn ${isHighlighted ? 'l-btn-primary' : 'l-btn-outline'} l-btn-block" href="${esc(waLink)}" target="_blank" rel="noopener">Começar agora</a>`
@@ -197,7 +197,7 @@
         <div class="l-plan-price"><strong>${esc(formatCentsToBRL(plan.monthly_price_cents))}</strong><span>/mês</span></div>
         <ul class="l-plan-feature-list">
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>${esc(unitsLabel(plan.max_units))}</li>
-          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Recursos do PapiCore 1.0</li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Recursos do AutoCore</li>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>${esc(plan.support_level_label || 'Suporte padrão')}</li>
         </ul>
         ${cta}

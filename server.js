@@ -105,7 +105,8 @@ app.use((req, res, next) => {
 });
 
 /* Domínio institucional da plataforma (process.env.PLATFORM_DOMAIN): a raiz
-   deste domínio abre a landing page comercial do PapiCore em vez da página
+   deste domínio abre o portal da empresa e as rotas de produto abrem suas
+   respectivas landing pages, em vez da página
    pública de agendamento (que pertence aos tenants). O host é normalizado
    (remove porta, minúsculas, remove www), então papicore.com.br e
    www.papicore.com.br caem no mesmo caso. Em desenvolvimento, localhost e
@@ -126,12 +127,18 @@ function isPlatformHost(host) {
   return false;
 }
 
-app.get('/', (req, res, next) => {
-  if (isPlatformHost(req.hostname || req.headers.host)) {
-    return res.sendFile(path.join(__dirname, 'public', 'landing.html'));
-  }
-  return next();
-});
+function platformPage(fileName) {
+  return (req, res, next) => {
+    if (!isPlatformHost(req.hostname || req.headers.host)) return next();
+    return res.sendFile(path.join(__dirname, 'public', fileName));
+  };
+}
+
+app.get('/', platformPage('home.html'));
+app.get('/autocore', platformPage('landing.html'));
+app.get('/arco', platformPage('arco.html'));
+app.get('/nursecore', platformPage('nursecore.html'));
+app.get('/prefcore', platformPage('prefcore.html'));
 
 /* O painel do desenvolvedor é exclusivo da plataforma: papicore.com.br/
    /desenvolvedor. Em qualquer outro host — incluindo os domínios dos
