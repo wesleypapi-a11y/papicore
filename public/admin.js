@@ -1289,8 +1289,8 @@
         <td>${escapeHtml(e.service_name || e.current_service_name || '—')}${e.payment_method ? `<br/><span class="muted">${escapeHtml(PAYMENT_LABELS[e.payment_method] || e.payment_method)}</span>` : ''}</td>
         <td><strong style="color:${e.type === 'saida' ? 'var(--red)' : 'var(--green)'}">${e.type === 'saida' ? '−' : '+'} ${money(e.amount)}</strong></td>
         <td><div class="row-actions">
-          <button class="btn btn-sm btn-outline" data-action="editEntry" data-id="${e.id}">Editar</button>
-          <button class="btn btn-sm btn-danger" data-action="deleteEntry" data-id="${e.id}">Excluir</button>
+          <button class="btn btn-sm btn-outline admin-table-action" data-action="editEntry" data-id="${e.id}" title="Editar lançamento" aria-label="Editar lançamento">${ACTION_ICONS.edit}<span class="admin-table-action-text">Editar</span></button>
+          <button class="btn btn-sm btn-danger admin-table-action" data-action="deleteEntry" data-id="${e.id}" title="Excluir lançamento" aria-label="Excluir lançamento">${ACTION_ICONS.delete}<span class="admin-table-action-text">Excluir</span></button>
         </div></td>
       </tr>`).join('');
 
@@ -2786,7 +2786,7 @@
         <td>${b.block_full_day ? '<span class="badge badge-rejected">Dia inteiro</span>' : escapeHtml(b.blocked_time_end ? `${b.blocked_time} às ${b.blocked_time_end}` : b.blocked_time)}</td>
         <td>${escapeHtml(b.unit_name || 'Todas as unidades (global)')}</td>
         <td>${escapeHtml(b.reason || '—')}</td>
-        <td><button class="btn btn-sm btn-danger" data-action="deleteBlock" data-id="${b.id}">Remover</button></td>
+        <td><div class="row-actions"><button class="btn btn-sm btn-danger admin-table-action" data-action="deleteBlock" data-id="${b.id}" title="Excluir bloqueio" aria-label="Excluir bloqueio">${ACTION_ICONS.delete}<span class="admin-table-action-text">Remover</span></button></div></td>
       </tr>`).join('');
 
     el.innerHTML = `

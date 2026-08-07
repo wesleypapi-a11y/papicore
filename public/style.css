@@ -423,6 +423,9 @@ body.booking-app {
   font-size: 15px;
   font-weight: 600;
   text-decoration: none;
+  word-break: normal;
+  overflow-wrap: normal;
+  white-space: nowrap;
   transition: transform 0.2s, box-shadow 0.2s, background 0.2s, border-color 0.2s, color 0.2s, filter 0.2s;
 }
 .btn:active { transform: scale(0.98); }
@@ -1313,6 +1316,7 @@ th { color: var(--text-muted); font-size: 12px; font-weight: 600; text-transform
 tr:hover td { background: rgba(255, 255, 255, 0.02); }
 
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.admin-table-action > svg { display: none; width: 18px; height: 18px; pointer-events: none; }
 .btn-sm { padding: 7px 12px; font-size: 13px; }
 .btn-success { background: var(--green); color: #0b0d12; }
 .btn-success:hover { background: #2fd476; }
@@ -1339,6 +1343,12 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   height: 36px;
   padding: 0;
   flex-shrink: 0;
+  flex: 0 0 auto;
+  min-width: 36px;
+  max-width: 36px;
+  word-break: normal;
+  overflow-wrap: normal;
+  white-space: nowrap;
   border: none;
   border-radius: 10px;
   background: transparent;
@@ -1729,41 +1739,45 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   }
   .table-wrap td.cell-actions::before { display: none; }
   .table-wrap td.cell-actions .row-actions { justify-content: flex-start; }
-  .table-wrap td.cell-actions .row-actions .btn { flex: 1 1 100%; }
+  .table-wrap td.cell-actions .row-actions .btn:not(.admin-table-action) { flex: 1 1 100%; }
+  .table-wrap td.cell-actions .admin-table-action {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+    border-radius: 11px;
+  }
+  .table-wrap td.cell-actions .admin-table-action > svg { display: block; }
+  .table-wrap td.cell-actions .admin-table-action-text { display: none; }
 
-  /* Botões de ação (Confirmar/Recusar/Editar/Detalhes/Excluir): grade de
-     2 colunas, alvo de toque grande, ícone + texto visível — nunca ícone
-     sozinho cortado. Quando sobra um botão ímpar (ex.: 5 no total), ele
-     ocupa a linha toda sozinho em vez de ficar espremido. */
+  /* Ações secundárias nos cards: fileira flexível de ícones com alvo de
+     toque fixo; nunca entram em colunas estreitas. */
   .table-wrap td.cell-actions .appointment-actions {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
     gap: 8px;
-    justify-content: stretch;
-    flex-wrap: unset;
-    white-space: normal;
+    white-space: nowrap;
   }
   .table-wrap td.cell-actions .action-btn {
-    width: auto;
-    height: auto;
-    padding: 10px 12px;
-    gap: 8px;
-    border-radius: var(--radius-sm);
-    font-size: 13px;
-    font-weight: 600;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+    gap: 0;
+    border-radius: 11px;
   }
   .table-wrap td.cell-actions .action-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
-  .table-wrap td.cell-actions .action-btn:nth-child(odd):last-child { grid-column: 1 / -1; }
   .table-wrap tr:hover td { background: transparent; }
 }
 
-/* Texto do botão de ação: some no desktop (ícone compacto de sempre) e só
-   aparece dentro do cartão mobile acima — mesmo componente, sem duplicar
-   marcação por tela. */
+/* O nome acessível fica em title/aria-label; visualmente a ação é só ícone. */
 .action-btn-text { display: none; }
-@media (max-width: 768px) {
-  .table-wrap td.cell-actions .appointment-actions .action-btn-text { display: inline; }
-}
 
 /*
  * Card mobile de Agendamentos — componente PRÓPRIO, não derivado da tabela
@@ -1900,7 +1914,14 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
     padding-top: 10px;
     border-top: 1px dashed var(--border);
   }
-  .appt-card-actions .action-btn { width: 40px; height: 40px; flex-shrink: 0; }
+  .appt-card-actions .action-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    flex: 0 0 44px;
+    border-radius: 11px;
+  }
   .appt-card-actions .action-btn svg { width: 18px; height: 18px; }
 
   /* Filtros de status e botão "+ Novo agendamento": só na aba Agendamentos,
@@ -2036,8 +2057,8 @@ html.lock-mobile .table-wrap thead { display: none; }
 html.lock-mobile .table-wrap tbody { display: grid; gap: 12px; }
 html.lock-mobile .table-wrap tr {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   padding: 14px;
   background: var(--bg-soft);
   border: 1px solid var(--border);
@@ -2063,10 +2084,29 @@ html.lock-mobile .table-wrap td.cell-actions {
 }
 html.lock-mobile .table-wrap td.cell-actions::before { display: none; }
 html.lock-mobile .table-wrap td.cell-actions .row-actions { justify-content: flex-start; }
-html.lock-mobile .table-wrap td.cell-actions .row-actions .btn { flex: 1; }
-html.lock-mobile .table-wrap td.cell-actions .appointment-actions { justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
-html.lock-mobile .table-wrap td.cell-actions .action-btn { width: 40px; height: 40px; }
-html.lock-mobile .table-wrap td.cell-actions .action-btn svg { width: 20px; height: 20px; }
+html.lock-mobile .table-wrap td.cell-actions .row-actions .btn:not(.admin-table-action) { flex: 1; }
+html.lock-mobile .table-wrap td.cell-actions .admin-table-action {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+  border-radius: 11px;
+}
+html.lock-mobile .table-wrap td.cell-actions .admin-table-action > svg { display: block; }
+html.lock-mobile .table-wrap td.cell-actions .admin-table-action-text { display: none; }
+html.lock-mobile .table-wrap td.cell-actions .appointment-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 8px; white-space: nowrap; }
+html.lock-mobile .table-wrap td.cell-actions .action-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+  border-radius: 11px;
+}
+html.lock-mobile .table-wrap td.cell-actions .action-btn svg { width: 18px; height: 18px; }
 html.lock-mobile .table-wrap tr:hover td { background: transparent; }
 html.lock-mobile .modal-overlay { padding: 0; align-items: flex-end; }
 html.lock-mobile .modal {
